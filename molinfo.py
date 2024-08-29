@@ -143,7 +143,7 @@ class Mol_Info(object):
                 nc = self.mol_info[key]["charge"]
                 cmd_antech = (
                     f"antechamber -i {g16chglog} -fi gout "
-                    f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y")
+                    f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y -dr no")
                 output = subprocess.getoutput(cmd_antech)
                 print(output)
                 mol2_dict = read_mol2(output_mol2)
@@ -160,7 +160,7 @@ class Mol_Info(object):
                     print(output_mol2)
                     cmd_antech = (
                         f"antechamber -i {g16chglog} -fi gout "
-                        f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y")
+                        f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y -dr no")
                     output = subprocess.getoutput(cmd_antech)
                     mol2_dict = read_mol2(output_mol2)
                 else:
@@ -170,7 +170,7 @@ class Mol_Info(object):
                     nc = self.mol_info[key]["charge"]
                     cmd_antech = (
                         f"antechamber -i {g16chglog} -fi pdb "
-                        f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y")
+                        f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y -dr no")
                     output = subprocess.getoutput(cmd_antech)
                     mol2_dict = read_mol2(output_mol2)
 
