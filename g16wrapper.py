@@ -75,6 +75,7 @@ def molinfo_setg16charge(mol_info, params_charge=None):
     else:
         if "algo" in params_charge:
             if params_charge["algo"] == "resp":
+                del params_charge['algo']
                 params_charge["ioplist"] = ["6/33=2", "6/42=6"]
                 params_charge["pop"] = "mk"
             else:
