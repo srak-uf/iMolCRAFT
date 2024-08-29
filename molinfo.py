@@ -140,9 +140,10 @@ class Mol_Info(object):
                 g16chglog = self.mol_info[key]["g16charge"].label + ".log"
                 dirname = os.path.dirname(g16chglog)
                 output_mol2 =  os.path.join(dirname, "resp_charge.mol2")
+                nc = self.mol_info[key]["charge"]
                 cmd_antech = (
                     f"antechamber -i {g16chglog} -fi gout "
-                    f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {self.mol_info[key]["charge"]} -pf y")
+                    f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y")
                 output = subprocess.getoutput(cmd_antech)
                 print(output)
                 mol2_dict = read_mol2(output_mol2)
@@ -155,19 +156,21 @@ class Mol_Info(object):
                     g16chglog = self.mol_info[key]["g16opt"][min_idx].label + ".log"
                     dirname = os.path.dirname(g16chglog)
                     output_mol2 =  os.path.join(dirname, "bcc_charge.mol2")
+                    nc = self.mol_info[key]["charge"]
                     print(output_mol2)
                     cmd_antech = (
                         f"antechamber -i {g16chglog} -fi gout "
-                        f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {self.mol_info[key]["charge"]} -pf y")
+                        f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y")
                     output = subprocess.getoutput(cmd_antech)
                     mol2_dict = read_mol2(output_mol2)
                 else:
                     write(f"{key}/{key}_bcc.pdb", self.mol_info[key]["aseatoms_list"][0])
                     g16chglog = f"{key}/{key}_bcc.pdb"
                     output_mol2 =  f"{key}/bcc_charge.mol2"
+                    nc = self.mol_info[key]["charge"]
                     cmd_antech = (
                         f"antechamber -i {g16chglog} -fi pdb "
-                        f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {self.mol_info[key]["charge"]} -pf y")
+                        f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y")
                     output = subprocess.getoutput(cmd_antech)
                     mol2_dict = read_mol2(output_mol2)
 
