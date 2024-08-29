@@ -244,9 +244,9 @@ def expand_cell(atoms, length=30):
     La = atoms.cell.cellpar()[0]
     Lb = atoms.cell.cellpar()[1]    
     Lc = atoms.cell.cellpar()[2]
-    a_dup = math.ceil(length*0.8/La)
-    b_dup = math.ceil(length*0.8/Lb)
-    c_dup = math.ceil(length*0.8/Lc)
+    a_dup = math.ceil(length/La)
+    b_dup = math.ceil(length/Lb)
+    c_dup = math.ceil(length/Lc)
     print(a_dup, b_dup, c_dup)
     atoms = atoms.repeat((a_dup, b_dup, c_dup))
     return atoms
