@@ -46,7 +46,7 @@ def input_g16(atoms, params, charge, output_dir, label):
     output_label = os.path.join(output_dir, f"{label}")
     atoms.pbc = False
     atoms.cell = None
-    write(output_xyz, atoms)
+    write(output_xyz, atoms, format="xyz")
     g16 = Gaussian(
         label=output_label,
         charge = charge,
