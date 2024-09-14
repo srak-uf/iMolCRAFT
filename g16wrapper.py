@@ -130,5 +130,10 @@ def molinfo_setg16dihedral(mol_info, params_dihedral=None):
                 d3 = mol_info[key]["rotatable_dihedral"][di][3]
                 params_dihedral["addsec"] = f"D {d0} {d1} {d2} {d3} S 35 10"
                 g16 = input_g16(atoms, params_dihedral, charge, key, label)
+                with open(g16.label+".com") as f:
+                    lines = f.readlines()
+                del lines[-3]
+                with open(g16.label+".com",mode="w") as f:
+                    f.writelines(lines)
                 mol_info[key]["g16dihedral"].append(g16)
 

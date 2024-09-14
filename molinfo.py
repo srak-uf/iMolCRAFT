@@ -119,6 +119,30 @@ class Mol_Info(object):
                     self.mol_info[key]["geoopt_done"].append(False)
                     print(f"Warning: No results found in {g16.label}")
                 self.mol_info[key]["geoopt_energy"].append(energy)
+    
+    def load_dihedral_results(self):
+        for key in self.mol_info.keys():
+            self.mol_info[key]["dihedral_energy"] = []
+            self.mol_info[key]["dihedral_angle"] = []
+            self.mol_info[key]["dihedral_done"] = []
+            if "g16dihedral" not in  self.mol_info[key].keys():
+                continue
+            else:
+                for g16 in self.mol_info[key]["g16dihedral"]:
+                    try:
+                        dihed_logfile =  g16.label + ".log"
+                        dihed_cclib = cclib.io.ccread(dihed_logfile)
+                        energy = dihed_cclib.scanenergies
+                        angle = dihed_cclib.scanparm[0]
+                        self.mol_info[key]["dihedral_done"].append(True)
+                    except:
+                        energy = None
+                        angle = None
+                        self.mol_info[key]["dihedral_done"].append(False)
+                        print(f"Warning: No results found in {g16.label}")
+                    
+                    self.mol_info[key]["dihedral_angle"].append(angle)
+                    self.mol_info[key]["dihedral_energy"].append(energy)
 
     def get_charges_from_molinfo(self):
         for key in self.mol_info.keys():
