@@ -66,7 +66,6 @@ def molinfo_setg16opt(mol_info, params_opt=None):
             charge = mol_info[key]["charge"]
             label = f"{key}_{i}"
             g16 = input_g16(atoms, params_opt, charge, output_dir, label)
-            logfile = os.path.join(output_dir, f"{label}.log")
             mol_info[key]["g16opt"].append(g16)
 
 def molinfo_setg16charge(mol_info, params_charge=None):

@@ -238,7 +238,7 @@ class Mol_Info(object):
                 print(f"Warning: No rdkitmol found in {m}")
         return self.mol_info
         
-    def do_geoopt(self):
+    def do_geoopt(self, force=False):
         import shutil
         if shutil.which("g16") is None:
             print("Error: g16 is not found in PATH")
@@ -248,13 +248,17 @@ class Mol_Info(object):
                 for i in range(len(self.mol_info[m]['g16opt'])):
                     g16_infile = self.mol_info[m]['g16opt'][i].label + ".com"
                     g16_logfile = self.mol_info[m]['g16opt'][i].label + ".log"
-                    cmd = f"g16 < {g16_infile}  > {g16_logfile}"
-                    output = subprocess.getoutput(cmd)
-                    print(f"g16opt -- {m}_{i}")
-                    print(cmd)
-                    print(output)
+                    if os.path.exists(g16_logfile) and not force:
+                        print(f"Skip {g16_logfile}")
+                        continue
+                    elif not os.path.exists(g16_logfile) or force:
+                        cmd = f"g16 < {g16_infile}  > {g16_logfile}"
+                        output = subprocess.getoutput(cmd)
+                        print(f"g16opt -- {m}_{i}")
+                        print(cmd)
+                        print(output)
     
-    def do_charge(self):
+    def do_charge(self, force=False):
         import shutil
         if shutil.which("g16") is None:
             print("Error: g16 is not found in PATH")
@@ -263,13 +267,17 @@ class Mol_Info(object):
             if "g16charge" in self.mol_info[m].keys():
                 g16_infile = self.mol_info[m]['g16charge'].label + ".com"
                 g16_logfile = self.mol_info[m]['g16charge'].label + ".log"
-                cmd = f"g16 < {g16_infile}  > {g16_logfile}"
-                output = subprocess.getoutput(cmd)
-                print(f"g16charge -- {m}")
-                print(cmd)
-                print(output)
+                if os.path.exists(g16_logfile) and not force:
+                    print(f"Skip {g16_logfile}")
+                    continue
+                elif not os.path.exists(g16_logfile) or force:
+                    cmd = f"g16 < {g16_infile}  > {g16_logfile}"
+                    output = subprocess.getoutput(cmd)
+                    print(f"g16charge -- {m}")
+                    print(cmd)
+                    print(output)
     
-    def do_dihedral(self):
+    def do_dihedral(self, force=False):
         import shutil
         if shutil.which("g16") is None:
             print("Error: g16 is not found in PATH")
@@ -279,11 +287,15 @@ class Mol_Info(object):
                 for i in range(len(self.mol_info[m]['g16dihedral'])):
                     g16_infile = self.mol_info[m]['g16dihedral'][i].label + ".com"
                     g16_logfile = self.mol_info[m]['g16dihedral'][i].label + ".log"
-                    cmd = f"g16 < {g16_infile}  > {g16_logfile}"
-                    output = subprocess.getoutput(cmd)
-                    print(f"g16dihedral -- {m}")
-                    print(cmd)
-                    print(output)
+                    if os.path.exists(g16_logfile):
+                        print(f"Skip {g16_logfile}")
+                        continue
+                    elif not os.path.exists(g16_logfile) or force:
+                        cmd = f"g16 < {g16_infile}  > {g16_logfile}"
+                        output = subprocess.getoutput(cmd)
+                        print(f"g16dihedral -- {m}")
+                        print(cmd)
+                        print(output)
 
     def save_molinfo(self, filename="mol_info.pkl"):
         with open(filename, mode='wb') as f:
