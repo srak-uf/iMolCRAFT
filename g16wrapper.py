@@ -46,7 +46,7 @@ def input_g16(atoms, params, charge, output_dir, label):
     output_label = os.path.join(output_dir, f"{label}")
     atoms.pbc = False
     atoms.cell = None
-    write(output_xyz, atoms)
+    write(output_xyz, atoms, format="xyz")
     g16 = Gaussian(
         label=output_label,
         charge = charge,
@@ -75,6 +75,7 @@ def molinfo_setg16charge(mol_info, params_charge=None):
     else:
         if "algo" in params_charge:
             if params_charge["algo"] == "resp":
+                del params_charge['algo']
                 params_charge["ioplist"] = ["6/33=2", "6/42=6"]
                 params_charge["pop"] = "mk"
             else:
@@ -128,7 +129,7 @@ def molinfo_setg16dihedral(mol_info, params_dihedral=None):
                 d1 = mol_info[key]["rotatable_dihedral"][di][1]
                 d2 = mol_info[key]["rotatable_dihedral"][di][2]
                 d3 = mol_info[key]["rotatable_dihedral"][di][3]
-                params_dihedral["addsec"] = f"D {d0} {d1} {d2} {d3} S 35 10"
+                params_dihedral["addsec"] = f"D {d0} {d1} {d2} {d3} S 35 10.0"
                 g16 = input_g16(atoms, params_dihedral, charge, key, label)
                 with open(g16.label+".com") as f:
                     lines = f.readlines()

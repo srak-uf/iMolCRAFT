@@ -161,6 +161,7 @@ class asemol_wrapper():
                                 atoms_unwrap[next_ref[-1]].position = atoms_unwrap[ref_i].position + shift_mic[ref_i, next_ref[-1]]
                 ref_init = next_ref
                 ref_done.extend(next_ref)
+                ref_done = list(set(ref_done))
         return atoms_unwrap
 
 def ase_atoms_to_nx(atoms: ase.Atoms, chemical_bonds):

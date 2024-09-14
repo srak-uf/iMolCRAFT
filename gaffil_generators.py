@@ -106,7 +106,7 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
             return f"{mol2file}"
         else:
             mol2file = molecule.mol2file
-            cmd = f"antechamber -i {mol2file} -fi mol2 -o {mol2file}.gaff -fo mol2 -at {gaff_ver} -c dc"
+            cmd = f"antechamber -i {mol2file} -fi mol2 -o {mol2file}.gaff -fo mol2 -at {gaff_ver} -c dc -dr no"
             output = subprocess.getoutput(cmd)
             gaffmol2 = read_mol2(f"{mol2file}.gaff")
             chgmol2 = read_mol2(f"{mol2file}")

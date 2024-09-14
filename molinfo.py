@@ -167,7 +167,7 @@ class Mol_Info(object):
                 nc = self.mol_info[key]["charge"]
                 cmd_antech = (
                     f"antechamber -i {g16chglog} -fi gout "
-                    f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y")
+                    f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y -dr no")
                 output = subprocess.getoutput(cmd_antech)
                 print(output)
                 mol2_dict = read_mol2(output_mol2)
@@ -184,7 +184,7 @@ class Mol_Info(object):
                     print(output_mol2)
                     cmd_antech = (
                         f"antechamber -i {g16chglog} -fi gout "
-                        f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y")
+                        f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y -dr no")
                     output = subprocess.getoutput(cmd_antech)
                     mol2_dict = read_mol2(output_mol2)
                 else:
@@ -194,7 +194,7 @@ class Mol_Info(object):
                     nc = self.mol_info[key]["charge"]
                     cmd_antech = (
                         f"antechamber -i {g16chglog} -fi pdb "
-                        f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y")
+                        f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y -dr no")
                     output = subprocess.getoutput(cmd_antech)
                     mol2_dict = read_mol2(output_mol2)
 
@@ -261,8 +261,8 @@ class Mol_Info(object):
             return
         for m in self.mol_info.keys():
             if "g16charge" in self.mol_info[m].keys():
-                g16_infile = self.mol_info[m]['g16charge'][0].label + ".com"
-                g16_logfile = self.mol_info[m]['g16charge'][0].label + ".log"
+                g16_infile = self.mol_info[m]['g16charge'].label + ".com"
+                g16_logfile = self.mol_info[m]['g16charge'].label + ".log"
                 cmd = f"g16 < {g16_infile}  > {g16_logfile}"
                 output = subprocess.getoutput(cmd)
                 print(f"g16charge -- {m}")
@@ -277,8 +277,8 @@ class Mol_Info(object):
         for m in self.mol_info.keys():
             if "g16dihedral" in self.mol_info[m].keys():
                 for i in range(len(self.mol_info[m]['g16dihedral'])):
-                    g16_infile = self.mol_info[m]['g16dihedral'][0].label + ".com"
-                    g16_logfile = self.mol_info[m]['g16dihedral'][0].label + ".log"
+                    g16_infile = self.mol_info[m]['g16dihedral'][i].label + ".com"
+                    g16_logfile = self.mol_info[m]['g16dihedral'][i].label + ".log"
                     cmd = f"g16 < {g16_infile}  > {g16_logfile}"
                     output = subprocess.getoutput(cmd)
                     print(f"g16dihedral -- {m}")
