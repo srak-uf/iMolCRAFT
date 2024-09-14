@@ -5,6 +5,7 @@ import os
 import copy
 import pickle
 import subprocess
+import numpy as np
 from openff.toolkit.topology import Molecule
 from openff.toolkit import Quantity, unit
 
@@ -144,7 +145,7 @@ class Mol_Info(object):
                     self.mol_info[key]["dihedral_angle"].append(angle)
                     self.mol_info[key]["dihedral_energy"].append(energy)
 
-    def get_charges_from_molinfo(self):
+    def get_charges_from_molinfo(self=None):
         for key in self.mol_info.keys():
             natoms = len(self.mol_info[key]["aseatoms_list"][0])
             if natoms == 1:
@@ -168,6 +169,7 @@ class Mol_Info(object):
                 cmd_antech = (
                     f"antechamber -i {g16chglog} -fi gout "
                     f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y -dr no")
+                print(cmd_antech)
                 output = subprocess.getoutput(cmd_antech)
                 print(output)
                 mol2_dict = read_mol2(output_mol2)
@@ -209,7 +211,39 @@ class Mol_Info(object):
     #             for i in index_list:
     #                 self.mol_info[mol_i]["molecules_omm"].append(self.mol_info[mol_i]["molecules"][i])
     #     return self.mol_info
-    
+
+    def scale_charges(self, ff_params=None):
+        for key in self.mol_info.keys():
+            net_charge = self.mol_info[key]["charge"]
+            charges = np.array([ np.float64(ee) for ee in self.mol_info[key]["charges"]])
+
+            if ff_params is not None:
+                if "charge_scale_ion" in ff_params.keys():
+                    charge_scale_ion = ff_params["charge_scale_ion"]
+                    if not np.isclose(net_charge, 0.0):
+                        charges *= charge_scale_ion
+                        net_charge *= charge_scale_ion
+                elif "charge_scale_neutral" in ff_params.keys():
+                    charge_scale_neutral = ff_params["charge_scale_neutral"]
+                    if np.isclose(net_charge, 0.0):
+                        charges *= charge_scale_neutral
+                        net_charge *= charge_scale_neutral
+
+            total_charge = np.sum(charges)
+
+            charge_deficit = total_charge - net_charge
+            print(charge_deficit)
+
+            if not np.isclose(charge_deficit, 0.0):
+                print(f"Net charge of {key} is {net_charge} and total charge is {total_charge}")
+                charges = charges - charge_deficit / len(charges)
+                total_charge = np.sum(charges)
+                charge_deficit = total_charge - self.mol_info[key]["charge"]
+                charges[0] -= charge_deficit
+            
+            self.mol_info[key]["charges"] = charges
+
+
     def get_molecule_omm(self):
         molecules_omm = []
         for mol in self.mol_info.keys():
