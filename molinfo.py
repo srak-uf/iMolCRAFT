@@ -238,7 +238,7 @@ class Mol_Info(object):
                 print(f"Net charge of {key} is {net_charge} and total charge is {total_charge}")
                 charges = charges - charge_deficit / len(charges)
                 total_charge = np.sum(charges)
-                charge_deficit = total_charge - self.mol_info[key]["charge"]
+                charge_deficit = total_charge - net_charge
                 charges[0] -= charge_deficit
             
             self.mol_info[key]["charges"] = charges
