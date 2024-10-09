@@ -24,6 +24,8 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
 
         if il_assign == None:
             self.il_assign =  {"FSA": {"S": "s6", "N": "n2", "O": "o", "F": "f"}}
+        else:
+            self.il_assign = il_assign
 
     def generate_residue_template(self, molecule, residue_atoms=None):
         import numpy as np

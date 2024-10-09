@@ -8,6 +8,7 @@ import subprocess
 import numpy as np
 from openff.toolkit.topology import Molecule
 from openff.toolkit import Quantity, unit
+import cclib
 
 class Mol_Info(object):
     def __init__(self, atomslist_mols=None, molecule_list=None):
@@ -122,28 +123,58 @@ class Mol_Info(object):
                 self.mol_info[key]["geoopt_energy"].append(energy)
     
     def load_dihedral_results(self):
+        import os
         for key in self.mol_info.keys():
             self.mol_info[key]["dihedral_energy"] = []
             self.mol_info[key]["dihedral_angle"] = []
             self.mol_info[key]["dihedral_done"] = []
+            self.mol_info[key]["dihedral_aseatoms"] = []
             if "g16dihedral" not in  self.mol_info[key].keys():
                 continue
             else:
-                for g16 in self.mol_info[key]["g16dihedral"]:
+                self.mol_info[key]["dihedral_done"]     = [False for _ in self.mol_info[key]["g16dihedral"]]
+                self.mol_info[key]["dihedral_energy"]   = [None  for _ in self.mol_info[key]["g16dihedral"]]
+                self.mol_info[key]["dihedral_angle"]    = [None  for _ in self.mol_info[key]["g16dihedral"]]
+                self.mol_info[key]["dihedral_aseatoms"] = [None  for _ in self.mol_info[key]["g16dihedral"]]
+                for i, g16 in enumerate(self.mol_info[key]["g16dihedral"]):
                     try:
                         dihed_logfile =  g16.label + ".log"
+                        dihed_logfile = os.path.abspath(dihed_logfile)
+                        print(dihed_logfile)
                         dihed_cclib = cclib.io.ccread(dihed_logfile)
                         energy = dihed_cclib.scanenergies
                         angle = dihed_cclib.scanparm[0]
-                        self.mol_info[key]["dihedral_done"].append(True)
+                        aseatoms = []
+                        ase_g16log = read(dihed_logfile)
+                        for i_sc, sc in enumerate(dihed_cclib.scancoords):
+                            sc_tmp = ase_g16log.copy()
+                            for j, atom in enumerate(sc):
+                                sc_tmp[j].position = sc[j]
+                            aseatoms.append(sc_tmp)
+                        
+                        zip_lists = zip(angle, energy, aseatoms)
+                        # 昇順でソート
+                        zip_sort = sorted(zip_lists)
+                        # zipを解除
+                        angle, energy, aseatoms = zip(*zip_sort)
+                        angle = np.array(angle)
+                        energy = np.array(energy)
+
+                        self.mol_info[key]["dihedral_done"][i] = True
                     except:
+                        import traceback
+                        traceback.print_exc()
                         energy = None
                         angle = None
-                        self.mol_info[key]["dihedral_done"].append(False)
-                        print(f"Warning: No results found in {g16.label}")
+                        aseatoms = None
+                        print(f"Warning: Failed reading results: {g16.label}")
                     
-                    self.mol_info[key]["dihedral_angle"].append(angle)
-                    self.mol_info[key]["dihedral_energy"].append(energy)
+                    self.mol_info[key]["dihedral_angle"][i] = angle
+                    self.mol_info[key]["dihedral_energy"][i] = energy
+                    self.mol_info[key]["dihedral_aseatoms"][i] = aseatoms
+                    if aseatoms is not None:
+                        write(f"scan_{i}.xyz", aseatoms)
+                
 
     def get_charges_from_molinfo(self=None):
         for key in self.mol_info.keys():
@@ -255,6 +286,8 @@ class Mol_Info(object):
             
             molecule_mm = Molecule.from_file(sdffile)
             molecule_mm.partial_charges = Quantity(self.mol_info[mol]["charges"], unit.elementary_charge)
+            molecule_mm.name = mol
+            # molecule_mm.total_charge = Quantity(self.mol_info[mol]["charge"], unit.elementary_charge)  ## why ??
             for meta_key in self.mol_info[mol]["metadata"].keys():
                 for meta_ind in self.mol_info[mol]["metadata"][meta_key]:
                     molecule_mm.atoms[meta_ind].metadata[meta_key] = True
@@ -267,7 +300,7 @@ class Mol_Info(object):
         for m in self.mol_info.keys():
             if "rdkitmol" in self.mol_info[m].keys():
                 mol = self.mol_info[m]["rdkitmol"]
-                self.mol_info[m]["rotatable_dihedral"] = _get_rotatable_dihedral(mol)
+                self.mol_info[m]["rotatable_dihedral"], self.mol_info[m]["rotatable_dihedral_elem"] = _get_rotatable_dihedral(mol)
             else:
                 print(f"Warning: No rdkitmol found in {m}")
         return self.mol_info
@@ -436,6 +469,7 @@ def _get_rotatable_dihedral(rdmol):
     RotatableBond = Chem.MolFromSmarts('[!$(*#*)&!D1]-&!@[!$(*#*)&!D1]')
     rotatable_list = id_mol.GetSubstructMatches(RotatableBond)
     dihedral_list = []
+    dihedral_elem_list = []
     for i in range(len(rotatable_list)):
         rot_i = rotatable_list[i]
         d1 = rot_i[0]
@@ -465,7 +499,15 @@ def _get_rotatable_dihedral(rdmol):
                 break
 
         dihedral = [d0, d1, d2, d3]
+
+        d0_elem = id_mol.GetAtoms()[d0].GetSymbol()
+        d1_elem = id_mol.GetAtoms()[d1].GetSymbol()
+        d2_elem = id_mol.GetAtoms()[d2].GetSymbol()
+        d3_elem = id_mol.GetAtoms()[d3].GetSymbol()
+        dihedral_elem = [d0_elem, d1_elem, d2_elem, d3_elem]
+
         dihedral_list.append(dihedral)
+        dihedral_elem_list.append(dihedral_elem)
         
-    return dihedral_list
+    return dihedral_list, dihedral_elem_list
 
