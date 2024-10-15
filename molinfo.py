@@ -7,7 +7,11 @@ import pickle
 import subprocess
 import numpy as np
 from openff.toolkit.topology import Molecule
-from openff.toolkit import Quantity, unit
+from openff.toolkit import Quantity
+from openff import toolkit
+from openmm.app import *
+from openmm import *
+from openmm.unit import kelvin, picosecond, picoseconds
 import cclib
 
 class Mol_Info(object):
@@ -175,6 +179,59 @@ class Mol_Info(object):
                     if aseatoms is not None:
                         write(f"scan_{i}.xyz", aseatoms)
                 
+    def get_dihedral_ff(self, forcefield=None):
+        mmm = self.get_molecule_omm()
+        for mol in self.mol_info.keys():
+            for m in mmm:
+                if m.name == mol:
+                    bonds_info = m.bonds
+            
+            self.mol_info[mol]["dihedral_ffenergy"] = [ None for _ in self.mol_info[mol]["dihedral_done"]]
+
+            for i_dihed in range(len(self.mol_info[mol]["dihedral_aseatoms"])):
+                if self.mol_info[mol]["dihedral_done"][i_dihed] == True:
+                    self.mol_info[mol]["dihedral_ffenergy"][i_dihed] = np.array([])
+                    for i in range(len(self.mol_info[mol]["dihedral_aseatoms"][i_dihed])):
+                        pdb_ase = self.mol_info[mol]["dihedral_aseatoms"][i_dihed][i].copy()
+                        pdb_ase.arrays["atomtypes"] = [i for i in range(len(pdb_ase))]
+                        write(f"temp_dihed_{i}.pdb", pdb_ase)
+                        pdb_ase_cell = pdb_ase.copy()
+                        pdb_ase_cell.cell = [1000,1000,1000] ; pdb_ase_cell.pbc = True
+                        write(f"temp_dihed_{i}_cell.pdb", pdb_ase_cell)
+                        pdb_omm = PDBFile(f"temp_dihed_{i}.pdb")
+                        atomlist_openmm = [a for a in pdb_omm.topology.atoms()]
+                        for b in bonds_info:
+                            a1 = atomlist_openmm[b.atom1_index]
+                            a2 = atomlist_openmm[b.atom2_index]
+                            pdb_omm.topology.addBond(a1, a2)
+                        
+                        pdb_omm_cell = PDBFile(f"temp_dihed_{i}_cell.pdb")
+                        atomlist_openmm_cell = [a for a in pdb_omm_cell.topology.atoms()]
+                        for b in bonds_info:
+                            a1 = atomlist_openmm_cell[b.atom1_index]
+                            a2 = atomlist_openmm_cell[b.atom2_index]
+                            pdb_omm_cell.topology.addBond(a1, a2)
+                    
+                        # gaff = template_generator(molecules=mmm, forcefield=params["ff_params"]["fftype"], il_assign=params["fsa_assign"])
+                        # forcefield = ForceField(params["ff_params"]["iontype"])
+                        # forcefield.registerTemplateGenerator(gaff.generator)
+                        system = forcefield.createSystem(pdb_omm.topology, nonbondedMethod=NoCutoff)
+                        for j, f in enumerate(system.getForces()):
+                            f.setForceGroup(j)
+                            integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, 0.004*picoseconds)
+                            simulation = Simulation(pdb_omm.topology, system, integrator)
+                            simulation.context.setPositions(pdb_omm.positions)
+
+                        potential_energies = []
+                        for gi, f in enumerate(system.getForces()):
+                            state = simulation.context.getState(getEnergy=True, groups={gi})
+                            # print(f.getName(), state.getPotentialEnergy())
+                            potential_energies.append(state.getPotentialEnergy().real)
+                        
+                        os.remove(f"temp_dihed_{i}.pdb")
+                        os.remove(f"temp_dihed_{i}_cell.pdb")
+                        self.mol_info[mol]["dihedral_ffenergy"][i_dihed] = np.append(self.mol_info[mol]["dihedral_ffenergy"][i_dihed], sum(potential_energies))
+
 
     def get_charges_from_molinfo(self=None):
         for key in self.mol_info.keys():
@@ -285,7 +342,7 @@ class Mol_Info(object):
                 self.mol_info = self.get_sdf_from_molinfo()
             
             molecule_mm = Molecule.from_file(sdffile)
-            molecule_mm.partial_charges = Quantity(self.mol_info[mol]["charges"], unit.elementary_charge)
+            molecule_mm.partial_charges = Quantity(self.mol_info[mol]["charges"], toolkit.unit.elementary_charge)
             molecule_mm.name = mol
             # molecule_mm.total_charge = Quantity(self.mol_info[mol]["charge"], unit.elementary_charge)  ## why ??
             for meta_key in self.mol_info[mol]["metadata"].keys():
@@ -510,4 +567,44 @@ def _get_rotatable_dihedral(rdmol):
         dihedral_elem_list.append(dihedral_elem)
         
     return dihedral_list, dihedral_elem_list
+
+def draw_dihedral_plots(mol_info, molkey):
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(4, 3))
+    n_dihedrals = len(mol_info.mol_info[molkey]["dihedral_angle"])
+    for i in range(n_dihedrals):
+        if mol_info.mol_info[molkey]["dihedral_energy"][i] is not None:
+            plt.scatter(mol_info.mol_info[molkey]["dihedral_angle"][i], (mol_info.mol_info[molkey]["dihedral_energy"][i] - mol_info.mol_info[molkey]["dihedral_energy"][i].min()) / (units.kJ * (units.mol**-1)))
+            plt.plot(mol_info.mol_info[molkey]["dihedral_angle"][i], (mol_info.mol_info[molkey]["dihedral_ffenergy"][i] - mol_info.mol_info[molkey]["dihedral_ffenergy"][i].min()),label=f"dihedral_{i}")
+    plt.legend(loc='lower center', bbox_to_anchor=(0.5, 1), ncol=2)
+    plt.xlabel("Dihedral angle (deg)")
+    plt.ylabel("Potential energy (kJ/mol)")
+    plt.xticks(range(-180, 181, 60))
+    plt.grid()
+
+def draw_dihedral_structures(mol_info, molkey):
+    # key_name = "MOL_0"
+    from IPython.display import SVG
+    from rdkit.Chem.Draw import rdMolDraw2D
+    tm_list = []
+    highlighAtoms_list = []
+    legends_list = []
+    n_dihedrals = len(mol_info.mol_info[molkey]["rotatable_dihedral"])
+    for i_dihed in range(n_dihedrals):
+        highlighAtoms_list.append(mol_info.mol_info[molkey]["rotatable_dihedral"][i_dihed])
+        tm = rdMolDraw2D.PrepareMolForDrawing(mol_info.mol_info[molkey]["rdkitmol2d"])
+        tm_list.append(mol_info.mol_info[molkey]["rdkitmol2d"])
+        legends_list.append(f"dihedral_{i_dihed}")
+
+    dec = [800 // n_dihedrals + (1 if i < 800 % n_dihedrals else 0) for i in range(n_dihedrals)]
+    # decの先頭に800を追加
+    dec.insert(0, 800)
+    l = [dec]
+    view = rdMolDraw2D.MolDraw2DSVG(*l[0])
+
+    view.DrawMolecules(tm_list, highlightAtoms=highlighAtoms_list, legends=legends_list)
+    view.FinishDrawing()
+
+    svg = view.GetDrawingText()
+    return SVG(svg)
 
