@@ -1,5 +1,6 @@
 from ase.io import read, write
 import ase
+from ase import units
 from ase.geometry import get_distances
 from ase.data import chemical_symbols
 
@@ -10,6 +11,7 @@ import numpy as np
 from collections import defaultdict
 
 import os
+import random
 
 ##### Future implementation #####
 # Distinguish the cis and trans isomers
@@ -226,7 +228,8 @@ def aseatoms2pdb(filename, atoms):
                 atomline = pdb_atom_format.format('ATOM', i+1, str(atomname), ' ', f'{atoms.arrays["residuenames"][i]}', ' ',int(f'{atoms.arrays["residuenumbers"][i]}'), ' ', ' ',  atom.position[0], atom.position[1], atom.position[2], 1.0, 0.0, ' ',atoms.get_chemical_symbols()[i])
                 atomname = 0
             else:
-                atomline = pdb_atom_format.format('ATOM', i+1, str(atomname), ' ', f'{atoms.arrays["residuenames"][i]}', ' ',int(f'{atoms.arrays["residuenumbers"][i]}'), ' ', ' ',  atom.position[0], atom.position[1], atom.position[2], 1.0, 0.0, ' ',atoms.get_chemical_symbols()[i])
+                symbol = atoms.get_chemical_symbols()[i]
+                atomline = pdb_atom_format.format('ATOM', i+1, symbol+str(atomname), ' ', f'{atoms.arrays["residuenames"][i]}', ' ',int(f'{atoms.arrays["residuenumbers"][i]}'), ' ', ' ',  atom.position[0], atom.position[1], atom.position[2], 1.0, 0.0, ' ',atoms.get_chemical_symbols()[i])
                 atomname += 1
             f.write(atomline+"\n")
         f.write("ENDMDL\n")
@@ -252,3 +255,63 @@ def expand_cell(atoms, length=30):
     atoms = atoms.repeat((a_dup, b_dup, c_dup))
     return atoms
 
+
+def pdb2packmol(pdbfiles, num_mols=None, cell=None, desired_density=None, outfile="packmol_tmp.xyz"):
+    """
+    pdbfiles: list of pdb files
+    num_mols: list of number of molecules of each pdb file
+    cell: cell size
+    desired_density: desired density (kg/m^3)
+    outfile: output file
+
+    return: bonds_top, atomslist_mols, molecule_list
+            bonds_top: list of bonds
+            atomslist_mols: list of ase atoms objects
+            molecule_list: list of molecule indices
+    """
+    if num_mols == None:
+        num_mols = [1 for _ in  pdbfiles]
+    if cell == None:
+        cell = [1000,1000,1000]
+        if desired_density != None:
+            M = 0.0
+            for i, pdb in enumerate(pdbfiles):
+                atoms = read(pdb)
+                M += atoms.get_masses().sum() * num_mols[i]
+            rho = M / (cell[0]*cell[1]*cell[2])
+            rho *= units.m**3 / units.kg
+            scale = (rho / desired_density)**(1/3)
+            cell = [cell[0]*scale, cell[1]*scale, cell[2]*scale]
+
+    with open("pack_tmp.inp",mode='w') as f:
+        f.write("seed  "+str(random.randint(1, 10000))+"\n")
+        f.write("tolerance 2 \n")
+        f.write("filetype pdb \n")
+        f.write("output  packmol_tmp.pdb  \n")
+        ntot_atoms = 0
+        bonds_top = []
+        atomslist_mols = []
+        molecule_list = []
+        for i in range(len(pdbfiles)):
+            atoms_pdb = read(pdbfiles[i])
+            n_atoms = len(atoms_pdb)
+            atoms_pdb.arrays["atomtypes"] = [atoms_pdb.arrays["atomtypes"][i]+str(i+1) for i in range(len(atoms_pdb.arrays["atomtypes"]))]
+            write(f"atoms_{i}.pdb",atoms_pdb)
+            atomslist_mols.append(atoms_pdb)
+            molecule_list.append([i])
+            for _ in range(num_mols[i]):
+                bonds  = asemol_wrapper(read(pdbfiles[i])).get_bonds()
+                bonds  = [(b[0] + ntot_atoms , b[1]+ ntot_atoms )  for b in bonds]
+                ntot_atoms += n_atoms
+                for b in bonds:
+                    bonds_top.append(b)
+            f.write(f"structure  atoms_{i}.pdb \n")
+            f.write(f"  number  {num_mols[i]} \n")
+            f.write(f"  inside box  0.0 0.0 0.0 {cell[0]} {cell[1]} {cell[2]} \n")
+            f.write("end structure \n")
+    _ = os.system("packmol < "+"pack_tmp.inp")
+    atoms_packtmp = read("packmol_tmp.pdb") 
+    atoms_packtmp.cell = cell
+    atoms_packtmp.pbc  = True
+    write(f"{outfile}", atoms_packtmp)
+    return bonds_top, atomslist_mols, molecule_list

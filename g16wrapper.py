@@ -61,6 +61,7 @@ def molinfo_setg16opt(mol_info, params_opt=None):
     for key in mol_info.keys():
         output_dir = key
         mol_info[key]["g16opt"] = []
+        mol_info[key]["g16optlog"] = []
         for i in range(len(mol_info[key]["aseatoms_list"])):
             atoms = mol_info[key]["aseatoms_list"][i]
             charge = mol_info[key]["charge"]
@@ -82,22 +83,26 @@ def molinfo_setg16charge(mol_info, params_charge=None):
                 assert False, f"Invalid algo {params_charge['algo']}"
 
     for key in mol_info.keys():
-        energy_list = mol_info[key]["geoopt_energy"]
-        # energy_listが全てNoneの場合はエラーを出力し次の分子へ
-        if all(x is None for x in energy_list):
-            print(f"{key} has no geoopt results")
-            continue
+        if "geoopt_energy" in mol_info[key]:
+            energy_list = mol_info[key]["geoopt_energy"]
+            # energy_listが全てNoneの場合はエラーを出力し次の分子へ
+            if all(x is None for x in energy_list):
+                print(f"{key} has no geoopt results")
+                atoms = mol_info[key]["aseatoms_list"][0]
+            else:
+                energy_list = [1e10 if x is None else x for x in energy_list]
+                min_idx = mol_info[key]["geoopt_energy"].index(min(energy_list))
+                # stable_atoms = mol_info[key]["g16opt"][min_idx]
+                # optlog = mol_info[key]["g16opt"][min_idx].label + ".log"
+                optlog = mol_info[key]["g16optlog"][min_idx]
+                atoms = read(optlog)
         else:
-            # energy_listでもしNoneの場合は1e10に置き換える
-            energy_list = [1e10 if x is None else x for x in energy_list]
-            min_idx = mol_info[key]["geoopt_energy"].index(min(energy_list))
-            stable_atoms = mol_info[key]["g16opt"][min_idx]
-            optlog = mol_info[key]["g16opt"][min_idx].label + ".log"
-            atoms = read(optlog)
-            charge = mol_info[key]["charge"]
-            label = f"{key}_charge"
-            g16 = input_g16(atoms, params_charge, charge, key, label)
-            mol_info[key]["g16charge"] = g16
+            atoms = mol_info[key]["aseatoms_list"][0]
+        charge = mol_info[key]["charge"]
+        label = f"{key}_charge"
+        g16 = input_g16(atoms, params_charge, charge, key, label)
+        mol_info[key]["g16charge"] = g16
+
 
 def molinfo_setg16dihedral(mol_info, params_dihedral=None):
     if params_dihedral is None:

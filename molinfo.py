@@ -2,6 +2,7 @@ from rdkit import Chem
 from rdkit.Chem import rdDetermineBonds, rdDepictor
 from ase.io import read, write
 import os
+import shutil
 import copy
 import pickle
 import subprocess
@@ -15,11 +16,113 @@ from openmm.unit import kelvin, picosecond, picoseconds
 import cclib
 
 class Mol_Info(object):
-    def __init__(self, atomslist_mols=None, molecule_list=None):
-        self.asemols = atomslist_mols
-        self.molecule_list = molecule_list
-        if atomslist_mols is not None or molecule_list is not None:
-            self.mol_info = self.asemol2molinfo(atomslist_mols, molecule_list)
+    def __init__(self):
+        self.mol_info = {}
+    
+    def append_fromdir(self, directory, Nmols: int = 1):
+        """
+        Append directory to mol_info dictionary
+        directory: directory path
+        Nmols: Number of molecules in the directory
+        """
+        key = os.path.basename(directory)
+        if key in self.mol_info.keys():
+            assert False, f"Key: {key} already exists"
+        
+        if os.path.abspath(directory) != os.path.abspath(key): 
+            directory = shutil.copytree(directory, f"{key}", dirs_exist_ok=True)
+            directory = os.path.basename(directory)
+        else:
+            directory = key
+
+        self.mol_info[key] = {}
+        self.mol_info[key]["metadata"] = {}
+        self.mol_info[key]["directory"] = directory
+        self.mol_info[key]["Nmols"] = Nmols
+
+        # *pklファイルがあれば読み込む
+        if os.path.exists(f"{directory}/mol_info.pkl"):
+            print("load pickle file")
+            with open(f"{directory}/mol_info.pkl", mode='rb') as f:
+                mol_info = pickle.load(f)
+                for infokey, value in mol_info.items():
+                    self.mol_info[key][infokey] = value
+        
+    def append_fromAtomsList(self, atomslist: list, key: str, Nmols: int = None):
+        """
+        Append ase.Atoms to mol_info dictionary
+        atomslist: List of ase.Atoms
+        key: key of mol_info dictionary
+        """
+        self.mol_info[key] = {}
+        self.mol_info[key]["metadata"] = {}
+        self.mol_info[key]["aseatoms_list"] = atomslist
+        self.mol_info[key]["Natoms"] = len(atomslist[0])
+        if Nmols is None:
+            self.mol_info[key]["Nmols"] = len(atomslist)
+        else:
+            self.mol_info[key]["Nmols"] = Nmols
+        
+        os.makedirs(key, exist_ok=True)
+        self.mol_info[key]["directory"] = key
+        write(f"{key}/{key}.xyz", atomslist[0], format="xyz")
+    
+    def auto_charge_assign(self):
+        num_charge_none = 0
+        total_charge = 0
+        for key in self.mol_info.keys():
+            totalnum_elec = self.mol_info[key]["aseatoms_list"][0].get_atomic_numbers().sum()
+            openshell_flag = totalnum_elec % 2 == 1
+            self.mol_info[key]["symbol"] = str(self.mol_info[key]["aseatoms_list"][0].symbols)
+            if self.mol_info[key]["symbol"] in ["Li", "Na", "K", "Rb", "Cs", "Mg"]:
+                self.mol_info[key]["charge"] = 1
+            elif self.mol_info[key]["symbol"] in ["F", "Cl", "Br", "I"]:
+                self.mol_info[key]["charge"] = -1
+            elif self.mol_info[key]["symbol"] in ["Mg", "Ca", "Sr", "Ba"]:
+                self.mol_info[key]["charge"] = 2
+            elif openshell_flag:
+                self.mol_info[key]["charge"] = None
+            else:
+                self.mol_info[key]["charge"] = 0
+
+        for key in self.mol_info.keys():
+            if self.mol_info[key]["charge"] is None:
+                num_charge_none += 1 * self.mol_info[key]["Nmols"]
+            else:
+                total_charge += self.mol_info[key]["charge"] * self.mol_info[key]["Nmols"]
+
+        if num_charge_none > 0 and total_charge % num_charge_none == 0:
+            charge_per_none = int(-total_charge / num_charge_none)
+            for key in self.mol_info.keys():
+                if self.mol_info[key]["charge"] is None:
+                    self.mol_info[key]["charge"] = charge_per_none
+
+    def get_rdkitmol(self):
+        for key in self.mol_info.keys():
+            natoms = self.mol_info[key]["Natoms"]
+            directory = self.mol_info[key]["directory"]
+
+            if natoms > 1:
+                mol = Chem.MolFromXYZFile(f"{directory}/{key}.xyz")
+                mol = Chem.Mol(mol)
+                charge = self.mol_info[key]["charge"]
+                rdDetermineBonds.DetermineBonds(mol,charge=charge)
+                mol2d = copy.deepcopy(mol)
+                rdDepictor.Compute2DCoords(mol2d)
+                self.mol_info[key]["rdkitmol"] = mol
+                self.mol_info[key]["rdkitmol2d"] = mol2d
+            else:
+                symbol = self.mol_info[key]["symbol"]
+                charge = self.mol_info[key]["charge"]
+                if charge > 0:
+                    mol = Chem.MolFromSmiles(f"[{symbol}+{abs(charge)}]")
+                elif charge < 0:
+                    mol = Chem.MolFromSmiles(f"[{symbol}-{abs(charge)}]")
+                else:
+                    mol = Chem.MolFromSmiles(f"[{symbol}]")
+                self.mol_info[key]["rdkitmol"] = mol
+                self.mol_info[key]["rdkitmol2d"] = mol
+
 
     def asemol2molinfo(self, atomslist_mols, molecule_list):
         """
@@ -56,7 +159,7 @@ class Mol_Info(object):
             else:
                 total_charge += value["charge"] * len(value["molecule_list"])
 
-        if total_charge % num_charge_none == 0:
+        if num_charge_none > 0 and total_charge % num_charge_none == 0:
             charge_per_none = int(-total_charge / num_charge_none)
             for key in mol_info.keys():
                 if mol_info[key]["charge"] is None:
@@ -65,6 +168,7 @@ class Mol_Info(object):
 
         for key in mol_info.keys():
             os.makedirs(key, exist_ok=True)
+            mol_info[key]["directory"] = key
             write(f"{key}/{key}.xyz", atomslist_mols[mol_info[key]["molecule_list"][0]], format="xyz")
             natoms = len(atomslist_mols[mol_info[key]["molecule_list"][0]])
 
@@ -111,20 +215,44 @@ class Mol_Info(object):
             writer.write(mol)
             writer.close()
 
-    def load_geoopt_results(self):
-        for key in self.mol_info.keys():
+    def load_geoopt_results(self, g16logfiles: list = None, key: str = None):
+        if g16logfiles is None and key is None:
+            for key in self.mol_info.keys():
+                self.mol_info[key]["geoopt_energy"] = []
+                self.mol_info[key]["geoopt_done"] = []
+                for g16 in self.mol_info[key]["g16opt"]:
+                    try:
+                        results = g16.read_results()
+                        energy = g16.get_potential_energy()
+                        self.mol_info[key]["geoopt_done"].append(True)
+                        self.mol_info[key]["g16optlog"].append(g16.label+".log")
+                    except:
+                        energy = None
+                        self.mol_info[key]["geoopt_done"].append(False)
+                        self.mol_info[key]["g16optlog"].append(None)
+                        print(f"Warning: No results found in {g16.label}")
+
+                    self.mol_info[key]["geoopt_energy"].append(energy)
+
+        elif g16logfiles is not None and key is not None:
             self.mol_info[key]["geoopt_energy"] = []
             self.mol_info[key]["geoopt_done"] = []
-            for g16 in self.mol_info[key]["g16opt"]:
-                try:
-                    results = g16.read_results()
-                    energy = g16.get_potential_energy()
-                    self.mol_info[key]["geoopt_done"].append(True)
-                except:
-                    energy = None
-                    self.mol_info[key]["geoopt_done"].append(False)
-                    print(f"Warning: No results found in {g16.label}")
-                self.mol_info[key]["geoopt_energy"].append(energy)
+            self.mol_info[key]["g16optlog"] = []
+            if type(g16logfiles) == list:
+                for i, g16log in enumerate(g16logfiles):
+                    try:
+                        g16 = read(g16log)
+                        energy = g16.get_potential_energy()
+                        self.mol_info[key]["geoopt_done"].append(True)
+                        self.mol_info[key]["g16optlog"].append(g16log)
+                    except:
+                        energy = None
+                        self.mol_info[key]["geoopt_done"].append(False)
+                        print(f"Warning: No results found in {g16log}")
+                    self.mol_info[key]["geoopt_energy"].append(energy)
+            else:
+                print("Error: g16logfiles should be list")
+
     
     def load_dihedral_results(self):
         import os
@@ -233,8 +361,10 @@ class Mol_Info(object):
                         self.mol_info[mol]["dihedral_ffenergy"][i_dihed] = np.append(self.mol_info[mol]["dihedral_ffenergy"][i_dihed], sum(potential_energies))
 
 
-    def get_charges_from_molinfo(self=None):
+    def get_charges_from_molinfo(self):
+        print(self.mol_info.keys())
         for key in self.mol_info.keys():
+            print(key)
             natoms = len(self.mol_info[key]["aseatoms_list"][0])
             if natoms == 1:
                 self.mol_info[key]["charges"] = [self.mol_info[key]["charge"]]
@@ -246,7 +376,7 @@ class Mol_Info(object):
                              '@<TRIPOS>SUBSTRUCTURE': [['1', 'MOL', '1', 'TEMP', '0', '****', '****', '0', 'ROOT']]}
                 write_mol2(output_mol2, mol2_dict)
 
-            elif  "g16charge" in self.mol_info[key] and \
+            elif "g16charge" in self.mol_info[key] and \
                 '6/33=2' in self.mol_info[key]["g16charge"].parameters["ioplist"] and \
                 '6/42=6' in self.mol_info[key]["g16charge"].parameters["ioplist"]:
                 chgmethod = "resp"
@@ -290,7 +420,7 @@ class Mol_Info(object):
 
             charges = [d[-1] for d in  mol2_dict["@<TRIPOS>ATOM"]]
             self.mol_info[key]["charges"] = charges
-            self.mol_info[key]["mol2file"] = output_mol2
+            self.mol_info[key]["mol2file"] = os.path.basename(output_mol2)
 
     # def get_molecules_omm(self):
     #     for mol_i in self.mol_info.keys():
@@ -300,7 +430,7 @@ class Mol_Info(object):
     #                 self.mol_info[mol_i]["molecules_omm"].append(self.mol_info[mol_i]["molecules"][i])
     #     return self.mol_info
 
-    def scale_charges(self, ff_params=None):
+    def adjust_charges(self, ff_params=None):
         for key in self.mol_info.keys():
             net_charge = self.mol_info[key]["charge"]
             charges = np.array([ np.float64(ee) for ee in self.mol_info[key]["charges"]])
@@ -349,7 +479,7 @@ class Mol_Info(object):
                 for meta_ind in self.mol_info[mol]["metadata"][meta_key]:
                     molecule_mm.atoms[meta_ind].metadata[meta_key] = True
             if "mol2file" in self.mol_info[mol]:
-                molecule_mm.mol2file = self.mol_info[mol]["mol2file"]
+                molecule_mm.mol2file = os.path.join(self.mol_info[mol]["directory"], self.mol_info[mol]["mol2file"])
             molecules_omm.append(molecule_mm)
         return molecules_omm
     
@@ -424,7 +554,13 @@ class Mol_Info(object):
     def save_molinfo(self, filename="mol_info.pkl"):
         with open(filename, mode='wb') as f:
             pickle.dump(self,f)
-
+        
+        for key in self.mol_info.keys():
+            directory = self.mol_info[key]["directory"]
+            with open(f"{directory}/{filename}", mode='wb') as f:
+                mol_info = copy.deepcopy(self.mol_info[key])
+                mol_info.pop("directory")
+                pickle.dump(mol_info, f)
 
     def il_assign(self):
         for key in self.mol_info.keys():
