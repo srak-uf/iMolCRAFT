@@ -296,6 +296,7 @@ def pdb2packmol(pdbfiles, num_mols=None, cell=None, desired_density=None, outfil
             atoms_pdb = read(pdbfiles[i])
             n_atoms = len(atoms_pdb)
             atoms_pdb.arrays["atomtypes"] = [atoms_pdb.arrays["atomtypes"][i]+str(i+1) for i in range(len(atoms_pdb.arrays["atomtypes"]))]
+            atoms_pdb.arrays["residuenames"] = ["M"+str(i+1) for _ in range(len(atoms_pdb.arrays["residuenames"]))]
             write(f"atoms_{i}.pdb",atoms_pdb)
             atomslist_mols.append(atoms_pdb)
             molecule_list.append([i])
