@@ -361,66 +361,79 @@ class Mol_Info(object):
                         self.mol_info[mol]["dihedral_ffenergy"][i_dihed] = np.append(self.mol_info[mol]["dihedral_ffenergy"][i_dihed], sum(potential_energies))
 
 
-    def get_charges_from_molinfo(self):
-        print(self.mol_info.keys())
-        for key in self.mol_info.keys():
-            print(key)
-            natoms = len(self.mol_info[key]["aseatoms_list"][0])
-            if natoms == 1:
-                self.mol_info[key]["charges"] = [self.mol_info[key]["charge"]]
-                output_mol2 = os.path.join(key, "single_charge.mol2")
-                print(output_mol2)
-                mol2_dict = {"@<TRIPOS>MOLECULE":[['MOL'], ['1', '0', '1', '0', '0'], ['SMALL'], ['single'],[],[]],\
-                             '@<TRIPOS>ATOM': [['1', 'Li1', '0.0000', '0.0000', '0.0000', 'Li', '1', 'MOL', self.mol_info[key]["charge"]]],\
-                             '@<TRIPOS>BOND': [],\
-                             '@<TRIPOS>SUBSTRUCTURE': [['1', 'MOL', '1', 'TEMP', '0', '****', '****', '0', 'ROOT']]}
-                write_mol2(output_mol2, mol2_dict)
-
-            elif "g16charge" in self.mol_info[key] and \
-                '6/33=2' in self.mol_info[key]["g16charge"].parameters["ioplist"] and \
-                '6/42=6' in self.mol_info[key]["g16charge"].parameters["ioplist"]:
-                chgmethod = "resp"
-                g16chglog = self.mol_info[key]["g16charge"].label + ".log"
-                dirname = os.path.dirname(g16chglog)
-                output_mol2 =  os.path.join(dirname, "resp_charge.mol2")
-                nc = self.mol_info[key]["charge"]
-                cmd_antech = (
-                    f"antechamber -i {g16chglog} -fi gout "
-                    f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y -dr no")
-                print(cmd_antech)
-                output = subprocess.getoutput(cmd_antech)
-                print(output)
-                mol2_dict = read_mol2(output_mol2)
-            else:
-                chgmethod = "bcc"
-                if "getopt_done" in self.mol_info[key] and True in self.mol_info[key]["geoopt_done"]:
-                    energy_list = self.mol_info[key]["geoopt_energy"]
-                    energy_list = [1e10 if x is None else x for x in energy_list]
-                    min_idx = self.mol_info[key]["geoopt_energy"].index(min(energy_list))
-                    g16chglog = self.mol_info[key]["g16opt"][min_idx].label + ".log"
-                    dirname = os.path.dirname(g16chglog)
-                    output_mol2 =  os.path.join(dirname, "bcc_charge.mol2")
-                    nc = self.mol_info[key]["charge"]
+    def get_charges_from_molinfo(self, g16logfile: str = None, key: str = None):
+        def get_resp(mol_info, output_mol2, g16logfile, key):
+            nc = mol_info[key]["charge"]
+            g16logfile = os.path.abspath(g16logfile)
+            cmd_antech = (
+                        f"antechamber -i {g16logfile} -fi gout "
+                        f"-o {output_mol2} -fo mol2 -at sybyl -c resp -nc {nc} -pf y -dr no")
+            print(cmd_antech)
+            output = subprocess.getoutput(cmd_antech)
+            print(output)
+            mol2_dict = read_mol2(output_mol2)
+            return mol2_dict
+    
+        if g16logfile is None and key is None:
+            print(self.mol_info.keys())
+            for key in self.mol_info.keys():
+                print(key)
+                natoms = len(self.mol_info[key]["aseatoms_list"][0])
+                if natoms == 1:
+                    self.mol_info[key]["charges"] = [self.mol_info[key]["charge"]]
+                    output_mol2 = os.path.join(key, "single_charge.mol2")
                     print(output_mol2)
-                    cmd_antech = (
-                        f"antechamber -i {g16chglog} -fi gout "
-                        f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y -dr no")
-                    output = subprocess.getoutput(cmd_antech)
-                    mol2_dict = read_mol2(output_mol2)
-                else:
-                    write(f"{key}/{key}_bcc.pdb", self.mol_info[key]["aseatoms_list"][0])
-                    g16chglog = f"{key}/{key}_bcc.pdb"
-                    output_mol2 =  f"{key}/bcc_charge.mol2"
-                    nc = self.mol_info[key]["charge"]
-                    cmd_antech = (
-                        f"antechamber -i {g16chglog} -fi pdb "
-                        f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y -dr no")
-                    output = subprocess.getoutput(cmd_antech)
-                    mol2_dict = read_mol2(output_mol2)
+                    mol2_dict = {"@<TRIPOS>MOLECULE":[['MOL'], ['1', '0', '1', '0', '0'], ['SMALL'], ['single'],[],[]],\
+                                '@<TRIPOS>ATOM': [['1', 'Li1', '0.0000', '0.0000', '0.0000', 'Li', '1', 'MOL', self.mol_info[key]["charge"]]],\
+                                '@<TRIPOS>BOND': [],\
+                                '@<TRIPOS>SUBSTRUCTURE': [['1', 'MOL', '1', 'TEMP', '0', '****', '****', '0', 'ROOT']]}
+                    write_mol2(output_mol2, mol2_dict)
 
+                elif "g16charge" in self.mol_info[key] and \
+                    '6/33=2' in self.mol_info[key]["g16charge"].parameters["ioplist"] and \
+                    '6/42=6' in self.mol_info[key]["g16charge"].parameters["ioplist"]:
+                    g16chglog = self.mol_info[key]["g16charge"].label + ".log"
+                    dirname = os.path.dirname(g16chglog)
+                    output_mol2 =  os.path.join(dirname, "resp_charge.mol2")
+                    mol2_dict = get_resp(self.mol_info, output_mol2, g16chglog, key)
+                else:
+                    chgmethod = "bcc"
+                    if "getopt_done" in self.mol_info[key] and True in self.mol_info[key]["geoopt_done"]:
+                        energy_list = self.mol_info[key]["geoopt_energy"]
+                        energy_list = [1e10 if x is None else x for x in energy_list]
+                        min_idx = self.mol_info[key]["geoopt_energy"].index(min(energy_list))
+                        g16chglog = self.mol_info[key]["g16opt"][min_idx].label + ".log"
+                        dirname = os.path.dirname(g16chglog)
+                        output_mol2 =  os.path.join(dirname, "bcc_charge.mol2")
+                        nc = self.mol_info[key]["charge"]
+                        print(output_mol2)
+                        cmd_antech = (
+                            f"antechamber -i {g16chglog} -fi gout "
+                            f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y -dr no")
+                        output = subprocess.getoutput(cmd_antech)
+                        mol2_dict = read_mol2(output_mol2)
+                    else:
+                        write(f"{key}/{key}_bcc.pdb", self.mol_info[key]["aseatoms_list"][0])
+                        g16chglog = f"{key}/{key}_bcc.pdb"
+                        output_mol2 =  f"{key}/bcc_charge.mol2"
+                        nc = self.mol_info[key]["charge"]
+                        cmd_antech = (
+                            f"antechamber -i {g16chglog} -fi pdb "
+                            f"-o {output_mol2} -fo mol2 -at sybyl -c {chgmethod} -nc {nc} -pf y -dr no")
+                        output = subprocess.getoutput(cmd_antech)
+                        mol2_dict = read_mol2(output_mol2)
+                charges = [d[-1] for d in  mol2_dict["@<TRIPOS>ATOM"]]
+                self.mol_info[key]["charges"] = charges
+                self.mol_info[key]["mol2file"] = os.path.basename(output_mol2)
+        elif g16logfile is not None and key is not None:
+            dirname = self.mol_info[key]['directory']
+            output_mol2 = os.path.join(dirname, "resp_charge.mol2")
+            mol2_dict = get_resp(self.mol_info, output_mol2, g16logfile, key)
             charges = [d[-1] for d in  mol2_dict["@<TRIPOS>ATOM"]]
             self.mol_info[key]["charges"] = charges
             self.mol_info[key]["mol2file"] = os.path.basename(output_mol2)
+        else:
+            print("Error: Both g16logfile and key should be specified or None")
 
     # def get_molecules_omm(self):
     #     for mol_i in self.mol_info.keys():
