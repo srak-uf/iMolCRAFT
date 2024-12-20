@@ -721,15 +721,29 @@ def draw_dihedral_plots(mol_info, molkey):
     import matplotlib.pyplot as plt
     plt.figure(figsize=(4, 3))
     n_dihedrals = len(mol_info.mol_info[molkey]["dihedral_angle"])
+    dihedral_pots_gt = []
+    dihedral_pots_ff = []
     for i in range(n_dihedrals):
+        dihedral_pot_tmp = []
         if mol_info.mol_info[molkey]["dihedral_energy"][i] is not None:
-            plt.scatter(mol_info.mol_info[molkey]["dihedral_angle"][i], (mol_info.mol_info[molkey]["dihedral_energy"][i] - mol_info.mol_info[molkey]["dihedral_energy"][i].min()) / (units.kJ * (units.mol**-1)))
-            plt.plot(mol_info.mol_info[molkey]["dihedral_angle"][i], (mol_info.mol_info[molkey]["dihedral_ffenergy"][i] - mol_info.mol_info[molkey]["dihedral_ffenergy"][i].min()),label=f"dihedral_{i}")
+            x_angle = mol_info.mol_info[molkey]["dihedral_angle"][i]
+            dihedral_qm = (mol_info.mol_info[molkey]["dihedral_energy"][i] - mol_info.mol_info[molkey]["dihedral_energy"][i].min()) / (units.kJ * (units.mol**-1))
+            dihedral_ff = (mol_info.mol_info[molkey]["dihedral_ffenergy"][i] - mol_info.mol_info[molkey]["dihedral_ffenergy"][i].min())
+
+            plt.scatter(x_angle, dihedral_qm)
+            plt.plot(x_angle, dihedral_ff,label=f"dihedral_{i}")
+            dihedral_pots_gt.append(dihedral_qm)
+            dihedral_pots_ff.append(dihedral_ff)
+        else:
+            dihedral_pots_gt.append(None)
+            dihedral_pots_ff.append(None)
+            
     plt.legend(loc='lower center', bbox_to_anchor=(0.5, 1), ncol=2)
     plt.xlabel("Dihedral angle (deg)")
     plt.ylabel("Potential energy (kJ/mol)")
     plt.xticks(range(-180, 181, 60))
     plt.grid()
+    return dihedral_pots_gt, dihedral_pots_ff
 
 def draw_dihedral_structures(mol_info, molkey):
     # key_name = "MOL_0"
