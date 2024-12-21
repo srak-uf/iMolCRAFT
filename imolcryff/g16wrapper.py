@@ -142,3 +142,15 @@ def molinfo_setg16dihedral(mol_info, params_dihedral=None):
                     f.writelines(lines)
                 mol_info[key]["g16dihedral"].append(g16)
 
+def parse_g16scan(file):
+    with open(file) as f:
+        lines = f.readlines()
+        parserd_lines = []
+        scanned_energy = []
+        for line in lines:
+            if "Optimization completed." in line:
+                scanned_energy.append(parserd_lines[-1])
+                parserd_lines.append(line)
+            elif "SCF Done:" in line:
+                parserd_lines.append(float(line.split()[4]))
+    return scanned_energy
