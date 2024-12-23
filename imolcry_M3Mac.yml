@@ -1,4 +1,4 @@
-name: imolcry_test
+name: imolcry
 channels:
   - conda-forge
 dependencies:
