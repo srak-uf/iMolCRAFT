@@ -122,6 +122,8 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
                     gaffmol2["@<TRIPOS>ATOM"][i][5] = self.il_assign["FSA"]["S"]
                 elif "FSA_N" in atom.metadata and atom.metadata["FSA_N"] == True:
                     gaffmol2["@<TRIPOS>ATOM"][i][5] = self.il_assign["FSA"]["N"]
+                elif "FSA_O" in atom.metadata and atom.metadata["FSA_O"] == True:
+                    gaffmol2["@<TRIPOS>ATOM"][i][5] = self.il_assign["FSA"]["O"]
 
             # Modify bond types
             for i, bond in enumerate(molecule.bonds):

@@ -1,6 +1,7 @@
 from rdkit import Chem
 from rdkit.Chem import rdDetermineBonds, rdDepictor
 from ase.io import read, write
+from ase import units
 import os
 import shutil
 import copy
@@ -332,17 +333,28 @@ class Mol_Info(object):
                             a1 = atomlist_openmm[b.atom1_index]
                             a2 = atomlist_openmm[b.atom2_index]
                             pdb_omm.topology.addBond(a1, a2)
-                        
-                        pdb_omm_cell = PDBFile(f"temp_dihed_{i}_cell.pdb")
-                        atomlist_openmm_cell = [a for a in pdb_omm_cell.topology.atoms()]
-                        for b in bonds_info:
-                            a1 = atomlist_openmm_cell[b.atom1_index]
-                            a2 = atomlist_openmm_cell[b.atom2_index]
-                            pdb_omm_cell.topology.addBond(a1, a2)
-                    
-                        # gaff = template_generator(molecules=mmm, forcefield=params["ff_params"]["fftype"], il_assign=params["fsa_assign"])
-                        # forcefield = ForceField(params["ff_params"]["iontype"])
-                        # forcefield.registerTemplateGenerator(gaff.generator)
+
+                        # for relaxed scan
+                        from openmm.unit import degree, kilojoules_per_mole
+                        system = forcefield.createSystem(pdb_omm.topology, nonbondedMethod=NoCutoff)
+                        restraint = PeriodicTorsionForce()
+                        d1 = self.mol_info[mol]["rotatable_dihedral"][i_dihed][0]
+                        d2 = self.mol_info[mol]["rotatable_dihedral"][i_dihed][1]
+                        d3 = self.mol_info[mol]["rotatable_dihedral"][i_dihed][2]
+                        d4 = self.mol_info[mol]["rotatable_dihedral"][i_dihed][3]
+                        dangle = self.mol_info[mol]["dihedral_angle"][i_dihed][i]
+                        restraint.addTorsion(d1,d2,d3,d4, 1, (dangle+180)*degree, 1000*kilojoules_per_mole)
+                        system.addForce(restraint)
+                        integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, 0.004*picoseconds)
+                        simulation = Simulation(pdb_omm.topology, system, integrator)
+                        simulation.context.setPositions(pdb_omm.positions)
+                        simulation.minimizeEnergy()
+                        state = simulation.context.getState(getPositions=True, getEnergy=True)
+                        with open(f"temp_dihed_{i}.pdb", 'w') as output:
+                            PDBFile.writeFile(simulation.topology, state.getPositions(), output)
+                            
+                        # for ff energy
+                        pdb_omm = PDBFile(f"temp_dihed_{i}.pdb")
                         system = forcefield.createSystem(pdb_omm.topology, nonbondedMethod=NoCutoff)
                         for j, f in enumerate(system.getForces()):
                             f.setForceGroup(j)
@@ -582,11 +594,12 @@ class Mol_Info(object):
             charge = self.mol_info[key]["charge"]
             fsalike_Nindex = []
             fsalike_Sindex = []
+            fsalike_Oindex = []
             if charge < 0:
                 atoms = mol.GetAtoms()
                 atoms2d = mol2d.GetAtoms()
 
-                # Check FSA-like N and S atoms
+                # Check FSA-like N, S, and O atoms
                 for i in range(len(atoms)):
                     if atoms[i].GetTotalValence() == 3 and atoms[i].GetSymbol() == "N":
                         for bond in atoms[i].GetBonds():
@@ -603,6 +616,15 @@ class Mol_Info(object):
 
                 fsalike_Nindex = list(set(fsalike_Nindex))
                 fsalike_Sindex = list(set(fsalike_Sindex))
+
+                # Sに結合しているO原子のindexをfsalike_Oindexに追加
+                for i in fsalike_Sindex:
+                    for bond in atoms[i].GetBonds():
+                        if bond.GetEndAtom().GetSymbol() == "O":
+                            fsalike_Oindex.append(bond.GetEndAtomIdx())
+                        elif bond.GetBeginAtom().GetSymbol() == "O":
+                            fsalike_Oindex.append(bond.GetBeginAtomIdx())
+                fsalike_Oindex = list(set(fsalike_Oindex))
 
                 for i in fsalike_Nindex:
                     atoms[i].SetFormalCharge(-1)
@@ -632,6 +654,7 @@ class Mol_Info(object):
 
                 self.mol_info[key]["metadata"]["FSA_N"] = fsalike_Nindex
                 self.mol_info[key]["metadata"]["FSA_S"] = fsalike_Sindex
+                self.mol_info[key]["metadata"]["FSA_O"] = fsalike_Oindex
 
 
 def read_mol2(filename):

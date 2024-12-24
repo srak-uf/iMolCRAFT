@@ -1,0 +1,20 @@
+data_image0
+_chemical_formula_structural       SFO2NSFO2
+_chemical_formula_sum              "S2 F2 O4 N1"
+loop_
+  _atom_site_type_symbol
+  _atom_site_label
+  _atom_site_symmetry_multiplicity
+  _atom_site_Cartn_x
+  _atom_site_Cartn_y
+  _atom_site_Cartn_z
+  _atom_site_occupancy
+  S   S1        1.0  0.503424  7.386892  5.062393  1.0000
+  F   F1        1.0  1.212131  7.310533  6.543039  1.0000
+  O   O1        1.0  1.517346  6.891289  4.167201  1.0000
+  O   O2        1.0  0.083965  8.759874  4.97253  1.0000
+  N   N1        1.0  -0.777784  6.471935  5.264319  1.0000
+  S   S2        1.0  -0.774072  4.895724  5.07694  1.0000
+  F   F2        1.0  -0.68784  4.732279  3.445365  1.0000
+  O   O3        1.0  -2.082893  4.393894  5.398584  1.0000
+  O   O4        1.0  0.391344  4.194957  5.553021  1.0000
