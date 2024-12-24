@@ -259,7 +259,7 @@ def expand_cell(atoms, length=30):
 def pdb2packmol(pdbfiles, num_mols=None, cell=None, desired_density=None, outfile="packmol_tmp.xyz"):
     """
     pdbfiles: list of pdb files
-    num_mols: list of number of molecules of each pdb file
+    num_mols: list of number (or ratio) of molecules of each pdb file
     cell: cell size
     desired_density: desired density (kg/m^3)
     outfile: output file
@@ -271,6 +271,15 @@ def pdb2packmol(pdbfiles, num_mols=None, cell=None, desired_density=None, outfil
     """
     if num_mols == None:
         num_mols = [1 for _ in  pdbfiles]
+    if num_mols != None and cell != None and desired_density != None:
+        M = 0.0
+        for i, pdb in enumerate(pdbfiles):
+            atoms = read(pdb)
+            M += atoms.get_masses().sum() * num_mols[i]
+        Nset = int(desired_density / (M / (cell[0]*cell[1]*cell[2])  * units.m**3 / units.kg ) )
+        num_mols = [ n * Nset  for n in num_mols]
+        print(f"num_mols: {num_mols}")
+        
     if cell == None:
         cell = [1000,1000,1000]
         if desired_density != None:
@@ -313,6 +322,10 @@ def pdb2packmol(pdbfiles, num_mols=None, cell=None, desired_density=None, outfil
     _ = os.system("packmol < "+"pack_tmp.inp")
     atoms_packtmp = read("packmol_tmp.pdb") 
     atoms_packtmp.cell = cell
+    atoms_packtmp.pbc  = True
+    write(f"{outfile}", atoms_packtmp)
+    return bonds_top, atomslist_mols, molecule_list
+
     atoms_packtmp.pbc  = True
     write(f"{outfile}", atoms_packtmp)
     return bonds_top, atomslist_mols, molecule_list
