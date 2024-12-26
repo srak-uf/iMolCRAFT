@@ -22,7 +22,7 @@ ff_params:
 fsa_assign:
   FSA:
     F: f
-    N: n2
+    N: n
     O: o
     S: s6
 
