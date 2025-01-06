@@ -1,0 +1,20 @@
+<ForceField>
+  <Info>
+    <!-- Monovalent ion parameters for TIP3P water from Aqvist (adapeted) in parm99.dat -->
+    <DateGenerated>2022-09-28T04:59:42.423324</DateGenerated>
+    <Source Source="parm/frcmod.ionsff99_tip3p" md5hash="7a95d0238cc433073d73ad21b478f7d0" sourcePackage="AmberTools" sourcePackageVersion="22.0-py38h6177452_1">parm/frcmod.ionsff99_tip3p</Source>
+    <Source Source="lib/atomic_ions.lib" md5hash="e900cee0c71ec2795d25b3555de486e1" sourcePackage="AmberTools" sourcePackageVersion="22.0-py38h6177452_1">lib/atomic_ions.lib</Source>
+  </Info>
+  <AtomTypes>
+    <Type class="ionsff99_tip3p-Li+" element="Li" mass="6.94" name="ionsff99_tip3p-Li+"/><!--          0.029          lithium   pol: J. Phys. Chem. 11,1541,(1978) -->
+  </AtomTypes>
+  <Residues>
+    <Residue name="LI">
+      <Atom charge="0.8" name="LI" type="ionsff99_tip3p-Li+"/>
+    </Residue>
+  </Residues>
+  <NonbondedForce coulomb14scale="0.8333333333333334" lj14scale="0.5">
+    <UseAttributeFromResidue name="charge"/>
+    <Atom epsilon="0.0765672" sigma="0.20259036850511314" type="ionsff99_tip3p-Li+"/><!--              Li+ Aqvist JPC 1990,94,8021. (adapted) -->
+  </NonbondedForce>
+</ForceField>
