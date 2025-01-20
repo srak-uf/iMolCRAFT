@@ -13,7 +13,7 @@ dependencies:
   - openff-forcefields=2024.09.0
   - openmm=8.1.2
   - openmmforcefields=0.14.1
-  - packmol
+  - packmol>=20.15
   - pip=24.2
   - pip:
     - rdkit==2024.3.2

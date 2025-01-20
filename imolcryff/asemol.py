@@ -297,6 +297,7 @@ def pdb2packmol(pdbfiles, num_mols=None, cell=None, desired_density=None, outfil
         f.write("tolerance 2 \n")
         f.write("filetype pdb \n")
         f.write("output  packmol_tmp.pdb  \n")
+        f.write(f"pbc {cell[0]} {cell[1]} {cell[2]} \n")
         ntot_atoms = 0
         bonds_top = []
         atomslist_mols = []
@@ -317,7 +318,6 @@ def pdb2packmol(pdbfiles, num_mols=None, cell=None, desired_density=None, outfil
                     bonds_top.append(b)
             f.write(f"structure  atoms_{i}.pdb \n")
             f.write(f"  number  {num_mols[i]} \n")
-            f.write(f"  inside box  0.0 0.0 0.0 {cell[0]} {cell[1]} {cell[2]} \n")
             f.write("end structure \n")
     _ = os.system("packmol < "+"pack_tmp.inp")
     atoms_packtmp = read("packmol_tmp.pdb") 

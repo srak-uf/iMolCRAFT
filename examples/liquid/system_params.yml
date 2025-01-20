@@ -17,5 +17,5 @@ charge:
 ff_params:
   fftype: gaff-2.1
   iontype: amber/ions/ionsff99_tip3p.xml
-  charge_scale_ion: 0.6
+  charge_scale_ion: 0.8
   charge_scale_neutral: 1.0
