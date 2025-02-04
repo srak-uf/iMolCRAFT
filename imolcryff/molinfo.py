@@ -494,7 +494,7 @@ class Mol_Info(object):
             sdffile = os.path.join(dirname, f"{mol}.sdf")
 
             if not os.path.exists(sdffile):
-                self.mol_info = self.get_sdf_from_molinfo()
+                self.get_sdf_from_molinfo()
             
             molecule_mm = Molecule.from_file(sdffile)
             molecule_mm.partial_charges = Quantity(self.mol_info[mol]["charges"], toolkit.unit.elementary_charge)
