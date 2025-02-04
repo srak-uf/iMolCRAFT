@@ -1,6 +1,9 @@
 # Installation
 ```
+git clone git@github.com:srak-uf/imolcryff.git
+cd imolcryff
 conda env create -f imolcry.yml # this script can be used in linux
+conda activate imolcry
 # Installation of DMFF
 git clone https://github.com/srak-uf/DMFF
 cd DMFF
@@ -8,8 +11,6 @@ pip install . --user
 cd ..
 
 # Installation of iMolCryFF
-git clone git@github.com:srak-uf/imolcryff.git
-cd imolcryff
 pip install . --user
 ```
 Additionally, you can optimize force field parameters by using [DMFF](https://github.com/srak-uf/DMFF). This DMFF repository is the modified version.    
