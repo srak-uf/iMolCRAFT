@@ -1,9 +1,4 @@
 #!/usr/bin/env python
-# coding: utf-8
-
-# In[1]:
-
-
 import jax
 import jax.numpy as jnp
 from jax import value_and_grad, jit, vmap
@@ -31,13 +26,10 @@ import copy
 import matplotlib.pyplot as plt
 import numpy as np
 import sys
-import os
+import os, json, shutil
 from tqdm import tqdm
-
 import optax
 
-
-# In[2]:
 
 
 try:
@@ -54,25 +46,23 @@ except:
     lr = [0.001, 0.001, 0.001]
 
 
-# In[3]:
-
-
 seed = 0
 init_stru = "merged_supercell_bonds.pdb"
 rc = 1.2
 T = 300.0
 relax_step = 20 * 1000
-prod_step = 50 * 1000
+prod_step = 100* 1000 # 100 * 1000
+nstxout = 1000
+n_epochs = 400
 ffxml_list = ["gaffxml_0_best.xml", "gaffxml_1.xml", "ionsff99_tip3p.xml"]
 parameter = "merged_2.xml"
+ensemble = "npt" # nvt or npt
 scale_charge = None
 dt = 1.0 # fs
 ref_density = 1362.5137 / 1000 # exp
-ref_Lx = 40.456 / 10
-ref_Lz = 32.952 / 10
+ref_Lx = 40.456 / 10   # nm
+ref_Lz = 32.952 / 10   # nm
 
-
-# In[4]:
 
 
 def merge_xml(ffxml_list, outxml, scale_charge=None):
@@ -99,8 +89,6 @@ def merge_xml(ffxml_list, outxml, scale_charge=None):
     ff.renderXML(outxml)
 
 
-# In[5]:
-
 
 def calc_rdf(xtcfile, pdbfile, elem1, elem2, rmax=8.0, dr=0.01):
     u = MDAnalysis.Universe(pdbfile, xtcfile)
@@ -112,8 +100,6 @@ def calc_rdf(xtcfile, pdbfile, elem1, elem2, rmax=8.0, dr=0.01):
     g = rdf.results.rdf
     return r, g
 
-
-# In[6]:
 
 
 def calc_rdf_frame(xtcfile, pdbfile, elem1, elem2, rmax=8.0, dr=0.01):
@@ -128,10 +114,6 @@ def calc_rdf_frame(xtcfile, pdbfile, elem1, elem2, rmax=8.0, dr=0.01):
         rdf_list.append(g)
     return np.array(rdf_list)
     
-
-
-# In[7]:
-
 
 # OpenMM sampler, for resampling during optimization
 def npt_sample(initialpdb, ffxml, trajectory):
@@ -176,19 +158,17 @@ def npt_sample(initialpdb, ffxml, trajectory):
     # relaxation run
     simulation.step(relax_step)
     # production run
-    simulation.reporters.append(app.XTCReporter(trajectory, 500))
+    os.makedirs("xtcfiles", exist_ok=True)
+    simulation.reporters.append(app.XTCReporter(f"xtcfiles/{trajectory}",nstxout))
     simulation.step(prod_step)
 
 
-    u = md.load_xtc(trajectory, top = initialpdb)
+    u = md.load_xtc(f"xtcfiles/{trajectory}", top = initialpdb)
     positions = jnp.array(u.xyz)
     state_init = {}
     state_init['pos'] = positions
     # key, subkey = random.split(key)
     return state_init #, key
-
-
-# In[8]:
 
 
 def neutralize(params, num_elems):
@@ -197,27 +177,13 @@ def neutralize(params, num_elems):
     return params
 
 
-# In[9]:
-
-
-def plot_loss(loss):
-    steps = np.arange(len(loss))
-    plt.plot(steps, loss)
+def plot_loss(epoch_list, loss_list):
+    plt.plot(epoch_list, loss_list)
     plt.xlabel("steps")
     plt.ylabel("loss")
+    plt.tight_layout()
     plt.savefig("loss.png")
-    plt.show()
     plt.close()
-
-
-# In[10]:
-
-
-
-
-
-# In[10]:
-
 
 def get_charges_types(topdata: app.Topology, ff, gen_dmfftop=False):
     template = TemplateATypeOperator(ff.ffinfo)
@@ -230,57 +196,6 @@ def get_charges_types(topdata: app.Topology, ff, gen_dmfftop=False):
     else:
         return charges, types
 
-# def get_chargedict(types, charges):
-#     chargedict = {}
-#     for i, (t, c) in enumerate(zip(types, charges)):
-#         if t not in chargedict:
-#             chargedict[t] = {}
-            
-#         if len(chargedict[t]) == 0:
-#             chargedict[t][f"{t}_0"] = {"value": c, "index":[i]}
-#         elif len(chargedict[t]) > 0:
-#             sameTYPEflag = False
-#             for c_idx, key in enumerate(chargedict[t]):
-#                 if np.isclose(float(chargedict[t][key]["value"]), c, atol=1e-3):
-#                     chargedict[t][key]["index"].append(i)
-#                     sameTYPEflag = True
-#             if not sameTYPEflag:
-#                 chargedict[t][f"{t}_{c_idx+1}"] = {"value": c, "index": [i]}
-#     return chargedict
-
-# def get_charges_from_chargedict(chargedict) -> jnp.array:
-#     # natoms = np.array([len(chargedict[key][key2]["index"]) for key in chargedict for key2 in chargedict[key]]).sum()
-#     natoms = sum([len(chargedict[key][key2]["index"]) for key in chargedict for key2 in chargedict[key]])
-#     charges = jnp.zeros(natoms)
-#     for t in chargedict:
-#         for key in chargedict[t]:
-#             for i in chargedict[t][key]["index"]:
-#                 charges = charges.at[i].set(chargedict[t][key]["value"])
-#     return charges
-
-# def update_chargedict(params, chargedict):
-#     idx = 0
-#     for t in chargedict:
-#         for key in chargedict[t]:
-#             chargedict[t][key]["value"] = params['NonbondedForce']['charges'][idx]
-#             idx += 1
-#     return chargedict
-
-
-# In[11]:
-
-
-
-
-
-# In[12]:
-
-
-
-
-
-# In[11]:
-
 
 merge_xml(ffxml_list, parameter, scale_charge=scale_charge)
 ff = Hamiltonian(parameter) # "gaffxml_0.xml"
@@ -291,18 +206,6 @@ params = ff.getParameters().parameters
 pos = jnp.array(pdb.getPositions()._value)
 box = jnp.array(pdb.topology.getPeriodicBoxVectors()._value)
 efunc = jit(pots.getPotentialFunc())
-
-
-# In[12]:
-
-
-# charges, types, topdata = get_charges_types(pdb.topology, ff, gen_dmfftop=True)
-# charge_dict = get_chargedict(types, charges)
-# params["NonbondedForce"]["charges"] = jnp.array([charge_dict[key][key2]["value"] for key in charge_dict for key2 in charge_dict[key]])
-# num_elems = jnp.array([len(charge_dict[key][key2]["index"]) for key in charge_dict for key2 in charge_dict[key]])
-
-
-# In[37]:
 
 
 def get_rescharges_from_residues(ff, ratio=None):
@@ -389,125 +292,6 @@ def update_rescharges_from_params(rescharges, params):
     return rescharges
 
 
-# In[14]:
-
-
-charges, types, topdata = get_charges_types(pdb.topology, ff, gen_dmfftop=True)
-rescharges, num_elems = get_rescharges_from_residues(ff, ratio=[1,2,1])
-params = get_chgparams_from_rescharges(params, rescharges)
-rescharges = update_rescharges_from_params(rescharges, params)
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[15]:
-
-
-state_init = npt_sample("merged_supercell_bonds.pdb", parameter, "loop-0.xtc")
-
-
-# In[16]:
-
-
-estimator = MBAREstimator()
-state_name = 'c2c2'
-state = OpenMMSampleState(state_name, parameter, init_stru, temperature=T, pressure=1.0,
-                            nonbondedMethod=app.PME, nonbondedCutoff=rc*unit.nanometer)
-traj = md.load('loop-0.xtc', top=init_stru)
-sample = Sample(traj, state_name)
-estimator.add_state(state)
-estimator.add_sample(sample)
-estimator.optimize_mbar()
-
-
-# In[17]:
-
-
-r_LiN,g_LiN = calc_rdf("loop-0.xtc", "merged_supercell_bonds.pdb", "Li", "N")
-lin_ref = np.loadtxt("matlantis_LiN.txt")
-r_LiO,g_LiO = calc_rdf("loop-0.xtc", "merged_supercell_bonds.pdb", "Li", "O")
-lio_ref = np.loadtxt("matlantis_LiO.txt")
-
-
-
-# In[18]:
-
-
-print(md.density(traj).mean()/1000, ref_density)
-
-
-# In[19]:
-
-
-print(traj.unitcell_lengths.T[0].mean(), ref_Lx)
-print(traj.unitcell_lengths.T[2].mean(), ref_Lz)
-
-
-# In[20]:
-
-
-g_LiO_frame = calc_rdf_frame("loop-0.xtc", "merged_supercell_bonds.pdb", "Li", "O")
-# g_LiO_f_mean = np.mean(g_LiO_f, axis=0)
-g_LiN_frame = calc_rdf_frame("loop-0.xtc", "merged_supercell_bonds.pdb", "Li", "N")
-# g_LiN_f_mean = np.mean(g_LiN_f, axis=0)
-
-
-# In[21]:
-
-
-multiTrans = MultiTransform(params)
-multiTrans["NonbondedForce/sigma"] = genOptimizer(learning_rate=lr[0], clip=0.001,nonzero=False)
-multiTrans["NonbondedForce/epsilon"] = genOptimizer(learning_rate=lr[1], clip=0.001,nonzero=False)
-multiTrans["NonbondedForce/charges"] = genOptimizer(learning_rate=lr[2], clip=0.001,nonzero=False)
-multiTrans.finalize()
-grad_transform = optax.multi_transform(multiTrans.transforms, multiTrans.labels)
-mask = jax.tree_util.tree_map(lambda x: x.dtype != jnp.int32 and x.dtype != int, params)
-grad_transform = optax.masked(grad_transform, mask)
-opt_state = grad_transform.init(params)
-
-
-# In[22]:
-
-
-params
-
-
-# In[25]:
-
-
-ref_rdf1 = lio_ref.T[1]
-ref_rdf2 = lin_ref.T[1]
-
-
-# In[ ]:
-
-
-
-
-
-# In[38]:
 
 
 def Loss(params, density, rdf_1, rdf_2, Lx, Lz):
@@ -518,7 +302,7 @@ def Loss(params, density, rdf_1, rdf_2, Lx, Lz):
     pots = ff_d.createPotential(pdb.topology, nonbondedMethod=app.PME, nonbondedCutoff=rc*unit.nanometer)
     efunc = jit(pots.getPotentialFunc())
 
-    target_energy_function = buildTrajEnergyFunction(efunc, cov_map, rc, ensemble='npt', useFreud=True)
+    target_energy_function = buildTrajEnergyFunction(efunc, cov_map, rc, ensemble=ensemble, useFreud=True)
     target_state = TargetState(T, target_energy_function)
     weight, utarget = estimator.estimate_weight(target_state, parameters=params_wo_charge)
 
@@ -540,37 +324,75 @@ def Loss(params, density, rdf_1, rdf_2, Lx, Lz):
     loss_rdf2 = jnp.log(jnp.power(rdf_pert2 - ref_rdf2, 2).mean())
     loss_rdf = loss_rdf1 + loss_rdf2
 
-    return loss_den*0.5 + loss_rdf + loss_Lx +  loss_Lz, (density, rdf_pert1, utarget)
+    return loss_den*0.5 + loss_rdf + loss_Lx +  loss_Lz, (density.item(), Lx.item(), Lz.item(), utarget)
 
 
-# In[ ]:
+charges, types, topdata = get_charges_types(pdb.topology, ff, gen_dmfftop=True)
+rescharges, num_elems = get_rescharges_from_residues(ff, ratio=[1,2,1])
+params = get_chgparams_from_rescharges(params, rescharges)
+rescharges = update_rescharges_from_params(rescharges, params)
+state_init = npt_sample("merged_supercell_bonds.pdb", parameter, "loop-0.xtc")
+
+estimator = MBAREstimator()
+state_name = 'c2c2'
+state = OpenMMSampleState(state_name, parameter, init_stru, temperature=T, pressure=1.0,
+                            nonbondedMethod=app.PME, nonbondedCutoff=rc*unit.nanometer)
+traj = md.load('xtcfiles/loop-0.xtc', top=init_stru)
+sample = Sample(traj, state_name)
+estimator.add_state(state)
+estimator.add_sample(sample)
+estimator.optimize_mbar()
 
 
 
+lin_ref = np.loadtxt("matlantis_LiN.txt")
+lio_ref = np.loadtxt("matlantis_LiO.txt")
+ref_rdf1 = lio_ref.T[1]
+ref_rdf2 = lin_ref.T[1]
+print(md.density(traj).mean()/1000, ref_density)
+print(traj.unitcell_lengths.T[0].mean(), ref_Lx)
+print(traj.unitcell_lengths.T[2].mean(), ref_Lz)
+
+g_LiO_frame = calc_rdf_frame(f"xtcfiles/loop-0.xtc", "merged_supercell_bonds.pdb", "Li", "O")
+g_LiN_frame = calc_rdf_frame(f"xtcfiles/loop-0.xtc", "merged_supercell_bonds.pdb", "Li", "N")
+r_LiN,g_LiN = calc_rdf(f"xtcfiles/loop-0.xtc", "merged_supercell_bonds.pdb", "Li", "N")
+r_LiO,g_LiO = calc_rdf(f"xtcfiles/loop-0.xtc", "merged_supercell_bonds.pdb", "Li", "O")
 
 
-# In[40]:
+multiTrans = MultiTransform(params)
+multiTrans["NonbondedForce/sigma"]   = genOptimizer(learning_rate=lr[0], clip=0.001,nonzero=False)
+multiTrans["NonbondedForce/epsilon"] = genOptimizer(learning_rate=lr[1], clip=0.001,nonzero=False)
+multiTrans["NonbondedForce/charges"] = genOptimizer(learning_rate=lr[2], clip=0.001,nonzero=False)
+multiTrans.finalize()
+grad_transform = optax.multi_transform(multiTrans.transforms, multiTrans.labels)
+mask = jax.tree_util.tree_map(lambda x: x.dtype != jnp.int32 and x.dtype != int, params)
+grad_transform = optax.masked(grad_transform, mask)
+opt_state = grad_transform.init(params)
 
 
-n_epochs = 500
-loss_list = []
+results_dict = {"epoch":[], "loss": [], "density": [], "Lx": [], "Lz": []}
 for i_epoch in range(1, n_epochs+1):
-    
     density_frame = md.density(traj) / 1000 # density (g cm-3) by frame
     Lx_frame = traj.unitcell_lengths.T[0]
     Lz_frame = traj.unitcell_lengths.T[2]
-    (loss, (density, rdf, utarget)), gradient = value_and_grad(Loss, argnums=(0), has_aux=True)(params,
+    (loss, (density, lx, lz, utarget)), gradient = value_and_grad(Loss, argnums=(0), has_aux=True)(params,
                                                                                                 density_frame,
                                                                                                 g_LiO_frame,
                                                                                                 g_LiN_frame,
                                                                                                 Lx_frame,
                                                                                                 Lz_frame)
-    
-    print("Loss:", loss)
-    loss_list.append(loss)
-    plot_loss(loss_list)
 
     if jnp.isnan(loss) == False:
+        print("Loss:", loss)
+        results_dict["loss"].append(float(loss))
+        results_dict["epoch"].append(i_epoch-1)
+        results_dict["density"].append(float(density))
+        results_dict["Lx"].append(float(lx))
+        results_dict["Lz"].append(float(lz))
+        plot_loss(results_dict["epoch"], results_dict["loss"])
+        if os.path.isfile(f"xmlfiles/epoch-${i_epoch-1}.xml") == False:
+            shutil.copy(f"xmlfiles/epoch-${i_epoch-2}.xml", f"xmlfiles/epoch-${i_epoch-1}.xml")
+
         updates, opt_state = grad_transform.update(gradient, opt_state)
         params = optax.apply_updates(params, updates)
         
@@ -581,8 +403,9 @@ for i_epoch in range(1, n_epochs+1):
         del params_wo_charge["NonbondedForce"]["charges"]
 
         ff.getParameters().parameters = params_wo_charge
-        ff.renderXML(f"epoch-{i_epoch}.xml")
-        parameter = f'epoch-{i_epoch}.xml'
+        os.makedirs("xmlfiles", exist_ok=True)
+        ff.renderXML(f"xmlfiles/epoch-{i_epoch}.xml")
+        parameter = f'xmlfiles/epoch-{i_epoch}.xml'
 
         # checkout the effective size of each sample in the estimator
         print('Effective sample sizes:')
@@ -592,7 +415,7 @@ for i_epoch in range(1, n_epochs+1):
                 print(f'{k}: {v}')
             
             for k, v in ieff.items():
-                if v < 15 and k != "Total":
+                if v < 5 and k != "Total":
                     estimator.remove_state(k)
         except:
             estimator.states = []
@@ -608,44 +431,37 @@ for i_epoch in range(1, n_epochs+1):
         print("Add", f"loop-{i_epoch}")
         # get new sample using the current state
         state_init = npt_sample(init_stru, parameter, f"loop-{i_epoch}.xtc")
-        traj = md.load(f"loop-{i_epoch}.xtc", top=init_stru)
+        traj = md.load(f"xtcfiles/loop-{i_epoch}.xtc", top=init_stru)
         state = OpenMMSampleState(f"loop-{i_epoch}", parameter, init_stru, temperature=T, pressure=1.0,
-                            nonbondedMethod=app.CutoffPeriodic, nonbondedCutoff=rc*unit.nanometer)
+                                  nonbondedMethod=app.CutoffPeriodic, nonbondedCutoff=rc*unit.nanometer)
         sample = Sample(traj, f"loop-{i_epoch}")
         estimator.add_state(state)
         estimator.add_sample(sample)
         # estimator need to be reconverged whenenver new samples or states are added
         estimator.optimize_mbar()
         
-        g_LiO_frame = calc_rdf_frame(f"loop-{i_epoch}.xtc", init_stru, "Li", "O")
-        g_LiN_frame = calc_rdf_frame(f"loop-{i_epoch}.xtc", init_stru, "Li", "N")
+        g_LiO_frame = calc_rdf_frame(f"xtcfiles/loop-{i_epoch}.xtc", init_stru, "Li", "O")
+        g_LiN_frame = calc_rdf_frame(f"xtcfiles/loop-{i_epoch}.xtc", init_stru, "Li", "N")
 
-        # 2x1のplotを作成 subplotsで
         fig, ax = plt.subplots(1, 2, figsize=(5,2.5))
-        # xticksを1刻みに
         ax[0].set_xticks(np.arange(0, 8, 2))
         ax[1].set_xticks(np.arange(0, 8, 2))
 
-        ax[0].plot(r_LiN, np.mean(g_LiN_frame, axis=0), label="Li-N RDF (epoch=0)")
+        ax[0].plot(r_LiN, np.mean(g_LiN_frame, axis=0))
         ax[0].plot(lin_ref.T[0], lin_ref.T[1], linestyle="--")
-        # ax[0].set_title("Li-N RDF")
         ax[0].set_xlabel("r (nm)")
         ax[0].set_ylabel("g(r)")
 
-        ax[1].plot(r_LiO, np.mean(g_LiO_frame, axis=0), label="Li-O RDF (epoch=0)")
+        ax[1].plot(r_LiO, np.mean(g_LiO_frame, axis=0))
         ax[1].plot(lio_ref.T[0], lio_ref.T[1], linestyle="--")
-        # ax[1].set_title("Li-O RDF")
         ax[1].set_xlabel("r (nm)")
         ax[1].set_ylabel("g(r)")
 
-        fig.savefig('sample.png')
         plt.tight_layout()
-        plt.show()
+        fig.savefig('sample.png')
         plt.close(fig)
-
-
-# In[ ]:
-
-
+    
+    with open("results.json", "w") as f:
+        json.dump(results_dict, f)
 
 
