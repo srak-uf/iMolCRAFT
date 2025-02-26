@@ -51,26 +51,23 @@ init_stru = "merged_supercell_bonds.pdb"
 rc = 1.2
 T = 300.0
 relax_step = 20 * 1000
-prod_step = 100* 1000 # 100 * 1000
+prod_step = 100 * 1000 # 100 * 1000
 nstxout = 1000
 n_epochs = 400
 ffxml_list = ["gaffxml_0_best.xml", "gaffxml_1.xml", "ionsff99_tip3p.xml"]
-parameter = "merged_2.xml"
+res_ratio = [1, 2, 1] # stoichiometric ratio of residues of ffxml_list
 ensemble = "npt" # nvt or npt
-scale_charge = None
 dt = 1.0 # fs
 ref_density = 1362.5137 / 1000 # exp
 ref_Lx = 40.456 / 10   # nm
 ref_Lz = 32.952 / 10   # nm
+ref_rdfLiN = "matlantis_LiN.txt"
+ref_rdfLiO = "matlantis_LiO.txt"
+state_name = 'c2c2'
 
 
-
-def merge_xml(ffxml_list, outxml, scale_charge=None):
+def merge_xml(ffxml_list, outxml):
     ff = Hamiltonian(*ffxml_list)
-    if scale_charge is not None:
-        for i,_ in enumerate(ff.ffinfo["Residues"]):
-            if ff.ffinfo["Residues"][i]["name"] == "LI":
-                ff.ffinfo["Residues"][i]["particles"][0]["charge"] = scale_charge
     del_idx = []
     attribfromres_flag = False
     # ffinfo_nb = ff.ffinfo["Forces"]["NonbondedForce"]["node"]
@@ -86,8 +83,8 @@ def merge_xml(ffxml_list, outxml, scale_charge=None):
         ff.ffinfo["Forces"]["NonbondedForce"]["node"].pop(i-n_del)
         n_del += 1
     
-    ff.renderXML(outxml)
-
+    os.makedirs("xmlfiles", exist_ok=True)
+    ff.renderXML(os.path.join("xmlfiles",outxml))
 
 
 def calc_rdf(xtcfile, pdbfile, elem1, elem2, rmax=8.0, dr=0.01):
@@ -197,8 +194,9 @@ def get_charges_types(topdata: app.Topology, ff, gen_dmfftop=False):
         return charges, types
 
 
-merge_xml(ffxml_list, parameter, scale_charge=scale_charge)
-ff = Hamiltonian(parameter) # "gaffxml_0.xml"
+merge_xml(ffxml_list, "epoch-0.xml")
+initial_xml = os.path.join("xmlfiles","epoch-0.xml")
+ff = Hamiltonian(initial_xml) # "gaffxml_0.xml"
 pdb = PDBFile(init_stru)
 pots = ff.createPotential(pdb.topology, nonbondedMethod=app.PME, nonbondedCutoff=rc*unit.nanometer)
 cov_map = pots.meta['cov_map']
@@ -328,14 +326,13 @@ def Loss(params, density, rdf_1, rdf_2, Lx, Lz):
 
 
 charges, types, topdata = get_charges_types(pdb.topology, ff, gen_dmfftop=True)
-rescharges, num_elems = get_rescharges_from_residues(ff, ratio=[1,2,1])
+rescharges, num_elems = get_rescharges_from_residues(ff, ratio=res_ratio)
 params = get_chgparams_from_rescharges(params, rescharges)
 rescharges = update_rescharges_from_params(rescharges, params)
-state_init = npt_sample("merged_supercell_bonds.pdb", parameter, "loop-0.xtc")
+state_init = npt_sample(init_stru, initial_xml, "loop-0.xtc")
 
 estimator = MBAREstimator()
-state_name = 'c2c2'
-state = OpenMMSampleState(state_name, parameter, init_stru, temperature=T, pressure=1.0,
+state = OpenMMSampleState(state_name, initial_xml, init_stru, temperature=T, pressure=1.0,
                             nonbondedMethod=app.PME, nonbondedCutoff=rc*unit.nanometer)
 traj = md.load('xtcfiles/loop-0.xtc', top=init_stru)
 sample = Sample(traj, state_name)
@@ -345,18 +342,18 @@ estimator.optimize_mbar()
 
 
 
-lin_ref = np.loadtxt("matlantis_LiN.txt")
-lio_ref = np.loadtxt("matlantis_LiO.txt")
+lin_ref = np.loadtxt(ref_rdfLiN)
+lio_ref = np.loadtxt(ref_rdfLiO)
 ref_rdf1 = lio_ref.T[1]
 ref_rdf2 = lin_ref.T[1]
 print(md.density(traj).mean()/1000, ref_density)
 print(traj.unitcell_lengths.T[0].mean(), ref_Lx)
 print(traj.unitcell_lengths.T[2].mean(), ref_Lz)
 
-g_LiO_frame = calc_rdf_frame(f"xtcfiles/loop-0.xtc", "merged_supercell_bonds.pdb", "Li", "O")
-g_LiN_frame = calc_rdf_frame(f"xtcfiles/loop-0.xtc", "merged_supercell_bonds.pdb", "Li", "N")
-r_LiN,g_LiN = calc_rdf(f"xtcfiles/loop-0.xtc", "merged_supercell_bonds.pdb", "Li", "N")
-r_LiO,g_LiO = calc_rdf(f"xtcfiles/loop-0.xtc", "merged_supercell_bonds.pdb", "Li", "O")
+g_LiO_frame = calc_rdf_frame(f"xtcfiles/loop-0.xtc", init_stru, "Li", "O")
+g_LiN_frame = calc_rdf_frame(f"xtcfiles/loop-0.xtc", init_stru, "Li", "N")
+r_LiN,g_LiN = calc_rdf(f"xtcfiles/loop-0.xtc", init_stru, "Li", "N")
+r_LiO,g_LiO = calc_rdf(f"xtcfiles/loop-0.xtc", init_stru, "Li", "O")
 
 
 multiTrans = MultiTransform(params)
@@ -390,8 +387,8 @@ for i_epoch in range(1, n_epochs+1):
         results_dict["Lx"].append(float(lx))
         results_dict["Lz"].append(float(lz))
         plot_loss(results_dict["epoch"], results_dict["loss"])
-        if os.path.isfile(f"xmlfiles/epoch-${i_epoch-1}.xml") == False:
-            shutil.copy(f"xmlfiles/epoch-${i_epoch-2}.xml", f"xmlfiles/epoch-${i_epoch-1}.xml")
+        if os.path.isfile(f"xmlfiles/epoch-{i_epoch-1}.xml") == False:
+            shutil.copy(f"xmlfiles/epoch-{i_epoch-2}.xml", f"xmlfiles/epoch-{i_epoch-1}.xml")
 
         updates, opt_state = grad_transform.update(gradient, opt_state)
         params = optax.apply_updates(params, updates)
