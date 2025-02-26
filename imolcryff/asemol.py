@@ -206,7 +206,8 @@ def reorder_atoms(atoms1, atoms2, chemical_bonds):
 
 def aseatoms2pdb(filename, atoms):
     # ATOM      1    1 MOL     1       2.155   3.338  13.788  1.00  0.00           S  
-    pdb_atom_format = '{:6s}{:5d} {:^4s}{:1s}{:3s}{:1s} {:4d}{:1s}{:3s}{:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}{:10s}{:>2s}'
+    # pdb_atom_format = '{:6s}{:5d} {:^4s}{:1s}{:3s}{:1s} {:4d}{:1s}{:3s}{:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}{:10s}{:>2s}'
+    pdb_atom_format = '{:6s}{:5d} {:^4s}{:1s}{:3s} {:1s}{:4d}{:1s}   {:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}          {:>2s}{:2s}'
     atomname = 0
     with open(f"{filename}", "w") as f:
         Lx = atoms.cell.cellpar()[0]
@@ -225,11 +226,11 @@ def aseatoms2pdb(filename, atoms):
             # single atom residue case
             if np.count_nonzero(atoms.arrays["residuenumbers"] == atoms.arrays["residuenumbers"][i]) == 1:
                 atomname = atoms.get_chemical_symbols()[i]
-                atomline = pdb_atom_format.format('ATOM', i+1, str(atomname), ' ', f'{atoms.arrays["residuenames"][i]}', ' ',int(f'{atoms.arrays["residuenumbers"][i]}'), ' ', ' ',  atom.position[0], atom.position[1], atom.position[2], 1.0, 0.0, ' ',atoms.get_chemical_symbols()[i])
+                atomline = pdb_atom_format.format('ATOM', i+1, str(atomname), ' ', f'{atoms.arrays["residuenames"][i]}', ' ',int(f'{atoms.arrays["residuenumbers"][i]}'), ' ',  atom.position[0], atom.position[1], atom.position[2], 1.0, 0.0, ' ',atoms.get_chemical_symbols()[i])
                 atomname = 0
             else:
                 symbol = atoms.get_chemical_symbols()[i]
-                atomline = pdb_atom_format.format('ATOM', i+1, symbol+str(atomname), ' ', f'{atoms.arrays["residuenames"][i]}', ' ',int(f'{atoms.arrays["residuenumbers"][i]}'), ' ', ' ',  atom.position[0], atom.position[1], atom.position[2], 1.0, 0.0, ' ',atoms.get_chemical_symbols()[i])
+                atomline = pdb_atom_format.format('ATOM', i+1, symbol+str(atomname), ' ', f'{atoms.arrays["residuenames"][i]}', ' ',int(f'{atoms.arrays["residuenumbers"][i]}'), ' ',  atom.position[0], atom.position[1], atom.position[2], 1.0, 0.0, ' ',atoms.get_chemical_symbols()[i])
                 atomname += 1
             f.write(atomline+"\n")
         f.write("ENDMDL\n")
