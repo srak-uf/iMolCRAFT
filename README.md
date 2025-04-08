@@ -9,7 +9,7 @@ conda activate imolcry
 pip install -e . 
 ```
 
-# Installation of normal version
+# Installation of developer version
 ```
 git clone git@github.com:srak-uf/imolcryff.git
 cd imolcryff
