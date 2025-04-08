@@ -107,7 +107,18 @@ class Mol_Info(object):
                 mol = Chem.MolFromXYZFile(f"{directory}/{key}.xyz")
                 mol = Chem.Mol(mol)
                 charge = self.mol_info[key]["charge"]
-                rdDetermineBonds.DetermineBonds(mol,charge=charge)
+                try:
+                    mol_tmp = copy.deepcopy(mol)
+                    rdDetermineBonds.DetermineBonds(mol_tmp,charge=charge)
+                    mol = mol_tmp
+                except:
+                    from rdkit.Chem import Draw
+                    mol_tmp = copy.deepcopy(mol)
+                    rdDetermineBonds.DetermineConnectivity(mol_tmp, charge=charge)
+                    mol = copy.deepcopy(mol_tmp)
+                    print("Warning: The bonds may be assigned incorrectly. Please check carefully.")
+                    print("Warning: This may give wrong smiles")
+                    Draw.MolToImage(mol) # Necessary
                 mol2d = copy.deepcopy(mol)
                 rdDepictor.Compute2DCoords(mol2d)
                 self.mol_info[key]["rdkitmol"] = mol
