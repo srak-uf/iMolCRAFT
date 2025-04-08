@@ -1,9 +1,24 @@
-# Installation
+# Installation of normal version
 ```
 git clone git@github.com:srak-uf/imolcryff.git
 cd imolcryff
 conda env create -f imolcry.yml # this script can be used in linux
 conda activate imolcry
+
+# Installation of iMolCryFF
+pip install -e . 
+```
+
+# Installation of normal version
+```
+git clone git@github.com:srak-uf/imolcryff.git
+cd imolcryff
+conda env create -f imolcry_dev.yml # this script can be used in linux
+conda activate imolcry_dev
+git clone https://github.com/srak-uf/DMFF
+cd DMFF
+pip install -e . 
+cd ..
 
 # Installation of iMolCryFF
 pip install -e . 
