@@ -1,0 +1,16 @@
+<?xml version="1.0" ?>
+<ForceField>
+   <Operators/>
+   <AtomTypes>
+      <Type class="ionsff99_tip3p-Li+" element="Li" mass="6.94" name="ionsff99_tip3p-Li+"/>
+   </AtomTypes>
+   <Residues>
+      <Residue name="LI">
+         <Atom charge="0.8" name="LI" type="ionsff99_tip3p-Li+"/>
+      </Residue>
+   </Residues>
+   <NonbondedForce coulomb14scale="0.8333333333333334" lj14scale="0.5">
+      <UseAttributeFromResidue name="charge"/>
+      <Atom epsilon="0.0765672" sigma="0.20259036850511314" type="ionsff99_tip3p-Li+"/>
+   </NonbondedForce>
+</ForceField>
