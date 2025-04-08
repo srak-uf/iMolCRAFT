@@ -1,6 +1,7 @@
 name: imolcry
 channels:
   - conda-forge
+  - conda-forge/label/libint_dev 
 dependencies:
   - ambertools=23.3
   - ase=3.23.0
@@ -15,6 +16,7 @@ dependencies:
   - openmm=8.1.2
   - openmmforcefields=0.14.1
   - packmol>=20.15
+  - psi4=1.8.2 
   - pip=24.2
   - pip:
     - rdkit==2024.3.2
@@ -23,3 +25,4 @@ dependencies:
     - jaxopt==0.8.1
     - optax==0.2.3
     - pymbar==4.0.1
+    - git+https://github.com/srak-uf/DMFF.git
