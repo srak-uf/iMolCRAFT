@@ -4,8 +4,8 @@ import MDAnalysis.analysis.rdf as mda
 import numpy as np
 import mdtraj as md
 
-def calc_rdf(xtcfile, pdbfile, elem1, elem2, rmax=8.0, dr=0.01):
-    u = MDAnalysis.Universe(pdbfile, xtcfile)
+
+def calc_rdf(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
     u_select1 = u.select_atoms(f"element {elem1}")
     u_select2 = u.select_atoms(f"element {elem2}")
     rdf = mda.InterRDF(u_select1, u_select2, range=(0,rmax), nbins=int(rmax/dr))
@@ -14,8 +14,7 @@ def calc_rdf(xtcfile, pdbfile, elem1, elem2, rmax=8.0, dr=0.01):
     g = rdf.results.rdf
     return r, g
 
-def calc_rdf_frame(xtcfile, pdbfile, elem1, elem2, rmax=8.0, dr=0.01):
-    u = MDAnalysis.Universe(pdbfile, xtcfile)
+def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
     u_select1 = u.select_atoms(f"element {elem1}")
     u_select2 = u.select_atoms(f"element {elem2}")
     rdf = mda.InterRDF(u_select1, u_select2, range=(0,rmax), nbins=int(rmax/dr))
@@ -75,4 +74,42 @@ def calc_adf(xtcfile, pdbfile, elem1, elem2, elem3,rcut12=3.0, rcut23=3.0):
     prob_123 = np.mean(prob_123, axis=0)
     return deg_123, prob_123
 
+def calc_density_frame(u: MDAnalysis.Universe):
+    total_mass = sum(u.atoms.masses)
+    densities = []
+    for ts in u.trajectory:
+        volume_ang3 = ts.volume
+        volume_cm3 = volume_ang3 * 1e-24
+        density_g_cm3 = (total_mass * 1.66053886e-24) / volume_cm3
+        densities.append(density_g_cm3)
+    density = np.array(densities)
+    return density
+
+def calc_density(u: MDAnalysis.Universe):
+    density_frame = calc_density_frame(u)
+    density = np.mean(density_frame) # density (g cm-3)
+    return density
+
+def calc_cellpar_frame(u: MDAnalysis.Universe, target="all"):
+    if target == "all":
+        idx = range(0,6)
+    elif target == "La_A":
+        idx = 0
+    elif target == "Lb_A":
+        idx = 1
+    elif target == "Lc_A":
+        idx = 2
+    elif target == "alpha_deg":
+        idx = 3
+    elif target == "beta_deg":
+        idx = 4
+    elif target == "gamma_deg":
+        idx = 5
+    else:
+        raise ValueError("target must be 'all', 'La_A', 'Lb_A', 'Lc_A', 'alpha_deg', 'bet_deg' or 'gamma_deg'")
+    cellpar = []
+    for ts in u.trajectory:
+        cellpar_tmp = np.array(ts.dimensions)[idx]
+        cellpar.append(cellpar_tmp)
+    return np.array(cellpar)
 
