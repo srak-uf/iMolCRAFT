@@ -2,18 +2,18 @@ sampling:
     init_structure: merged_supercell_bonds.pdb
     ensemble: npt
     dt_fs: 1.0
-    temperature_K: 300
+    temperature_K: 233.15
     pressure_bar: 1.0
     anneal_steps: 1
     anneal_Tmax : 400.0
     anneal_totalsteps: 0
-    relax_steps: 200
-    prod_steps : 1000
-    nstxout: 100
+    relax_steps: 20000
+    prod_steps : 100000
+    nstxout: 1000
 forcefield:
     xml_list: ["Li.xml", "FSA.xml", "SN.xml"]
     residue_ratio: [1,1,2]
-    rcut_nm: 0.5
+    rcut_nm: 1.2
 opt_scheme:
     n_epochs: 400
     algo: adam
