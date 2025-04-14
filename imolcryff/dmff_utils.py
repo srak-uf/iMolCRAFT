@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from jax import value_and_grad, jit
 import dmff
 from dmff.operators.templatetype import TemplateATypeOperator
+from dmff.operators.templatevsite import TemplateVSiteOperator
 from dmff import Hamiltonian, DMFFTopology
 from dmff.mbar import TargetState, buildTrajEnergyFunction
 
@@ -213,8 +214,10 @@ def get_charges_types(topdata: app.Topology, ff, gen_dmfftop=False):
     topdata : DMFFTopology, optional
         DMFF topology data if gen_dmfftop is True.
     """
+    vsite = TemplateVSiteOperator(ff.ffinfo)
     template = TemplateATypeOperator(ff.ffinfo)
     topdata = dmff.api.DMFFTopology(from_top=topdata)
+    topdata = vsite(topdata)
     topdata = template(topdata)
     charges = [a.meta["charge"] for a in topdata.atoms()]
     types = [a.meta['type'] for a in topdata.atoms()]
@@ -366,8 +369,14 @@ def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params):
     relax_steps = sampling_params["relax_steps"]
     prod_steps = sampling_params["prod_steps"]
     
+    modeller = app.Modeller(pdb.topology, pdb.getPositions())
+    modeller.addExtraParticles(forcefield)
+    pos = modeller.getPositions()
+    topology = modeller.topology
+    # modellerをpdbに書き出す
+    # app.PDBFile.writeFile(topology, pos, open("modeller.pdb", "w"))
     
-    system = forcefield.createSystem(pdb.topology, 
+    system = forcefield.createSystem(topology, 
                                      nonbondedMethod=app.PME,
                                      nonbondedCutoff=rc*unit.nanometer,
                                      constraints=app.HBonds)
@@ -381,13 +390,13 @@ def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params):
         # system.addForce(openmm.MonteCarloFlexibleBarostat([1.0*unit.bar] * 3, T*unit.kelvin))
     
     integrator = openmm.LangevinIntegrator(T*unit.kelvin, 5/unit.picosecond, dt*unit.femtosecond)
-    simulation = app.Simulation(pdb.topology, system, integrator)
+    simulation = app.Simulation(topology, system, integrator)
     
     try:
         os.remove(trajectory)
     except:
         pass
-    simulation.context.setPositions(pdb.getPositions())
+    simulation.context.setPositions(pos)
     simulation.minimizeEnergy()
     simulation.context.setVelocitiesToTemperature(T*unit.kelvin)
 
@@ -408,10 +417,10 @@ def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params):
     simulation.reporters.append(app.XTCReporter(f"xtcfiles/{trajectory}",nstxout))
     simulation.step(prod_steps)
 
-    u = md.load_xtc(f"xtcfiles/{trajectory}", top = initialpdb)
-    positions = jnp.array(u.xyz)
+    # u = md.load_xtc(f"xtcfiles/{trajectory}", top = initialpdb)
+    # positions = jnp.array(u.xyz)
     state_init = {}
-    state_init['pos'] = positions
+    # state_init['pos'] = positions
     # key, subkey = random.split(key)
     return state_init #, key
 

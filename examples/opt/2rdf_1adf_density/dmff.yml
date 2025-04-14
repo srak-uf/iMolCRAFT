@@ -17,7 +17,7 @@ forcefield:
 opt_scheme:
     n_epochs: 400
     algo: adam
-    lr: 0.001
+    lr: 0.0005
     neff: 30
     targets:
         density_gcm3:
