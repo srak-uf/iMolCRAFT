@@ -379,7 +379,8 @@ def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params):
     system = forcefield.createSystem(topology, 
                                      nonbondedMethod=app.PME,
                                      nonbondedCutoff=rc*unit.nanometer,
-                                     constraints=app.HBonds)
+                                     constraints=app.HBonds,
+                                     rigidWater=False)
     for force in system.getForces():
         if isinstance(force, openmm.NonbondedForce):
             force.setUseDispersionCorrection(False)
@@ -537,7 +538,7 @@ def get_loss_autograd(ffparams: dict,
         loss = 0.0
         weighted_results = {}
         for key in target_gt.keys():
-            if key in ["density_gcm3", "La_A", "La_B", "La_C"]:
+            if key in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
                 density_pred = jnp.average(target_pred[key], weights=weight)
                 weighted_results[key] = density_pred
                 loss += target_gt[key]["weight"]*(target_gt[key]["gt"] \
@@ -563,10 +564,11 @@ def plot_compare(target_gt, target_pred_frame):
             for kind in target_gt[key].keys():
                 num_plots += 1
 
-    fig, ax = plt.subplots(math.ceil(num_plots/2), 2, figsize=(6.5,2.5*math.ceil(num_plots/2)))
+    num_raw = np.max([math.ceil(num_plots/2),2])
+    fig, ax = plt.subplots(num_raw, 2, figsize=(6.5,2.5*num_raw))
     i_plot = 0
     for key in target_gt.keys():
-        if key in ["density_gcm3", "La_A", "La_B", "La_C"]:
+        if key in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
             ax[i_plot//2, i_plot%2].set_title(key)
             x = ["GT", "FF"]
             y = [target_gt[key]["gt"], target_pred_frame[key].mean()]
@@ -593,7 +595,7 @@ class saver_wresults:
         self.results_dict = {"epoch":[], "loss": []} 
         self.target_gt = target_gt
         for key in target_gt.keys():
-            if key in ["density_gcm3", "La_A", "La_B", "La_C"]:
+            if key in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
                 self.results_dict[key] = []
             elif key in ["rdf", "adf"]:
                 self.results_dict[key] = {}
@@ -605,7 +607,7 @@ class saver_wresults:
             self.results_dict["loss"].append(float(loss))
             self.results_dict["epoch"].append(i_epoch)
             for key in self.target_gt.keys():
-                if key in ["density_gcm3", "La_A", "La_B", "La_C"]:
+                if key in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
                     self.results_dict[key].append(float(wresults[key]))
                 elif key in ["rdf", "adf"]:
                     for k in self.target_gt[key].keys():

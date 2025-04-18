@@ -12,6 +12,8 @@ def calc_rdf(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
     rdf.run()
     r = rdf.results.bins
     g = rdf.results.rdf
+    if g[0] > 1:
+        g[0] = 0.0
     return r, g
 
 def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
@@ -22,6 +24,8 @@ def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
     for i_frame in range(len(u.trajectory)):
         rdf.run(frames=[i_frame])
         g = rdf.results.rdf
+        if g[0] > 1:
+            g[0] = 0.0
         rdf_list.append(g)
     return np.array(rdf_list)
 
