@@ -99,10 +99,12 @@ def parser_dmffyaml(yaml_file):
             raise FileNotFoundError(f"XML file {xml_file} not found.")
         
     # Check for valid ensemble
-    valid_ensembles = ["nve", "nvt", "npt"]
+    valid_ensembles = ["nve", "nvt", "isonpt", "anisonpt", "trinpt", "npt"]
     if data['sampling']['ensemble'] not in valid_ensembles:
         raise ValueError(f"Invalid ensemble {data['sampling']['ensemble']}. Must be one of {valid_ensembles}.")
-
+    elif data['sampling']['ensemble'] == "npt":
+        data['sampling']['ensemble'] = "anisonpt"
+        
     # Check for valid target types
     if 'target_types' in data["opt_scheme"]:
         for target_name in data['opt_scheme']['targets'].keys():
@@ -234,7 +236,7 @@ def update_ffinfo_from_rescharges(ff, rescharges):
     ff : Hamiltonian
         Force field object.
     rescharges : list
-        List of residue charges.
+        List of residue charges dictionary.
     Returns
     -------
     ff : Hamiltonian
@@ -250,6 +252,19 @@ def update_ffinfo_from_rescharges(ff, rescharges):
 
 
 def update_ffinfo_from_params(ff, params):
+    """
+    Update the force field information with the parameters.
+    Parameters
+    ----------
+    ff : Hamiltonian
+        Force field object.
+    params : dict
+        Parameters for the force field.
+    Returns
+    -------
+    ff : Hamiltonian
+        Updated force field object.
+    """
     idx = 0
     for i_res in range(len(ff.ffinfo['Residues'])):
         for i,_ in enumerate(ff.ffinfo['Residues'][i_res]["particles"]):
@@ -385,10 +400,12 @@ def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params):
         if isinstance(force, openmm.NonbondedForce):
             force.setUseDispersionCorrection(False)
     
-    if sampling_params["ensemble"] == "npt":
-        # system.addForce(openmm.MonteCarloBarostat(1.0*unit.bar, T*unit.kelvin, 20))
+    if sampling_params["ensemble"] == "isonpt":
+        system.addForce(openmm.MonteCarloBarostat(1.0*unit.bar, T*unit.kelvin))
+    elif sampling_params["ensemble"] == "anisonpt":
         system.addForce(openmm.MonteCarloAnisotropicBarostat([1.0*unit.bar] * 3, T*unit.kelvin))
-        # system.addForce(openmm.MonteCarloFlexibleBarostat([1.0*unit.bar] * 3, T*unit.kelvin))
+    elif sampling_params["ensemble"] == "trinpt":
+        system.addForce(openmm.MonteCarloFlexibleBarostat([1.0*unit.bar] * 3, T*unit.kelvin))
     
     integrator = openmm.LangevinIntegrator(T*unit.kelvin, 5/unit.picosecond, dt*unit.femtosecond)
     simulation = app.Simulation(topology, system, integrator)
@@ -526,10 +543,14 @@ def get_loss_autograd(ffparams: dict,
                                     nonbondedMethod=app.PME,
                                     nonbondedCutoff=rc*unit.nanometer)
         efunc = jit(pots.getPotentialFunc())
+        if ensemble in ["isonpt", "anisonpt", "trinpt"]:
+            ens = "npt"
+        else:
+            ens = ensemble
         target_energy_function = buildTrajEnergyFunction(efunc,
                                                          cov_map,
                                                          rc,
-                                                         ensemble=ensemble,
+                                                         ensemble=ens,
                                                          useFreud=True,
                                                          pressure=pressure)
         target_state = TargetState(Temperature_K, target_energy_function)

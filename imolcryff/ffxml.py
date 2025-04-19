@@ -3,7 +3,7 @@ import openmmforcefields
 import shutil
 import os
 
-def getelement_fromtype(ptype, ff):
+def get_element_fromtype(ptype, ff):
     for at in ff.ffinfo['AtomTypes']:
         if at["class"] == ptype:
             return at["element"]
@@ -25,7 +25,7 @@ def gafftemplate2xml(mmm, gaff, ion_ffxml=None):
             for res in ff.ffinfo["Residues"]:
                 if len(res["particles"]) == 1:
                     ptype = res["particles"][0]["type"]
-                    elem = getelement_fromtype(ptype, ff)
+                    elem = get_element_fromtype(ptype, ff)
                     if elem == symbol:
                         res["particles"][0]["charge"] = float(mmm[i].partial_charges[0].magnitude)
                         target_ptype = ptype
