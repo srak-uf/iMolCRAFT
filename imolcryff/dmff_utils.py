@@ -405,7 +405,7 @@ def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params):
     elif sampling_params["ensemble"] == "anisonpt":
         system.addForce(openmm.MonteCarloAnisotropicBarostat([1.0*unit.bar] * 3, T*unit.kelvin))
     elif sampling_params["ensemble"] == "trinpt":
-        system.addForce(openmm.MonteCarloFlexibleBarostat([1.0*unit.bar] * 3, T*unit.kelvin))
+        system.addForce(openmm.MonteCarloFlexibleBarostat(1.0*unit.bar, T*unit.kelvin))
     
     integrator = openmm.LangevinIntegrator(T*unit.kelvin, 5/unit.picosecond, dt*unit.femtosecond)
     simulation = app.Simulation(topology, system, integrator)
