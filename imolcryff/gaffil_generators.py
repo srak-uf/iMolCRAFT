@@ -3,7 +3,7 @@ from openff.toolkit import Molecule
 from collections import OrderedDict
 import subprocess
 import os
-from .molinfo import read_mol2, write_mol2
+from .mol2 import read_mol2, write_mol2
 
 
 class GAFFilTemplateGenerator(GAFFTemplateGenerator):

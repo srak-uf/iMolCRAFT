@@ -1,34 +1,21 @@
 from ase.io import read, write
 from ase.calculators.gaussian import Gaussian
-import os
-
-# def get_mol_name(atomslist_mols):
-#     symbols_list = []
-#     for i, aseatoms in enumerate(atomslist_mols):
-#         symbols = str(aseatoms.symbols)
-#         if symbols not in symbols_list:
-#             symbols_list.append(symbols)
-
-# def create_charges_parm(symbols_list):
-#     params_charges = {}
-#     for sym in symbols_list:
-#         params_charges[sym] = None
-#     return params_charges
+import os, subprocess
 
 
 default_params_opt = {
     "method": "wb97xd",
     "basis": "6-311++g(d,p)",
     "opt": "maxcycle=256",
-    "mem": "92GB",
-    "nprocshared": 40,
+    # "mem": "92GB",
+    # "nprocshared": 40,
 }
 
 default_params_charge = {
     "method": "hf",
     "basis": "6-31g(d)",
-    "mem": "92GB",
-    "nprocshared": 40,
+    # "mem": "92GB",
+    # "nprocshared": 40,
     "ioplist": ["6/33=2", "6/42=6"], 
     "pop": "mk"
 }
@@ -37,9 +24,44 @@ default_params_dihedral = {
     "method": "wb97xd",
     "basis": "6-311++g(d,p)",
     "opt": "modredundant",
-    "mem": "92GB",
-    "nprocshared": 40,
+    # "mem": "92GB",
+    # "nprocshared": 40,
 }
+
+class G16Calculator:
+    def __init__(self, atoms, charge, output_dir, label, params=None):
+        self.atoms = atoms
+        self.params = params
+        self.charge = charge
+        self.output_dir = output_dir
+        self.label = label
+        self.g16 = None
+
+    def input_g16(self):
+        output_xyz = os.path.join(self.output_dir, f"{self.label}.xyz")
+        output_label = os.path.join(self.output_dir, f"{self.label}")
+        self.atoms.pbc = False
+        self.atoms.cell = None
+        write(output_xyz, self.atoms, format="xyz")
+        self.g16 = Gaussian(
+            label=output_label,
+            charge=self.charge,
+            **self.params,
+        )
+        self.g16.write_input(self.atoms, system_changes=0)
+    
+    def get_resp(self, output_mol2, g16logfile):
+        g16logfile = os.path.abspath(g16logfile)
+        cmd_antech = (
+                    f"antechamber -i {g16logfile} -fi gout "
+                    f"-o {output_mol2} -fo mol2 -at sybyl -c resp -nc {self.charge} -pf y -dr no")
+        print(cmd_antech)
+        output = subprocess.getoutput(cmd_antech)
+        print(output)
+    
+
+
+
 
 def input_g16(atoms, params, charge, output_dir, label):
     output_xyz = os.path.join(output_dir, f"{label}.xyz")

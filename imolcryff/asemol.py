@@ -36,13 +36,6 @@ class asemol_wrapper():
                 self.chemical_bonds.loc[elem_i, elem_j] = data.iloc[:,2].values[i]
                 self.chemical_bonds.loc[elem_j, elem_i] = data.iloc[:,2].values[i]
 
-            self.chemical_bonds.loc["Li",:] = 0
-            self.chemical_bonds.loc[:, "Li"] = 0
-            self.chemical_bonds.loc["Na",:] = 0
-            self.chemical_bonds.loc[:, "Na"] = 0
-            self.chemical_bonds.loc["K",:] = 0
-            self.chemical_bonds.loc[:, "K"] = 0
-    
     def get_bonds(self) -> list:
         """ase.Atomsから結合リストを生成"""
         atoms = self.atoms
@@ -120,17 +113,13 @@ class asemol_wrapper():
             ref_mols = [asemols[mol[0]] for mol in molecule_list]
             res_number = 0
             for i_mol, ref_mol in enumerate(ref_mols):
-                # ref_mol.arrays["residuenames"] = np.array([ f"MOL_{i_mol}" for _ in range(len(ref_mol) )])
                 ref_mol.arrays["residuenames"] = np.array([ f"M{i_mol}" for _ in range(len(ref_mol) )])
-                # ref_mol.arrays["atomtypes"] = np.array([ f"{at.symbol}{i+1}" for i, at in enumerate(ref_mol) ])
-                # ref_mol.arrays["atomtypes"] = np.array([ f"{at.symbol}" for i, at in enumerate(ref_mol) ])
                 for i, mol_i in enumerate(asemols):
                     try:
                         mol_i_rorder = reorder_atoms(ref_mol, mol_i, self.chemical_bonds)
                         asemols[i] = mol_i_rorder
                         asemols[i].arrays["residuenumbers"] = np.array([res_number+i+1 for _ in range(len(mol_i_rorder))])
                     except:
-                        # asemols[i].arrays["residuenumbers"] = np.array([i+1 for _ in range(len(mol_i))])
                         pass
 
         return asemols, molecule_list
