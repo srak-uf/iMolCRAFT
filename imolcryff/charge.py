@@ -3,6 +3,16 @@ import os, subprocess
 from ase.io import read, write
 from ase.calculators.gaussian import Gaussian
 import tempfile
+from openff.recharge.esp import ESPSettings
+from openff.recharge.grids import MSKGridSettings
+from openff.recharge.esp.psi4 import Psi4ESPGenerator
+from openff.recharge.esp.storage import MoleculeESPRecord
+from openff.recharge.charges.resp.solvers import IterativeSolver
+from openff.recharge.charges.resp import generate_resp_charge_parameter
+from openff.recharge.charges.library import (
+    LibraryChargeCollection,
+    LibraryChargeGenerator,
+)
 
 resp_params = {
     "method": "hf",
@@ -12,6 +22,10 @@ resp_params = {
     "ioplist": ["6/33=2", "6/42=6"], 
     "pop": "mk"
 }
+
+psi4_resp_params = ESPSettings(
+    method="hf", basis="6-31G*", grid_settings=MSKGridSettings()
+)
 
 class ChargeCalculator:
     def __init__(self, atoms, charge_type, netcharge, label, directory=None, params=None):
@@ -81,3 +95,43 @@ class ChargeCalculator:
         print(cmd_antech)
         output = subprocess.getoutput(cmd_antech)
         print(output)
+
+
+class Psi4ChargeCalculator(ChargeCalculator):
+    def __init__(self, molecule, charge_type, netcharge, label, directory=None, params=None):
+        self.molecule = molecule.copy()
+        self.charge_type = charge_type
+        self.params = params
+        self.charge = netcharge
+        self.label = label
+        if directory is None:
+            self.directory = os.getcwd()
+        else:
+            self.directory = directory
+
+        if self.params is None:
+            if self.charge_type == "resp":
+                self.params = psi4_resp_params
+            else:
+                raise ValueError("Unknown charge type. Supported types are: resp")
+            self.g16 = None
+    
+    def get_partialcharges(self):
+        if self.charge_type == "resp":
+            self._get_resp()
+        else:
+            raise ValueError("Unknown charge type. Supported types are: resp")
+
+    def _get_resp(self):
+        conformer, grid, esp, electric_field = Psi4ESPGenerator.generate(
+                    self.molecule, self.molecule.conformers[0], self.params, minimize=False)
+        qc_data_record = MoleculeESPRecord.from_molecule(
+                                self.molecule, conformer, grid, esp, None, self.params
+                            )
+        resp_solver = IterativeSolver()
+        resp_charge_parameter = generate_resp_charge_parameter(
+            [qc_data_record], resp_solver
+        )
+        resp_charges = LibraryChargeGenerator.generate(
+            self.molecule, LibraryChargeCollection(parameters=[resp_charge_parameter])
+        )

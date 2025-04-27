@@ -250,3 +250,57 @@ def parse_g16scan(file):
             elif "SCF Done:" in line:
                 parserd_lines.append(float(line.split()[4]))
     return scanned_energy
+
+# def draw_dihedral_plots(mol_info, molkey):
+#     import matplotlib.pyplot as plt
+#     plt.figure(figsize=(4, 3))
+#     n_dihedrals = len(mol_info[molkey]["dihedral_angle"])
+#     dihedral_pots_gt = []
+#     dihedral_pots_ff = []
+#     for i in range(n_dihedrals):
+#         dihedral_pot_tmp = []
+#         if mol_info[molkey]["dihedral_energy"][i] is not None:
+#             x_angle = mol_info[molkey]["dihedral_angle"][i]
+#             dihedral_qm = (mol_info[molkey]["dihedral_energy"][i] - mol_info[molkey]["dihedral_energy"][i].min()) / (units.kJ * (units.mol**-1))
+#             dihedral_ff = (mol_info[molkey]["dihedral_ffenergy"][i] - mol_info[molkey]["dihedral_ffenergy"][i].min())
+
+#             plt.scatter(x_angle, dihedral_qm)
+#             plt.plot(x_angle, dihedral_ff,label=f"dihedral_{i}")
+#             dihedral_pots_gt.append(dihedral_qm)
+#             dihedral_pots_ff.append(dihedral_ff)
+#         else:
+#             dihedral_pots_gt.append(None)
+#             dihedral_pots_ff.append(None)
+            
+#     plt.legend(loc='lower center', bbox_to_anchor=(0.5, 1), ncol=2)
+#     plt.xlabel("Dihedral angle (deg)")
+#     plt.ylabel("Potential energy (kJ/mol)")
+#     plt.xticks(range(-180, 181, 60))
+#     plt.grid()
+#     return dihedral_pots_gt, dihedral_pots_ff
+
+# def draw_dihedral_structures(mol_info, molkey):
+#     # key_name = "MOL_0"
+#     from IPython.display import SVG
+#     from rdkit.Chem.Draw import rdMolDraw2D
+#     tm_list = []
+#     highlighAtoms_list = []
+#     legends_list = []
+#     n_dihedrals = len(mol_info[molkey]["rotatable_dihedral"])
+#     for i_dihed in range(n_dihedrals):
+#         highlighAtoms_list.append(mol_info[molkey]["rotatable_dihedral"][i_dihed])
+#         tm = rdMolDraw2D.PrepareMolForDrawing(mol_info[molkey]["rdkitmol2d"])
+#         tm_list.append(mol_info[molkey]["rdkitmol2d"])
+#         legends_list.append(f"dihedral_{i_dihed}")
+
+#     dec = [800 // n_dihedrals + (1 if i < 800 % n_dihedrals else 0) for i in range(n_dihedrals)]
+#     # decの先頭に800を追加
+#     dec.insert(0, 800)
+#     l = [dec]
+#     view = rdMolDraw2D.MolDraw2DSVG(*l[0])
+
+#     view.DrawMolecules(tm_list, highlightAtoms=highlighAtoms_list, legends=legends_list)
+#     view.FinishDrawing()
+
+#     svg = view.GetDrawingText()
+#     return SVG(svg)

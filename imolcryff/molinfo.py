@@ -1,22 +1,16 @@
 from rdkit import Chem
 from rdkit.Chem import rdDetermineBonds, rdDepictor
 from ase.io import read, write
-from ase import units
 from ase import Atoms
-import os
-import shutil
-import copy
-import pickle
-import subprocess
+from ase.calculators.gaussian import Gaussian
+import os, copy, pickle
 import numpy as np
 from openff.toolkit.topology import Molecule
 from openff.toolkit import Quantity
 from openff import toolkit
 from openmm.app import *
 from openmm import *
-from openmm.unit import kelvin, picosecond, picoseconds
-import cclib
-from .asemol import asemol_wrapper, aseatoms2pdb, merge_asemols
+from .asemol import asemol_wrapper, cast_molecules
 from .dihedral import DihedCalculator
 from .charge import ChargeCalculator
 
@@ -32,6 +26,7 @@ MOLINFO_KEYS = {
     "Natoms": type(None),
     "Nmols": type(None),
     "netcharge": type(None),
+    "networkX": list,
     "partial_charges": list,
     "rdkit": dict, 
     "SMILES": str, 
@@ -55,11 +50,16 @@ class Crafter:
         atoms = read(filename)
         asemol_wrap = asemol_wrapper(atoms)
         self.atoms_unwrap = asemol_wrap.unwrap_molecules()
-        self.molatoms, self.molecule_list = asemol_wrap.get_ase_molecules(ordered=True)
+        self.molatoms, self.molecule_list, self.networkX \
+            = asemol_wrap.get_ase_molecules(out_nX=True)
 
         for i, mol_idx in enumerate(self.molecule_list):
             al = [self.molatoms[i] for i in mol_idx]
-            self.append_fromAtomsList(al, key=f"MOL_{i}", Nmols = len(mol_idx))
+            nX = [self.networkX[i] for i in mol_idx]
+            self.append_fromAtomsList(al, 
+                                      key=f"MOL_{i}", 
+                                      Nmols=len(mol_idx), 
+                                      networkX=nX)
         
             if assign_totalcharge:
                 self._assign_totalcharge()
@@ -67,16 +67,25 @@ class Crafter:
                 print(f"Warning: MOL_{i} has no charge information")
                 print(f"Please define the total charge manually")
 
-    def append_fromAtomsList(self, atomslist: list, key: str, Nmols: int = None):
+    def append_fromAtomsList(self, atomslist: list, key: str, Nmols: int = None, networkX: list = []):
         """
-        Append ase.Atoms to mol_info dictionary
+        Append List of ase.Atoms to mol_info dictionary
+        
+        Parameters:
+        ----------
         atomslist: List of ase.Atoms
         key: key of mol_info dictionary
+        Nmols: Number of molecules
+        networkX: List of NetworkX graph
         """
         self._initialize_molinfo(key)
         self.mol_info[key]["aseatoms_list"] = atomslist
+        self.mol_info[key]["aseatoms_geoopt"] = [None for _ in range(len(atomslist))]
         self.mol_info[key]["Natoms"] = len(atomslist[0])
-        self.mol_info[key]["Nmols"] = len(atomslist) if Nmols is None else Nmols     
+        self.mol_info[key]["Nmols"] = len(atomslist) if Nmols is None else Nmols
+        if networkX != []:
+            assert len(atomslist) == len(networkX), "The length of atomslist and networkX should be the same"
+            self.mol_info[key]["networkX"] = networkX
         os.makedirs(key, exist_ok=True)
         self.mol_info[key]["directory"] = key
         write(f"{key}/{key}.xyz", atomslist[0], format="xyz")
@@ -122,7 +131,6 @@ class Crafter:
                 self.mol_info[key]["rdkit"]["mol2d"] = mol
 
             nc = self.mol_info[key]["netcharge"]
-
             self._il_assign(mol, mol2d, int(nc))
 
     def get_smiles(self, keys=None):
@@ -152,44 +160,11 @@ class Crafter:
             writer.write(mol)
             writer.close()
 
-    # def do_geoopt(self, force=False):
-    #     import shutil
-    #     if shutil.which("g16") is None:
-    #         print("Error: g16 is not found in PATH")
-    #         return
-    #     for m in self.mol_info.keys():
-    #         if "g16opt" in self.mol_info[m].keys():
-    #             for i in range(len(self.mol_info[m]['g16opt'])):
-    #                 g16_infile = self.mol_info[m]['g16opt'][i].label + ".com"
-    #                 g16_logfile = self.mol_info[m]['g16opt'][i].label + ".log"
-    #                 if os.path.exists(g16_logfile) and not force:
-    #                     print(f"Skip {g16_logfile}")
-    #                     continue
-    #                 elif not os.path.exists(g16_logfile) or force:
-    #                     cmd = f"g16 < {g16_infile}  > {g16_logfile}"
-    #                     output = subprocess.getoutput(cmd)
-    #                     print(f"g16opt -- {m}_{i}")
-    #                     print(cmd)
-    #                     print(output)
-    # def molinfo_setg16opt(mol_info, params_opt=None):
-    #     if params_opt is None:
-    #         params_opt = default_params_opt
-    #     for key in mol_info.keys():
-    #         output_dir = key
-    #         mol_info[key]["g16opt"] = []
-    #         mol_info[key]["g16optlog"] = []
-    #         for i in range(len(mol_info[key]["aseatoms_list"])):
-    #             atoms = mol_info[key]["aseatoms_list"][i]
-    #             charge = mol_info[key]["charge"]
-    #             label = f"{key}_{i}"
-    #             g16 = input_g16(atoms, params_opt, charge, output_dir, label)
-    #             mol_info[key]["g16opt"].append(g16)
-
-    def get_optstructure(self, keys=None, do_calc=True):
-        from ase.calculators.gaussian import Gaussian, GaussianOptimizer
+    def get_optstructure(self, keys=None, do_calc=True, rmsd=0.2):
         geoopt_params = {
                 "method": "wb97xd",
-                "basis": "6-311++g(d,p)",
+                "basis": "6-311+g(2d,p)",
+                "opt": "maxcycle=256",
         }
         if keys is None:
             keys = self.mol_info.keys()
@@ -204,11 +179,31 @@ class Crafter:
                 nc = self.mol_info[key]["netcharge"]
                 calc_geoopt = Gaussian(label=f'{key}_{i}', charge=nc, **geoopt_params)
                 calc_geoopt.directory = self.mol_info[key]["directory"]
-                opt = GaussianOptimizer(atoms_tmp, calc_geoopt)
+                atoms_tmp.calc = calc_geoopt
                 if do_calc:
-                    opt.run(steps=256)
+                    # geoopt is skipped if the similar conformation was already calculated
+                    rmsd_skip = False
+                    for j in range(0, i):
+                        gj = self.mol_info[key]["networkX"][j]
+                        gi = self.mol_info[key]["networkX"][i]
+                        rmsd_ji, _ = cast_molecules(gj, gi)
+                        print(rmsd_ji, i, j)
+                        if rmsd_ji < rmsd:
+                            rmsd_skip = True
+                            break
+                                
+                    if rmsd_skip:
+                        self.mol_info[key]["aseatoms_geoopt"][i] \
+                                  = self.mol_info[key]["aseatoms_geoopt"][j]
+                        print(f"Skip geometry optimization of {key}_{i}: RMSD = {rmsd_ji} A < {rmsd}")
+                        rmsd_skip = False
+                    else:
+                        self.mol_info[key]["aseatoms_geoopt"][i] = atoms_tmp
+                        print(f"Calculating geometry optimization of {key}_{i}")
+                        _ = self.mol_info[key]["aseatoms_geoopt"][i].get_potential_energy()
+                        print(f"Finished geometry optimization of {key}_{i}")
 
-    def get_partial_charges(self, charge_type="resp", keys=None):
+    def get_partial_charges(self, charge_type="resp", keys=None, ff_params=None):
         """
         Get partial charges by RESP or AM1-BCC
         charge_type: "resp" or "am1bcc"
@@ -238,6 +233,9 @@ class Crafter:
 
             self.mol_info[key]["partial_charges"] = \
                 self.mol_info[key]["charge"].get_partialcharges()
+        
+        if ff_params is not None:
+            self._adjust_charges(ff_params)
     
     def get_dihedral_qm(self, keys=None, do_calc=True):
         if keys is None:
@@ -265,7 +263,7 @@ class Crafter:
         for key in keys:
             self.mol_info[key]["DihedCalc"].get_dihedral_ff(do_calc=do_calc)
 
-    def adjust_charges(self, ff_params=None):
+    def _adjust_charges(self, ff_params=None):
         for key in self.mol_info.keys():
             net_charge = self.mol_info[key]["charge"]
             charges = np.array([ np.float64(ee) for ee in self.mol_info[key]["charges"]])
@@ -304,7 +302,7 @@ class Crafter:
             sdffile = os.path.join(dirname, f"{mol}.sdf")
 
             if not os.path.exists(sdffile):
-                self.get_sdf_from_molinfo()
+                self.get_sdf()
             
             molecule_off = Molecule.from_file(sdffile)
             molecule_off.partial_charges = Quantity(self.mol_info[mol]["charges"], toolkit.unit.elementary_charge)
@@ -427,57 +425,4 @@ class Crafter:
             # self.mol_info[key]["metadata"]["FSA_S"] = fsalike_Sindex
             # self.mol_info[key]["metadata"]["FSA_O"] = fsalike_Oindex
 
-def draw_dihedral_plots(mol_info, molkey):
-    import matplotlib.pyplot as plt
-    plt.figure(figsize=(4, 3))
-    n_dihedrals = len(mol_info[molkey]["dihedral_angle"])
-    dihedral_pots_gt = []
-    dihedral_pots_ff = []
-    for i in range(n_dihedrals):
-        dihedral_pot_tmp = []
-        if mol_info[molkey]["dihedral_energy"][i] is not None:
-            x_angle = mol_info[molkey]["dihedral_angle"][i]
-            dihedral_qm = (mol_info[molkey]["dihedral_energy"][i] - mol_info[molkey]["dihedral_energy"][i].min()) / (units.kJ * (units.mol**-1))
-            dihedral_ff = (mol_info[molkey]["dihedral_ffenergy"][i] - mol_info[molkey]["dihedral_ffenergy"][i].min())
-
-            plt.scatter(x_angle, dihedral_qm)
-            plt.plot(x_angle, dihedral_ff,label=f"dihedral_{i}")
-            dihedral_pots_gt.append(dihedral_qm)
-            dihedral_pots_ff.append(dihedral_ff)
-        else:
-            dihedral_pots_gt.append(None)
-            dihedral_pots_ff.append(None)
-            
-    plt.legend(loc='lower center', bbox_to_anchor=(0.5, 1), ncol=2)
-    plt.xlabel("Dihedral angle (deg)")
-    plt.ylabel("Potential energy (kJ/mol)")
-    plt.xticks(range(-180, 181, 60))
-    plt.grid()
-    return dihedral_pots_gt, dihedral_pots_ff
-
-def draw_dihedral_structures(mol_info, molkey):
-    # key_name = "MOL_0"
-    from IPython.display import SVG
-    from rdkit.Chem.Draw import rdMolDraw2D
-    tm_list = []
-    highlighAtoms_list = []
-    legends_list = []
-    n_dihedrals = len(mol_info[molkey]["rotatable_dihedral"])
-    for i_dihed in range(n_dihedrals):
-        highlighAtoms_list.append(mol_info[molkey]["rotatable_dihedral"][i_dihed])
-        tm = rdMolDraw2D.PrepareMolForDrawing(mol_info[molkey]["rdkitmol2d"])
-        tm_list.append(mol_info[molkey]["rdkitmol2d"])
-        legends_list.append(f"dihedral_{i_dihed}")
-
-    dec = [800 // n_dihedrals + (1 if i < 800 % n_dihedrals else 0) for i in range(n_dihedrals)]
-    # decの先頭に800を追加
-    dec.insert(0, 800)
-    l = [dec]
-    view = rdMolDraw2D.MolDraw2DSVG(*l[0])
-
-    view.DrawMolecules(tm_list, highlightAtoms=highlighAtoms_list, legends=legends_list)
-    view.FinishDrawing()
-
-    svg = view.GetDrawingText()
-    return SVG(svg)
 

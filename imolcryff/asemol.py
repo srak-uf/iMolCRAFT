@@ -17,7 +17,7 @@ import random
 # Distinguish the cis and trans isomers
 #################################
 
-class asemol_wrapper():
+class asemol_wrapper:
     def __init__(self, atoms: ase.Atoms, bond_def_file=None, chemical_bonds=None):
         self.atoms = atoms
         self.filename = bond_def_file
@@ -55,7 +55,7 @@ class asemol_wrapper():
         graph = defaultdict(list)
 
         if self.bonds is None:
-            self.bonds = self.get_bonds(atoms)
+            self.bonds = self.get_bonds()
         
         # グラフの構築
         for bond in self.bonds:
@@ -64,7 +64,6 @@ class asemol_wrapper():
             graph[atom2].append(atom1)
         
         visited = set()
-
         def dfs(atom, compound):
             # 深さ優先探索で化合物を構築
             if atom not in visited:
@@ -91,8 +90,10 @@ class asemol_wrapper():
         
         return compounds
     
-    def get_ase_molecules(self, ordered=False):
+    def get_ase_molecules(self, out_nX=False):
         asemols = []
+        asenX = []
+
         if self.molecules is None:
             self.molecules = self.get_molecules()
         self.atoms = self.unwrap_molecules()
@@ -100,29 +101,33 @@ class asemol_wrapper():
         for i_mol in range(len(self.molecules)):
             asemols.append(self.atoms[self.molecules[i_mol]])
         
-        if ordered == True:
-            molecule_list = []
-            for i_mol in range(len(asemols)):
-                tmp2 = [t for t in molecule_list for t in t]
-                if i_mol not in tmp2:
-                    molecule_list.append([i_mol])
-                    for j_mol in range(i_mol+1, len(asemols)):
-                        if is_same_molecule(asemols[i_mol], asemols[j_mol], self.chemical_bonds):
-                            molecule_list[-1].append(j_mol)
-            
-            ref_mols = [asemols[mol[0]] for mol in molecule_list]
-            res_number = 0
-            for i_mol, ref_mol in enumerate(ref_mols):
-                ref_mol.arrays["residuenames"] = np.array([ f"M{i_mol}" for _ in range(len(ref_mol) )])
-                for i, mol_i in enumerate(asemols):
-                    try:
-                        mol_i_rorder = reorder_atoms(ref_mol, mol_i, self.chemical_bonds)
-                        asemols[i] = mol_i_rorder
-                        asemols[i].arrays["residuenumbers"] = np.array([res_number+i+1 for _ in range(len(mol_i_rorder))])
-                    except:
-                        pass
+        molecule_list = []
+        for i_mol in range(len(asemols)):
+            tmp2 = [t for t in molecule_list for t in t]
+            if i_mol not in tmp2:
+                molecule_list.append([i_mol])
+                for j_mol in range(i_mol+1, len(asemols)):
+                    if is_same_molecule(asemols[i_mol], asemols[j_mol], self.chemical_bonds):
+                        molecule_list[-1].append(j_mol)
+        
+        ref_mols = [asemols[mol[0]] for mol in molecule_list]
+        asenX = [None for _ in asemols]
+        res_number = 0
+        for i_mol, ref_mol in enumerate(ref_mols):
+            ref_mol.arrays["residuenames"] = np.array([ f"M{i_mol}" for _ in range(len(ref_mol) )])
+            for i, mol_i in enumerate(asemols):
+                try:
+                    mol_i_rorder = reorder_atoms(ref_mol, mol_i, self.chemical_bonds)
+                    asemols[i] = mol_i_rorder
+                    asenX[i] = ase_atoms_to_nx(asemols[i], self.chemical_bonds)
+                    asemols[i].arrays["residuenumbers"] = np.array([res_number+i+1 for _ in range(len(mol_i_rorder))])
+                except:
+                    pass
 
-        return asemols, molecule_list
+        if out_nX == True:
+            return asemols, molecule_list, asenX
+        else:
+            return asemols, molecule_list
 
     def unwrap_molecules(self) -> ase.Atoms:
         """分子構造を保って原子座標をunwrapする関数"""
@@ -160,7 +165,7 @@ def ase_atoms_to_nx(atoms: ase.Atoms, chemical_bonds):
     asemol_wrap = asemol_wrapper(atoms, chemical_bonds=chemical_bonds)
     bonds = asemol_wrap.get_bonds()
     for i, at in enumerate(atoms):
-        G.add_node(i, element=at.symbol)
+        G.add_node(i, element=at.symbol, xyz=at.position)
         # G.add_node(i, element=at.symbol)
     for bond in bonds:
         G.add_edge(bond[0], bond[1])
@@ -192,6 +197,87 @@ def reorder_atoms(atoms1, atoms2, chemical_bonds):
     if 'atomtypes' in atoms1.arrays:
         reordered_atoms2.arrays['atomtypes'] = atoms1.arrays['atomtypes']
     return reordered_atoms2
+
+
+def kabsch_algorithm(P, Q):
+    """
+    Calculation of optimal rotation matrix and translation vector by Kabsch algorithm
+
+    Parameters:
+    P : numpy.ndarray
+        Coordinates of the first molecule (N x 3)
+    Q : numpy.ndarray
+        Coordinates of the second molecule (N x 3)
+    Returns:
+    R : numpy.ndarray
+        Rotation matrix (3 x 3)
+    t : numpy.ndarray
+        Translation vector (3 x 1)
+    """
+    # Centroid
+    centroid_P = np.mean(P, axis=0)
+    centroid_Q = np.mean(Q, axis=0)
+
+    # Centering
+    P_centered = P - centroid_P
+    Q_centered = Q - centroid_Q
+
+    # Covariance matrix
+    H = P_centered.T @ Q_centered
+
+    # SVD
+    U, S, Vt = np.linalg.svd(H)
+    V = Vt.T
+
+    # Reflection 
+    d = np.sign(np.linalg.det(V @ U.T))
+    if d < 0:
+        V[:, -1] *= -1
+
+    # Rotational matrix
+    R = V @ U.T
+
+    # Translation vector
+    t = centroid_Q - (R @ centroid_P)
+    
+    return R, t
+
+def cast_molecules(G1, G2):
+    """
+    Cast molecules using Kabsch algorithm
+
+    Parameters:
+    G1 : networkx.Graph
+        First molecule graph
+    G2 : networkx.Graph
+        Second molecule graph
+    Returns:
+    rmsd: float
+        Lowest RMSD among mappings
+    positions : np.ndarray
+        Aligned positions of the first molecule by the lowest-rmsd conversion
+    """
+    GM = nx.isomorphism.GraphMatcher(G1, G2, node_match=lambda n1, n2: n1['element'] == n2['element'])
+    best_portions = None
+    if not GM.is_isomorphic():
+        assert False, "Graph isomorphism failed"
+    
+    # Get the mappings
+    mapping = list(GM.subgraph_isomorphisms_iter())
+
+    best_rmsd = float('inf')
+    for map in mapping:
+        P = np.array([G1.nodes[i]['xyz'] for i in map.keys()])
+        Q = np.array([G2.nodes[j]['xyz'] for j in map.values()])
+        R, t = kabsch_algorithm(P, Q)
+        P_aligned = (R @ P.T).T + t
+
+        rmsd = np.sqrt(np.mean(np.sum((P_aligned - Q) ** 2, axis=1)))
+        if rmsd < best_rmsd:
+            best_rmsd = rmsd
+            best_portions = P_aligned
+    return best_rmsd, best_portions
+
 
 def aseatoms2pdb(filename, atoms):
     # ATOM      1    1 MOL     1       2.155   3.338  13.788  1.00  0.00           S  
