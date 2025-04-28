@@ -9,14 +9,15 @@ def get_element_fromtype(ptype, ff):
             return at["element"]
 
 def gafftemplate2xml(mmm, gaff, ion_ffxml=None):
+    ffxmlfiles = []
     for i in range(len(mmm)):
         if mmm[i].n_atoms > 1 or (mmm[i].total_charge == 0 and mmm[i].n_atoms == 1):
             ffxml = gaff.generate_residue_template(mmm[i])
             with open(f"gaffxml_{i}.xml", "w") as f:
                 f.write(ffxml)
         else: # single-atom ion
-            ion_ffxml = os.path.join(os.path.dirname(openmmforcefields.__file__), \
-                                    "ffxml", \
+            ion_ffxml = os.path.join(os.path.dirname(openmmforcefields.__file__),
+                                    "ffxml",
                                      ion_ffxml)
             ion_ffxml_base = os.path.basename(ion_ffxml)
             shutil.copy(ion_ffxml,  f"./gaffxml_{i}.xml")
@@ -49,3 +50,7 @@ def gafftemplate2xml(mmm, gaff, ion_ffxml=None):
             
             ff.generators["NonbondedForce"].atom_keys = [target_ptype]
             ff.renderXML(f"./gaffxml_{i}.xml")
+        
+        ffxmlfiles.append(f"./gaffxml_{i}.xml")
+    
+    return ffxmlfiles

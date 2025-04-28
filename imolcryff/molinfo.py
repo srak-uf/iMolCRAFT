@@ -3,16 +3,21 @@ from rdkit.Chem import rdDetermineBonds, rdDepictor
 from ase.io import read, write
 from ase import Atoms
 from ase.calculators.gaussian import Gaussian
-import os, copy, pickle
+from ase.optimize import BFGS
+from ase.calculators.psi4 import Psi4
+import os, copy, pickle, yaml, tempfile
 import numpy as np
 from openff.toolkit.topology import Molecule
 from openff.toolkit import Quantity
 from openff import toolkit
 from openmm.app import *
 from openmm import *
-from .asemol import asemol_wrapper, cast_molecules
+from .asemol import asemol_wrapper, cast_molecules, pdb2packmol
 from .dihedral import DihedCalculator
-from .charge import ChargeCalculator
+from .charge import ChargeCalculator, Psi4ChargeCalculator
+from .gaffil_generators import GAFFilTemplateGenerator
+from .ffxml import gafftemplate2xml
+from .asemol import merge_asemols, aseatoms2pdb
 
 MOLINFO_KEYS = {
     "aseatoms_list": list,
@@ -22,9 +27,9 @@ MOLINFO_KEYS = {
     "DihedCalc": type(None),
     "directory": str,
     "metadata": dict,
-    "Molecule_OFF": type(None),
-    "Natoms": type(None),
-    "Nmols": type(None),
+    "molecule_OFF": type(None),
+    "natoms": type(None),
+    "nmols": type(None),
     "netcharge": type(None),
     "networkX": list,
     "partial_charges": list,
@@ -33,14 +38,119 @@ MOLINFO_KEYS = {
 }
 
 class Crafter:
-    def __init__(self):
+    def __init__(self, yml=None):
         self.mol_info = {}
+        self.params_geoopt = None
+        self.params_charge = None
+        self.params_ff = None
+        self.structure = None
+        if yml is not None:
+            self.from_yaml(yml)
+
+    def from_yaml(self, filename):
+        data = self._parser_yaml(filename)
+        self.params_geoopt = data["geoopt"]
+        self.params_charge = data["charge"]
+        self.params_ff = data["forcefield"]
+        self.structure = data["structure"]
+
+    def prep(self, do_opt=True, do_charge=True):
+        # initial structure generation
+        if self.structure["type"] == "crystal":
+            self.from_crystal(self.structure["cif"])
+        elif self.structure["type"] == "liquid":
+            for i, atoms in enumerate(self.structure["molecules"]):
+                atoms = read(atoms)
+                self.append_fromAtomsList([atoms],
+                                          f"MOL_{i}",
+                                          Nmols=int(self.structure["nmols"][i]))
+            self._assign_totalcharge()
+        self.get_rdkitmol()
+        self.get_molecule_off()
+        if do_opt == True:
+            self.get_optstructure(**self.params_geoopt)
+        if do_charge == True:
+            self.get_partial_charges(params_ff=self.params_ff, **self.params_charge)
+            self.get_molecule_off()
+        
+    def build(self):
+        self.get_molecule_off()
+        molecules = []
+        
+        for key in self.mol_info.keys():
+            molecule = self.mol_info[key]["molecule_OFF"]
+            molecule.mol2file = self.mol_info[key]["ChargeCalc"].mol2file
+            molecules.append(molecule)
+        
+        if self.params_ff["fftype"].split("-")[0] == "gaff":
+            fftemplate = GAFFilTemplateGenerator(molecules=molecules,
+                                                 forcefield=self.params_ff["fftype"],
+                                                 il_assign=self.params_ff.get("fsa_assign", None))
+        else:
+            assert False, "Unknown forcefield type. Please check the forcefield type."
+        
+        # output xml files
+        ffxmlfiles = gafftemplate2xml(molecules, fftemplate, ion_ffxml=self.params_ff.get("iontype", "amber/ions/ionsff99_tip3p.xml"))
+
+        # create structure
+        ## crystal structure
+        if self.structure["type"] == "crystal":
+            system_atoms = merge_asemols(self.molatoms)
+            system_atoms = system_atoms.repeat(self.structure.get("repeat", [1,1,1]))
+            with tempfile.NamedTemporaryFile() as temp_pdb:
+                temp_pdb_name = temp_pdb.name
+                aseatoms2pdb(temp_pdb_name, system_atoms)
+                pdb = PDBFile(temp_pdb_name)
+                pdb_b = asemol_wrapper(system_atoms)
+                _ = pdb_b.get_bonds()
+                bonds_list = [ [bond[0], bond[1]] for bond in pdb_b.bonds]
+                atomlist_openmm = [a for a in pdb.topology.atoms()]
+                for bond in bonds_list:
+                    a1 = atomlist_openmm[bond[0]]
+                    a2 = atomlist_openmm[bond[1]]
+                    pdb.topology.addBond(a1, a2)
+        ## liquid structure
+        elif self.structure["type"] == "liquid":
+            molstructures = self.structure["molecules"]
+            b, a, m   = pdb2packmol(molstructures, 
+                        self.structure.get("nmols"),
+                        desired_density=self.structure.get("density_kgm3", None),
+                        cell=self.structure.get("cell_A", None),
+                        outfile="supercell.pdb")
+            pdb = PDBFile("supercell.pdb")
+            atomlist_openmm = [a for a in pdb.topology.atoms()]
+            for bond in b:
+                a1 = atomlist_openmm[bond[0]]
+                a2 = atomlist_openmm[bond[1]]
+                pdb.topology.addBond(a1, a2)
+
+        # Save the supecell with bonds
+        pdb.writeFile(pdb.topology, pdb.positions, open("supercell_bonds.pdb", "w"))
+        pdb = PDBFile("supercell_bonds.pdb")
+
+        # create system
+        forcefield = ForceField(*ffxmlfiles)
+        system = forcefield.createSystem(pdb.topology, nonbondedMethod=PME)
+
+        with open('system.xml', 'w') as output:
+            output.write(XmlSerializer.serialize(system))
 
     def _initialize_molinfo(self, key: str):
         """
         Initialize mol_info[key] with predefined keys.
         """
         self.mol_info[key] = {k: v() if callable(v) else v for k, v in MOLINFO_KEYS.items()}
+
+    def _parser_yaml(self, filename):
+        with open(filename, 'r') as file:
+            data = yaml.safe_load(file)
+
+        if set(data.keys()) <= set(["geoopt", "charge", "forcefield", "structure"]):
+            pass
+        else:
+            assert False, "Unknown keys in the yaml file. Please check the file."
+
+        return data
 
     def from_crystal(self, filename: str, assign_totalcharge=True):
         """
@@ -61,11 +171,11 @@ class Crafter:
                                       Nmols=len(mol_idx), 
                                       networkX=nX)
         
-            if assign_totalcharge:
-                self._assign_totalcharge()
-            else:
-                print(f"Warning: MOL_{i} has no charge information")
-                print(f"Please define the total charge manually")
+        if assign_totalcharge:
+            self._assign_totalcharge()
+        else:
+            print(f"Warning: MOL_{i} has no charge information")
+            print(f"Please define the total charge manually")
 
     def append_fromAtomsList(self, atomslist: list, key: str, Nmols: int = None, networkX: list = []):
         """
@@ -90,7 +200,7 @@ class Crafter:
         self.mol_info[key]["directory"] = key
         write(f"{key}/{key}.xyz", atomslist[0], format="xyz")
 
-    def get_rdkitmol(self, keys=None, il_assing=True):
+    def get_rdkitmol(self, keys=None, il_assign=True):
         if keys is None:
             keys = self.mol_info.keys()
 
@@ -131,7 +241,8 @@ class Crafter:
                 self.mol_info[key]["rdkit"]["mol2d"] = mol
 
             nc = self.mol_info[key]["netcharge"]
-            self._il_assign(mol, mol2d, int(nc))
+            il_dict = self._il_assign(mol, mol2d, int(nc))
+            self.mol_info[key]["metadata"].update(il_dict)
 
     def get_smiles(self, keys=None):
         if keys is None:
@@ -160,12 +271,31 @@ class Crafter:
             writer.write(mol)
             writer.close()
 
-    def get_optstructure(self, keys=None, do_calc=True, rmsd=0.2):
-        geoopt_params = {
+    # GeoOptimizerとして別ファイルに移す案もあり
+    def get_optstructure(self, keys=None, do_calc=True, rmsd=0.2, **kwargs):
+        geoopt_params_g16 = {
                 "method": "wb97xd",
                 "basis": "6-311+g(2d,p)",
                 "opt": "maxcycle=256",
         }
+        geoopt_params_psi4 = {
+                "method": "wb97x-d",
+                "basis": "6-311+g(2d,p)",
+        }
+
+        if kwargs.get("software") == "psi4":
+            geoopt_params_psi4.update(kwargs)
+            method = geoopt_params_psi4.get("method")
+            if method == "wb97xd":
+                geoopt_params_psi4["method"] = "wb97x-d"
+            geoopt_params_psi4.pop("software", None)
+            psi4_flag = True
+        else:
+            geoopt_params_g16.update(kwargs)
+            geoopt_params_g16.pop("software", None)
+            psi4_flag = False
+
+
         if keys is None:
             keys = self.mol_info.keys()
 
@@ -177,11 +307,22 @@ class Crafter:
                 if self.mol_info[key]["netcharge"] is None:
                     self._assign_totalcharge()
                 nc = self.mol_info[key]["netcharge"]
-                calc_geoopt = Gaussian(label=f'{key}_{i}', charge=nc, **geoopt_params)
-                calc_geoopt.directory = self.mol_info[key]["directory"]
-                atoms_tmp.calc = calc_geoopt
+
+                if psi4_flag == False:
+                    calc_geoopt = Gaussian(label=f'{key}_{i}', charge=nc, **geoopt_params_g16)
+                    calc_geoopt.directory = self.mol_info[key]["directory"]
+                    atoms_tmp.calc = calc_geoopt
+                elif psi4_flag == True:
+                    psi4traj = os.path.join(self.mol_info[key]["directory"], f'{key}_{i}_opt.traj')
+                    psi4log = os.path.join(self.mol_info[key]["directory"], f'{key}_{i}_opt.log')
+                    calc_geoopt = Psi4(atoms = atoms_tmp,
+                                       num_threads = "max", 
+                                       memory = "16GB", 
+                                       charge=nc, 
+                                       **geoopt_params_psi4)
+                    opt = BFGS(atoms_tmp, trajectory=psi4traj, logfile=psi4log)
+                
                 if do_calc:
-                    # geoopt is skipped if the similar conformation was already calculated
                     rmsd_skip = False
                     for j in range(0, i):
                         gj = self.mol_info[key]["networkX"][j]
@@ -200,10 +341,43 @@ class Crafter:
                     else:
                         self.mol_info[key]["aseatoms_geoopt"][i] = atoms_tmp
                         print(f"Calculating geometry optimization of {key}_{i}")
-                        _ = self.mol_info[key]["aseatoms_geoopt"][i].get_potential_energy()
+                        if psi4_flag == False:
+                            _ = self.mol_info[key]["aseatoms_geoopt"][i].get_potential_energy()
+                        elif psi4_flag == True:
+                            opt.run(fmax=0.01)
                         print(f"Finished geometry optimization of {key}_{i}")
+                        
+            minidx = np.array([a.get_potential_energy() for a \
+                                in self.mol_info[key]["aseatoms_geoopt"]]).argmin()
+            self.mol_info[key]["aseatoms_stable"] = self.mol_info[key]["aseatoms_geoopt"][minidx]
 
-    def get_partial_charges(self, charge_type="resp", keys=None, ff_params=None):
+    def get_molecule_off(self, keys=None, **kwargs):
+        if keys is None:
+            keys = self.mol_info.keys()
+
+        for key in keys:
+            dirname = self.mol_info[key]["directory"]
+            sdffile = os.path.join(dirname, f"{key}.sdf")
+            if not os.path.exists(sdffile):
+                self.get_sdf()
+            
+            molecule_off = Molecule.from_file(sdffile)
+            if list(self.mol_info[key]["partial_charges"]) != []:
+                molecule_off.partial_charges = Quantity(self.mol_info[key]["partial_charges"],
+                                                        toolkit.unit.elementary_charge)
+
+            molecule_off.name = key
+            # molecule_mm.total_charge = Quantity(self.mol_info[mol]["charge"], unit.elementary_charge)  ## why ??
+            for meta_key in self.mol_info[key]["metadata"].keys():
+                for meta_ind in self.mol_info[key]["metadata"][meta_key]:
+                    molecule_off.atoms[meta_ind].metadata[meta_key] = True
+            
+            for attr_key, attr_value in kwargs.items():
+                setattr(molecule_off, attr_key, attr_value)
+
+            self.mol_info[key]["molecule_OFF"] = molecule_off
+
+    def get_partial_charges(self, keys=None, params_ff=None, **kwargs):
         """
         Get partial charges by RESP or AM1-BCC
         charge_type: "resp" or "am1bcc"
@@ -211,6 +385,15 @@ class Crafter:
         """
         if keys is None:
             keys = self.mol_info.keys()
+
+        charge_type = kwargs.get("type", "resp")
+        software = kwargs.get("software", False)
+        if software == "psi4":
+            psi4_flag = True
+        else:
+            psi4_flag = False
+        kwargs.pop("type", None)
+        kwargs.pop("software", None)
         
         if charge_type not in ["resp", "am1bcc"]:
             assert False, "charge_type should be resp or am1bcc"
@@ -221,21 +404,39 @@ class Crafter:
             else:
                 atoms = self.mol_info[key]["aseatoms_list"][0]
             
-            netcharge = 0
+            netcharge = self.mol_info[key]["netcharge"]
             label = key
-            self.mol_info[key]["charge"] = ChargeCalculator(
-                atoms,
-                charge_type,
-                netcharge,
-                label,
-                directory=self.mol_info[key]["directory"]
-            )
 
-            self.mol_info[key]["partial_charges"] = \
-                self.mol_info[key]["charge"].get_partialcharges()
+            if psi4_flag == False:
+                self.mol_info[key]["ChargeCalc"] = ChargeCalculator(
+                    atoms,
+                    charge_type,
+                    netcharge,
+                    label,
+                    directory=self.mol_info[key]["directory"],
+                    params=kwargs
+                )
+            elif psi4_flag == True:
+                if self.mol_info[key]["molecule_OFF"] == None:
+                    self.get_molecule_off(keys=[key])
+                molecule = self.mol_info[key]["molecule_OFF"]
+                molecule.conformers[0].magnitude[:] = atoms.positions
+                self.mol_info[key]["ChargeCalc"] = Psi4ChargeCalculator(
+                    molecule,
+                    charge_type,
+                    netcharge,
+                    label,
+                    directory=self.mol_info[key]["directory"],
+                    params=kwargs
+                )
+
+            self.mol_info[key]["ChargeCalc"].get_partialcharges()
+            self.mol_info[key]["partial_charges"] = self.mol_info[key]["ChargeCalc"].partial_charges
+            self.get_molecule_off(keys=[key],
+                                  **{"mol2file": self.mol_info[key]["ChargeCalc"].mol2file})
         
-        if ff_params is not None:
-            self._adjust_charges(ff_params)
+        if params_ff is not None:
+            self._adjust_charges(params_ff)
     
     def get_dihedral_qm(self, keys=None, do_calc=True):
         if keys is None:
@@ -265,8 +466,8 @@ class Crafter:
 
     def _adjust_charges(self, ff_params=None):
         for key in self.mol_info.keys():
-            net_charge = self.mol_info[key]["charge"]
-            charges = np.array([ np.float64(ee) for ee in self.mol_info[key]["charges"]])
+            net_charge = self.mol_info[key]["netcharge"]
+            charges = np.array([ np.float64(ee) for ee in self.mol_info[key]["partial_charges"]])
 
             if ff_params is not None:
                 if "charge_scale_ion" in ff_params.keys():
@@ -283,7 +484,6 @@ class Crafter:
             total_charge = np.sum(charges)
 
             charge_deficit = total_charge - net_charge
-            print(charge_deficit)
 
             if not np.isclose(charge_deficit, 0.0):
                 print(f"Net charge of {key} is {net_charge} and total charge is {total_charge}")
@@ -292,30 +492,8 @@ class Crafter:
                 charge_deficit = total_charge - net_charge
                 charges[0] -= charge_deficit
             
-            self.mol_info[key]["charges"] = charges
+            self.mol_info[key]["partial_charges"] = charges
 
-
-    def get_molecule_off(self):
-        molecules_off = []
-        for mol in self.mol_info.keys():
-            dirname = self.mol_info[mol]["directory"]
-            sdffile = os.path.join(dirname, f"{mol}.sdf")
-
-            if not os.path.exists(sdffile):
-                self.get_sdf()
-            
-            molecule_off = Molecule.from_file(sdffile)
-            molecule_off.partial_charges = Quantity(self.mol_info[mol]["charges"], toolkit.unit.elementary_charge)
-            molecule_off.name = mol
-            # molecule_mm.total_charge = Quantity(self.mol_info[mol]["charge"], unit.elementary_charge)  ## why ??
-            for meta_key in self.mol_info[mol]["metadata"].keys():
-                for meta_ind in self.mol_info[mol]["metadata"][meta_key]:
-                    molecule_off.atoms[meta_ind].metadata[meta_key] = True
-            if "mol2file" in self.mol_info[mol]:
-                molecule_off.mol2file = os.path.join(self.mol_info[mol]["directory"], self.mol_info[mol]["mol2file"])
-            molecules_off.append(molecule_off)
-        return molecules_off
-        
     def save_crafter(self, filename="crafter.pkl"):
         with open(filename, mode='wb') as f:
             pickle.dump(self,f)
@@ -364,6 +542,7 @@ class Crafter:
         fsalike_Nindex = []
         fsalike_Sindex = []
         fsalike_Oindex = []
+        il_dict = {}
         if nc < 0:
             atoms = mol.GetAtoms()
             atoms2d = mol2d.GetAtoms()
@@ -421,8 +600,8 @@ class Crafter:
                         bond2d.SetBondType(Chem.rdchem.BondType.DOUBLE)
                         atoms2d[oxygen_idx].SetFormalCharge(0)
 
-            # self.mol_info[key]["metadata"]["FSA_N"] = fsalike_Nindex
-            # self.mol_info[key]["metadata"]["FSA_S"] = fsalike_Sindex
-            # self.mol_info[key]["metadata"]["FSA_O"] = fsalike_Oindex
-
+            il_dict["FSA_N"] = fsalike_Nindex
+            il_dict["FSA_S"] = fsalike_Sindex
+            il_dict["FSA_O"] = fsalike_Oindex
+        return il_dict
 

@@ -1,8 +1,10 @@
-from .mol2 import read_mol2
+from .mol2 import read_mol2, write_mol2_off
 import os, subprocess
 from ase.io import read, write
 from ase.calculators.gaussian import Gaussian
 import tempfile
+from openff import toolkit
+from openff.toolkit import Quantity
 from openff.recharge.esp import ESPSettings
 from openff.recharge.grids import MSKGridSettings
 from openff.recharge.esp.psi4 import Psi4ESPGenerator
@@ -24,7 +26,7 @@ resp_params = {
 }
 
 psi4_resp_params = ESPSettings(
-    method="hf", basis="6-31G*", grid_settings=MSKGridSettings()
+    method="hf", basis="6-31G*", grid_settings=MSKGridSettings(density=6.0)
 )
 
 class ChargeCalculator:
@@ -49,6 +51,8 @@ class ChargeCalculator:
             else:
                 raise ValueError("Unknown charge type. Supported types are: resp, am1-bcc")
             self.g16 = None
+        else:
+            resp_params.update(self.params)
     
     def get_partialcharges(self):
         if self.charge_type == "resp":
@@ -70,6 +74,8 @@ class ChargeCalculator:
             print(cmd_antech)
             output = subprocess.getoutput(cmd_antech)
             print(output)
+
+        self.mol2file = output_mol2
 
     def _get_resp(self):
         g16calculator = Gaussian(
@@ -95,11 +101,12 @@ class ChargeCalculator:
         print(cmd_antech)
         output = subprocess.getoutput(cmd_antech)
         print(output)
+        self.mol2file = output_mol2
 
 
 class Psi4ChargeCalculator(ChargeCalculator):
     def __init__(self, molecule, charge_type, netcharge, label, directory=None, params=None):
-        self.molecule = molecule.copy()
+        self.molecule = molecule
         self.charge_type = charge_type
         self.params = params
         self.charge = netcharge
@@ -115,10 +122,15 @@ class Psi4ChargeCalculator(ChargeCalculator):
             else:
                 raise ValueError("Unknown charge type. Supported types are: resp")
             self.g16 = None
+        else:
+            self.params = ESPSettings(method=params["method"],
+                                      basis=params["basis"],
+                                      grid_settings=MSKGridSettings(density=6.0)
+                                      )
     
     def get_partialcharges(self):
         if self.charge_type == "resp":
-            self._get_resp()
+            self.partial_charges = self._get_resp()
         else:
             raise ValueError("Unknown charge type. Supported types are: resp")
 
@@ -135,3 +147,9 @@ class Psi4ChargeCalculator(ChargeCalculator):
         resp_charges = LibraryChargeGenerator.generate(
             self.molecule, LibraryChargeCollection(parameters=[resp_charge_parameter])
         )
+        self.mol2file = os.path.join(self.directory, self.label + "_resp.mol2")
+        resp_charges = resp_charges.flatten()
+        self.molecule.partial_charges = Quantity(resp_charges,
+                                                 toolkit.unit.elementary_charge)
+        write_mol2_off(self.mol2file, self.molecule)
+        return resp_charges

@@ -23,7 +23,7 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
                     mm[1].mol2file = molecule.mol2file
 
         if il_assign == None:
-            self.il_assign =  {"FSA": {"S": "s6", "N": "n2", "O": "o", "F": "f"}}
+            self.il_assign =  {"FSA": {"S": "s6", "N": "n", "O": "o", "F": "f"}}
         else:
             self.il_assign = il_assign
 
