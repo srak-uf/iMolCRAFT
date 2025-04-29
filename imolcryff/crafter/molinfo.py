@@ -13,8 +13,8 @@ from openff import toolkit
 from openmm.app import *
 from openmm import *
 from .asemol import asemol_wrapper, cast_molecules, pdb2packmol
-from .dihedral import DihedCalculator
-from .charge import ChargeCalculator, Psi4ChargeCalculator
+from ..calculator.dihedral import DihedCalculator
+from ..calculator.charge import ChargeCalculator, Psi4ChargeCalculator
 from .gaffil_generators import GAFFilTemplateGenerator
 from .ffxml import gafftemplate2xml
 from .asemol import merge_asemols, aseatoms2pdb
@@ -38,7 +38,43 @@ MOLINFO_KEYS = {
 }
 
 class Crafter:
+    """
+    Crafter is a class designed to handle molecular information and perform various operations 
+    such as geometry optimization, charge calculation, dihedral angle analysis, and force field 
+    generation. It integrates multiple tools and libraries like ASE, OpenFF, Psi4, and RDKit 
+    to streamline molecular modeling workflows.
+
+    Parameters:
+    ----------
+    yml : str, optional
+        Path to a YAML file containing parameters for geometry optimization, 
+        charge calculation, force field generation, and molecular structure.
+        If provided, the parameters and structure will be loaded automatically.
+
+    Attributes:
+    ----------
+    mol_info : dict
+        A dictionary to store molecular information for each molecule.
+    params_geoopt : dict or None
+        Parameters for geometry optimization.
+    params_charge : dict or None
+        Parameters for charge calculation.
+    params_ff : dict or None
+        Parameters for force field generation.
+    structure : dict or None
+        Information about the molecular structure (e.g., crystal or liquid).
+    """
     def __init__(self, yml=None):
+        """
+        Initialize the Crafter object.
+
+        Parameters:
+        ----------
+        yml : str, optional
+            Path to a YAML file containing parameters for geometry optimization, 
+            charge calculation, force field generation, and molecular structure.
+            If provided, the parameters and structure will be loaded automatically.
+        """
         self.mol_info = {}
         self.params_geoopt = None
         self.params_charge = None
@@ -376,7 +412,6 @@ class Crafter:
                                                         toolkit.unit.elementary_charge)
 
             molecule_off.name = key
-            # molecule_mm.total_charge = Quantity(self.mol_info[mol]["charge"], unit.elementary_charge)  ## why ??
             for meta_key in self.mol_info[key]["metadata"].keys():
                 for meta_ind in self.mol_info[key]["metadata"][meta_key]:
                     molecule_off.atoms[meta_ind].metadata[meta_key] = True

@@ -17,7 +17,7 @@ from dmff import Hamiltonian, DMFFTopology
 from dmff.mbar import TargetState, buildTrajEnergyFunction
 
 sys.path.append(os.path.abspath('.'))
-from .analyzer import calc_density_frame, calc_cellpar_frame, calc_rdf_frame, calc_adf_frame
+from ..analyzer.analyzer import calc_density_frame, calc_cellpar_frame, calc_rdf_frame, calc_adf_frame
 import MDAnalysis
 
 import matplotlib.pyplot as plt

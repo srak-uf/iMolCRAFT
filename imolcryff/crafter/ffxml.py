@@ -9,6 +9,22 @@ def get_element_fromtype(ptype, ff):
             return at["element"]
 
 def gafftemplate2xml(mmm, gaff, ion_ffxml=None):
+    """
+    Generate GAFF XML files for a list of molecules.
+    Parameters
+    ----------
+    mmm : list
+        List of molecules to generate XML files.
+    gaff : openmmforcefields.GAFFTemplateGenerator
+        GAFFTemplateGenerator object.
+    ion_ffxml : str, optional
+        Path to the ion XML file. If None, it will use the default ion XML file.
+    
+    Returns
+    -------
+    list
+        List of paths to the generated XML files.
+    """
     ffxmlfiles = []
     for i in range(len(mmm)):
         if mmm[i].n_atoms > 1 or (mmm[i].total_charge == 0 and mmm[i].n_atoms == 1):

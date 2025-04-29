@@ -3,13 +3,11 @@ import ase
 from ase import units
 from ase.geometry import get_distances
 from ase.data import chemical_symbols
-
 import networkx as nx
-
 import pandas as pd
 import numpy as np
 from collections import defaultdict
-
+import math
 import os
 import random
 
@@ -319,7 +317,6 @@ def merge_asemols(asemols):
             merge_asemols.extend(mol)
     return merge_asemols
 
-import math
 def expand_cell(atoms, length=30):
     La = atoms.cell.cellpar()[0]
     Lb = atoms.cell.cellpar()[1]    

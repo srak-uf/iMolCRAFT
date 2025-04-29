@@ -3,7 +3,7 @@ from openff.toolkit import Molecule
 from collections import OrderedDict
 import subprocess
 import os
-from .mol2 import read_mol2, write_mol2
+from ..io.mol2 import read_mol2, write_mol2
 
 
 class GAFFilTemplateGenerator(GAFFTemplateGenerator):
@@ -141,7 +141,3 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
         cmd = f"parmchk2 -i {mol2file} -f mol2 -p gaff.dat -o {frcmod_filename} -s {self._gaff_major_version} -a Y"
         output = subprocess.getoutput(cmd)
         return frcmod_filename
-
-
-def mod_il(mol2file):
-    pass

@@ -1,10 +1,61 @@
 from pathlib import Path
 from typing import IO
 from ase.geometry import cell_to_cellpar
-import numpy 
+import numpy
+import os
+from openmm import XmlSerializer
+from openmm.app import PDBFile
 from openff.toolkit.topology.molecule import Atom, unit
+from openff.toolkit import Topology, Molecule
 from openff.interchange import Interchange
+from openff.interchange.interop.lammps.export import to_lammps
+from openff.interchange.interop import openmm
 from openff.interchange.interop.lammps.export.export import _write_pair_coeffs, _write_bond_coeffs, _write_angle_coeffs, _write_proper_coeffs, _write_improper_coeffs, _write_atoms, _write_bonds, _write_angles, _write_propers, _write_impropers
+
+def exporter_lmp(pdb,
+                 system,
+                 filename):
+    """
+    Export a system to LAMMPS format.
+    Parameters
+    ----------
+    pdb : str
+        The path to the PDB file.
+        The pdb file should contain the topology information.
+    system : str
+        The path to the system xml file of openmm.
+    filename : str
+        The filename of the output file (***.data).
+    """
+    pdb_omm = PDBFile(pdb)
+    system_omm = XmlSerializer.deserialize(open(system).read())
+    res_picked = []
+    molecules_off = []
+    for r in pdb_omm.topology.residues():
+        new_res = False
+        if r.name not in res_picked:
+            new_res = True
+            res_picked.append(r.name)
+        if new_res:
+            molecules_off.append(Molecule())
+            atom_index = []
+            for atom in r.atoms():
+                molecules_off[-1].add_atom(atom.element.atomic_number, 0, False)
+                atom_index.append(atom.index)
+            for b in r.bonds():
+                b0_idx = atom_index.index(b[0].index)
+                b1_idx = atom_index.index(b[1].index)
+                molecules_off[-1].add_bond(b0_idx, b1_idx, bond_order=1, is_aromatic=False)
+    topology_off = Topology.from_openmm(pdb_omm.topology,
+                                        unique_molecules=molecules_off,
+                                        positions=pdb_omm.getPositions())
+    os.environ["INTERCHANGE_EXPERIMENTAL"] = "1"
+    a = openmm.from_openmm(system=system_omm,
+                           topology=topology_off,
+                           positions=pdb_omm.getPositions())
+    # to_lammps(a, f"{filename}.data")
+    to_lammps_non_rectangular(a, f"{filename}.data")
+
 
 def to_lammps_non_rectangular(interchange: Interchange, file_path: Path | str):
     """Write an Interchange object to a LAMMPS data file."""

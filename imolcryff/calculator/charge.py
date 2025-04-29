@@ -1,4 +1,4 @@
-from .mol2 import read_mol2, write_mol2_off
+from ..io.mol2 import read_mol2, write_mol2
 import os, subprocess
 from ase.io import read, write
 from ase.calculators.gaussian import Gaussian
@@ -167,5 +167,5 @@ class Psi4ChargeCalculator(ChargeCalculator):
         resp_charges = resp_charges.flatten()
         self.molecule.partial_charges = Quantity(resp_charges,
                                                  toolkit.unit.elementary_charge)
-        write_mol2_off(self.mol2file, self.molecule)
+        write_mol2(self.mol2file, self.molecule)
         return resp_charges
