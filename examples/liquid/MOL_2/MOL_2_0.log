@@ -1,7 +1,7 @@
  Entering Gaussian System, Link 0=g16
  Initial command:
- /Applications/g16/l1.exe "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-48728.inp" -scrdir="/Users/srak/apl/GaussianG16C02_macM/g16_scratch/"
- Entering Link 1 = /Applications/g16/l1.exe PID=     48729.
+ /Applications/g16/l1.exe "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-69353.inp" -scrdir="/Users/srak/apl/GaussianG16C02_macM/g16_scratch/"
+ Entering Link 1 = /Applications/g16/l1.exe PID=     69354.
   
  Copyright (c) 1988-2021, Gaussian, Inc.  All Rights Reserved.
   
@@ -98,7 +98,7 @@
  2/9=110/2;
  6/7=2,8=2,9=2,10=2,19=2,28=1/1;
  99/9=1/99;
- Leave Link    1 at Tue Apr 29 14:12:44 2025, MaxMem=           0 cpu:               0.0 elap:               0.0
+ Leave Link    1 at Tue Apr 29 15:19:46 2025, MaxMem=           0 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l101.exe)
  ------------------------------
  Gaussian input prepared by ASE
@@ -132,7 +132,7 @@
  NQMom=    2.0440000   0.0000000   0.0000000   0.0000000   0.0000000   2.0440000   0.0000000   0.0000000   0.0000000   0.0000000
  NMagM=    0.4037610   0.0000000   0.0000000   0.0000000   0.0000000   0.4037610   2.7928460   2.7928460   2.7928460   2.7928460
  AtZNuc=   7.0000000   6.0000000   6.0000000   6.0000000   6.0000000   7.0000000   1.0000000   1.0000000   1.0000000   1.0000000
- Leave Link  101 at Tue Apr 29 14:12:44 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  101 at Tue Apr 29 15:19:46 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -183,7 +183,7 @@
  Number of steps in this run=    100 maximum allowed number of steps=    100.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Tue Apr 29 14:12:44 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Tue Apr 29 15:19:46 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -242,7 +242,7 @@
      10          1           0       -1.105005    0.345361    0.880483
  ---------------------------------------------------------------------
  Rotational constants (GHZ):          29.1260507           1.4918085           1.4420828
- Leave Link  202 at Tue Apr 29 14:12:44 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Tue Apr 29 15:19:46 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l301.exe)
  Standard basis: 6-311++G(d,p) (5D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -264,7 +264,7 @@
  Two-electron integral symmetry is turned on.
  R6Disp:  Grimme-D2 Dispersion energy=       -0.0035245473 Hartrees.
  Nuclear repulsion after empirical dispersion term =      182.5379441368 Hartrees.
- Leave Link  301 at Tue Apr 29 14:12:44 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Tue Apr 29 15:19:46 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -276,10 +276,10 @@
  IXCGrd= 4 IRadAn=           5 IRanWt=          -1 IRanGd=           0 AccXCQ= 0.00D+00.
  Generated NRdTot=       0 NPtTot=           0 NUsed=           0 NTot=          32
  NSgBfM=   166   166   166   166   166 MxSgAt=    10 MxSgA2=    10.
- Leave Link  302 at Tue Apr 29 14:12:44 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Tue Apr 29 15:19:46 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
  (Enter /Applications/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Tue Apr 29 14:12:44 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Tue Apr 29 15:19:46 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l401.exe)
  ExpMin= 3.60D-02 ExpMax= 6.29D+03 ExpMxC= 9.49D+02 IAcc=3 IRadAn=         5 AccDes= 0.00D+00
  Harris functional with IExCor= 4639 and IRadAn=       5 diagonalized for initial guess.
@@ -308,7 +308,7 @@
                  (B) (A) (B) (A) (B) (A) (B) (A) (A) (B) (B) (A)
                  (B) (B) (A) (A) (B) (A) (B)
  The electronic state of the initial guess is 1-A.
- Leave Link  401 at Tue Apr 29 14:12:44 2025, MaxMem=   104857600 cpu:               0.4 elap:               0.4
+ Leave Link  401 at Tue Apr 29 15:19:47 2025, MaxMem=   104857600 cpu:               0.5 elap:               0.6
  (Enter /Applications/g16/l502.exe)
  Integral symmetry usage will be decided dynamically.
  Closed shell SCF:
@@ -499,7 +499,7 @@
  SCF Done:  E(RwB97XD) =  -264.235165665     A.U. after   12 cycles
             NFock= 12  Conv=0.26D-08     -V/T= 2.0007
  KE= 2.640559745701D+02 PE=-9.800958518340D+02 EE= 2.692667674623D+02
- Leave Link  502 at Tue Apr 29 14:12:54 2025, MaxMem=   104857600 cpu:               9.9 elap:               9.9
+ Leave Link  502 at Tue Apr 29 15:19:59 2025, MaxMem=   104857600 cpu:              11.7 elap:              12.5
  (Enter /Applications/g16/l601.exe)
  Copying SCF densities to generalized density rwf, IOpCl= 0 IROHF=0.
 
@@ -625,15 +625,15 @@
  Symmetry A    KE= 1.334624156231D+02
  Symmetry B    KE= 1.305935589470D+02
  No NMR shielding tensors so no spin-rotation constants.
- Leave Link  601 at Tue Apr 29 14:12:54 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  601 at Tue Apr 29 15:19:59 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
  R6Disp: Adding Grimme-D2 dispersion energy 1st derivatives to the gradient.
- Leave Link  701 at Tue Apr 29 14:12:54 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  701 at Tue Apr 29 15:19:59 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Tue Apr 29 14:12:54 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  702 at Tue Apr 29 15:19:59 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -645,7 +645,7 @@
          wScrn=  0.000000 ICntrl=      2527 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Petite list used in FoFCou.
- Leave Link  703 at Tue Apr 29 14:12:57 2025, MaxMem=   104857600 cpu:               3.1 elap:               3.1
+ Leave Link  703 at Tue Apr 29 15:20:03 2025, MaxMem=   104857600 cpu:               3.6 elap:               3.9
  (Enter /Applications/g16/l716.exe)
  Dipole        =-1.77635684D-15 2.69784195D-14 1.67816944D-01
  ***** Axes restored to original set *****
@@ -665,7 +665,7 @@
      10        1           0.051437259   -0.068868287   -0.056293141
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.091068127 RMS     0.044575631
- Leave Link  716 at Tue Apr 29 14:12:57 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  716 at Tue Apr 29 15:20:03 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -738,7 +738,7 @@
  Lowest energy point so far.  Saving SCF results.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Tue Apr 29 14:12:57 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Tue Apr 29 15:20:03 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -798,7 +798,7 @@
      10          1           0       -1.168840    0.341931    0.938766
  ---------------------------------------------------------------------
  Rotational constants (GHZ):          26.5528621           1.4851939           1.4320217
- Leave Link  202 at Tue Apr 29 14:12:57 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Tue Apr 29 15:20:03 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l301.exe)
  Standard basis: 6-311++G(d,p) (5D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -820,7 +820,7 @@
  Two-electron integral symmetry is turned on.
  R6Disp:  Grimme-D2 Dispersion energy=       -0.0035676345 Hartrees.
  Nuclear repulsion after empirical dispersion term =      180.2057803387 Hartrees.
- Leave Link  301 at Tue Apr 29 14:12:57 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Tue Apr 29 15:20:03 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -832,12 +832,12 @@
  IXCGrd= 4 IRadAn=           5 IRanWt=          -1 IRanGd=           0 AccXCQ= 0.00D+00.
  Generated NRdTot=       0 NPtTot=           0 NUsed=           0 NTot=          32
  NSgBfM=   166   166   166   166   166 MxSgAt=    10 MxSgA2=    10.
- Leave Link  302 at Tue Apr 29 14:12:57 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Tue Apr 29 15:20:03 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
  (Enter /Applications/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Tue Apr 29 14:12:57 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Tue Apr 29 15:20:04 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l401.exe)
- Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-48729.chk"
+ Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-69354.chk"
  B after Tr=    -0.000000   -0.000000   -0.000000
          Rot=    1.000000    0.000000   -0.000000   -0.000002 Ang=  -0.00 deg.
  Guess basis will be translated and rotated to current coordinates.
@@ -869,7 +869,7 @@
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Petite list used in FoFCou.
  Harris En= -252.989559478193    
- Leave Link  401 at Tue Apr 29 14:12:58 2025, MaxMem=   104857600 cpu:               0.4 elap:               0.4
+ Leave Link  401 at Tue Apr 29 15:20:04 2025, MaxMem=   104857600 cpu:               0.5 elap:               0.5
  (Enter /Applications/g16/l502.exe)
  Integral symmetry usage will be decided dynamically.
  Closed shell SCF:
@@ -1043,15 +1043,15 @@
  SCF Done:  E(RwB97XD) =  -264.272577841     A.U. after   11 cycles
             NFock= 11  Conv=0.60D-08     -V/T= 2.0030
  KE= 2.634773971984D+02 PE=-9.751440132778D+02 EE= 2.671882578996D+02
- Leave Link  502 at Tue Apr 29 14:13:07 2025, MaxMem=   104857600 cpu:               8.9 elap:               9.0
+ Leave Link  502 at Tue Apr 29 15:20:16 2025, MaxMem=   104857600 cpu:              11.1 elap:              11.8
  (Enter /Applications/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
  R6Disp: Adding Grimme-D2 dispersion energy 1st derivatives to the gradient.
- Leave Link  701 at Tue Apr 29 14:13:07 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  701 at Tue Apr 29 15:20:16 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Tue Apr 29 14:13:07 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  702 at Tue Apr 29 15:20:16 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -1063,7 +1063,7 @@
          wScrn=  0.000000 ICntrl=      2527 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Petite list used in FoFCou.
- Leave Link  703 at Tue Apr 29 14:13:10 2025, MaxMem=   104857600 cpu:               3.0 elap:               3.0
+ Leave Link  703 at Tue Apr 29 15:20:20 2025, MaxMem=   104857600 cpu:               3.7 elap:               3.9
  (Enter /Applications/g16/l716.exe)
  Dipole        = 1.33226763D-15 1.59872116D-14 1.56107112D-01
  ***** Axes restored to original set *****
@@ -1083,7 +1083,7 @@
      10        1           0.012932236   -0.018100334   -0.015043458
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.024318388 RMS     0.011816923
- Leave Link  716 at Tue Apr 29 14:13:10 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  716 at Tue Apr 29 15:20:20 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -1161,7 +1161,7 @@
  Lowest energy point so far.  Saving SCF results.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Tue Apr 29 14:13:10 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Tue Apr 29 15:20:20 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -1225,7 +1225,7 @@
      10          1           0       -0.319358   -1.226185    0.911680
  ---------------------------------------------------------------------
  Rotational constants (GHZ):          24.4786953           1.5101445           1.4480991
- Leave Link  202 at Tue Apr 29 14:13:10 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Tue Apr 29 15:20:20 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l301.exe)
  Standard basis: 6-311++G(d,p) (5D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -1245,7 +1245,7 @@
  Two-electron integral symmetry is turned on.
  R6Disp:  Grimme-D2 Dispersion energy=       -0.0036200536 Hartrees.
  Nuclear repulsion after empirical dispersion term =      179.6373851600 Hartrees.
- Leave Link  301 at Tue Apr 29 14:13:10 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Tue Apr 29 15:20:20 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -1257,12 +1257,12 @@
  IXCGrd= 4 IRadAn=           5 IRanWt=          -1 IRanGd=           0 AccXCQ= 0.00D+00.
  Generated NRdTot=       0 NPtTot=           0 NUsed=           0 NTot=          32
  NSgBfM=   166   166   166   166   166 MxSgAt=    10 MxSgA2=    10.
- Leave Link  302 at Tue Apr 29 14:13:10 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Tue Apr 29 15:20:20 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
  (Enter /Applications/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Tue Apr 29 14:13:10 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Tue Apr 29 15:20:20 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l401.exe)
- Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-48729.chk"
+ Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-69354.chk"
  B after Tr=    -0.000000    0.000000   -0.000000
          Rot=    0.710169    0.000612   -0.000392   -0.704031 Ang=  89.50 deg.
  Guess basis will be translated and rotated to current coordinates.
@@ -1278,7 +1278,7 @@
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Petite list used in FoFCou.
  Harris En= -253.000927701492    
- Leave Link  401 at Tue Apr 29 14:13:11 2025, MaxMem=   104857600 cpu:               0.7 elap:               0.7
+ Leave Link  401 at Tue Apr 29 15:20:21 2025, MaxMem=   104857600 cpu:               0.8 elap:               0.8
  (Enter /Applications/g16/l502.exe)
  Integral symmetry usage will be decided dynamically.
  Closed shell SCF:
@@ -1468,15 +1468,15 @@
  SCF Done:  E(RwB97XD) =  -264.275911985     A.U. after   12 cycles
             NFock= 12  Conv=0.69D-08     -V/T= 2.0039
  KE= 2.632421785223D+02 PE=-9.738813569155D+02 EE= 2.667258812486D+02
- Leave Link  502 at Tue Apr 29 14:13:29 2025, MaxMem=   104857600 cpu:              18.4 elap:              18.4
+ Leave Link  502 at Tue Apr 29 15:20:44 2025, MaxMem=   104857600 cpu:              22.2 elap:              23.8
  (Enter /Applications/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
  R6Disp: Adding Grimme-D2 dispersion energy 1st derivatives to the gradient.
- Leave Link  701 at Tue Apr 29 14:13:29 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  701 at Tue Apr 29 15:20:45 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Tue Apr 29 14:13:29 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  702 at Tue Apr 29 15:20:45 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -1488,7 +1488,7 @@
          wScrn=  0.000000 ICntrl=      2527 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Symmetry not used in FoFCou.
- Leave Link  703 at Tue Apr 29 14:13:35 2025, MaxMem=   104857600 cpu:               6.1 elap:               6.1
+ Leave Link  703 at Tue Apr 29 15:20:53 2025, MaxMem=   104857600 cpu:               7.6 elap:               8.2
  (Enter /Applications/g16/l716.exe)
  Dipole        =-1.83501900D-02-4.22759056D-02 1.36719705D-02
  ***** Axes restored to original set *****
@@ -1508,7 +1508,7 @@
      10        1           0.000307003    0.000641545   -0.000698123
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.007029285 RMS     0.002013992
- Leave Link  716 at Tue Apr 29 14:13:35 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  716 at Tue Apr 29 15:20:53 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -1585,7 +1585,7 @@
  Lowest energy point so far.  Saving SCF results.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Tue Apr 29 14:13:35 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Tue Apr 29 15:20:53 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -1645,7 +1645,7 @@
      10          1           0       -0.342179   -1.174453    0.915677
  ---------------------------------------------------------------------
  Rotational constants (GHZ):          26.4784195           1.4739868           1.4215671
- Leave Link  202 at Tue Apr 29 14:13:35 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Tue Apr 29 15:20:53 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l301.exe)
  Standard basis: 6-311++G(d,p) (5D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -1665,7 +1665,7 @@
  Two-electron integral symmetry is turned on.
  R6Disp:  Grimme-D2 Dispersion energy=       -0.0035800048 Hartrees.
  Nuclear repulsion after empirical dispersion term =      179.0162577107 Hartrees.
- Leave Link  301 at Tue Apr 29 14:13:35 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Tue Apr 29 15:20:53 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -1677,12 +1677,12 @@
  IXCGrd= 4 IRadAn=           5 IRanWt=          -1 IRanGd=           0 AccXCQ= 0.00D+00.
  Generated NRdTot=       0 NPtTot=           0 NUsed=           0 NTot=          32
  NSgBfM=   166   166   166   166   166 MxSgAt=    10 MxSgA2=    10.
- Leave Link  302 at Tue Apr 29 14:13:35 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Tue Apr 29 15:20:53 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
  (Enter /Applications/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Tue Apr 29 14:13:35 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Tue Apr 29 15:20:53 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l401.exe)
- Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-48729.chk"
+ Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-69354.chk"
  B after Tr=     0.000000    0.000000    0.000000
          Rot=    0.999998   -0.000150   -0.000201    0.001927 Ang=  -0.22 deg.
  Guess basis will be translated and rotated to current coordinates.
@@ -1698,7 +1698,7 @@
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Petite list used in FoFCou.
  Harris En= -253.001368962929    
- Leave Link  401 at Tue Apr 29 14:13:36 2025, MaxMem=   104857600 cpu:               0.7 elap:               0.7
+ Leave Link  401 at Tue Apr 29 15:20:54 2025, MaxMem=   104857600 cpu:               0.9 elap:               0.9
  (Enter /Applications/g16/l502.exe)
  Integral symmetry usage will be decided dynamically.
  Closed shell SCF:
@@ -1920,15 +1920,15 @@
  SCF Done:  E(RwB97XD) =  -264.273686755     A.U. after   14 cycles
             NFock= 14  Conv=0.89D-08     -V/T= 2.0041
  KE= 2.631851045668D+02 PE=-9.726044591701D+02 EE= 2.661294101377D+02
- Leave Link  502 at Tue Apr 29 14:13:57 2025, MaxMem=   104857600 cpu:              21.3 elap:              21.3
+ Leave Link  502 at Tue Apr 29 15:21:22 2025, MaxMem=   104857600 cpu:              26.0 elap:              28.3
  (Enter /Applications/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
  R6Disp: Adding Grimme-D2 dispersion energy 1st derivatives to the gradient.
- Leave Link  701 at Tue Apr 29 14:13:57 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  701 at Tue Apr 29 15:21:22 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
  (Enter /Applications/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Tue Apr 29 14:13:57 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  702 at Tue Apr 29 15:21:22 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -1940,7 +1940,7 @@
          wScrn=  0.000000 ICntrl=      2527 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Symmetry not used in FoFCou.
- Leave Link  703 at Tue Apr 29 14:14:04 2025, MaxMem=   104857600 cpu:               6.1 elap:               6.1
+ Leave Link  703 at Tue Apr 29 15:21:30 2025, MaxMem=   104857600 cpu:               7.6 elap:               8.1
  (Enter /Applications/g16/l716.exe)
  Dipole        = 1.62741601D-02 1.40912457D-01 4.48425949D-02
  ***** Axes restored to original set *****
@@ -1960,7 +1960,7 @@
      10        1          -0.003482350    0.004475979    0.004500695
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.016951898 RMS     0.005115743
- Leave Link  716 at Tue Apr 29 14:14:04 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  716 at Tue Apr 29 15:21:30 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -2034,7 +2034,7 @@
  Predicted change in Energy=-4.892949D-04
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Tue Apr 29 14:14:04 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Tue Apr 29 15:21:30 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -2094,7 +2094,7 @@
      10          1           0       -0.307847   -1.234824    0.899253
  ---------------------------------------------------------------------
  Rotational constants (GHZ):          25.4418453           1.4926075           1.4356822
- Leave Link  202 at Tue Apr 29 14:14:04 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Tue Apr 29 15:21:30 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l301.exe)
  Standard basis: 6-311++G(d,p) (5D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -2114,7 +2114,7 @@
  Two-electron integral symmetry is turned on.
  R6Disp:  Grimme-D2 Dispersion energy=       -0.0035985420 Hartrees.
  Nuclear repulsion after empirical dispersion term =      179.4505000981 Hartrees.
- Leave Link  301 at Tue Apr 29 14:14:04 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Tue Apr 29 15:21:30 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -2126,12 +2126,12 @@
  IXCGrd= 4 IRadAn=           5 IRanWt=          -1 IRanGd=           0 AccXCQ= 0.00D+00.
  Generated NRdTot=       0 NPtTot=           0 NUsed=           0 NTot=          32
  NSgBfM=   166   166   166   166   166 MxSgAt=    10 MxSgA2=    10.
- Leave Link  302 at Tue Apr 29 14:14:04 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Tue Apr 29 15:21:30 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
  (Enter /Applications/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Tue Apr 29 14:14:04 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Tue Apr 29 15:21:30 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l401.exe)
- Lowest energy guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-48729.chk"
+ Lowest energy guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-69354.chk"
  B after Tr=     0.000000    0.000000    0.000000
          Rot=    0.999989   -0.004573   -0.000307    0.000360 Ang=  -0.53 deg.
  Guess basis will be translated and rotated to current coordinates.
@@ -2141,7 +2141,7 @@
  CkInt1:  FT= 2.83D-01
  Max alpha theta=  9.293 degrees.
  JPrj=2 DoOrth=T DoCkMO=T.
- Leave Link  401 at Tue Apr 29 14:14:04 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  401 at Tue Apr 29 15:21:30 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l502.exe)
  Integral symmetry usage will be decided dynamically.
  Closed shell SCF:
@@ -2331,15 +2331,15 @@
  SCF Done:  E(RwB97XD) =  -264.276195830     A.U. after   12 cycles
             NFock= 12  Conv=0.64D-08     -V/T= 2.0039
  KE= 2.632387151244D+02 PE=-9.734956096354D+02 EE= 2.665301985832D+02
- Leave Link  502 at Tue Apr 29 14:14:22 2025, MaxMem=   104857600 cpu:              18.5 elap:              18.5
+ Leave Link  502 at Tue Apr 29 15:21:53 2025, MaxMem=   104857600 cpu:              21.4 elap:              23.0
  (Enter /Applications/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
  R6Disp: Adding Grimme-D2 dispersion energy 1st derivatives to the gradient.
- Leave Link  701 at Tue Apr 29 14:14:22 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  701 at Tue Apr 29 15:21:54 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Tue Apr 29 14:14:22 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  702 at Tue Apr 29 15:21:54 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -2351,7 +2351,7 @@
          wScrn=  0.000000 ICntrl=      2527 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Symmetry not used in FoFCou.
- Leave Link  703 at Tue Apr 29 14:14:28 2025, MaxMem=   104857600 cpu:               5.9 elap:               5.9
+ Leave Link  703 at Tue Apr 29 15:22:01 2025, MaxMem=   104857600 cpu:               7.1 elap:               7.6
  (Enter /Applications/g16/l716.exe)
  Dipole        =-6.13983401D-03-1.39638080D-02 7.87508059D-02
  ***** Axes restored to original set *****
@@ -2371,7 +2371,7 @@
      10        1           0.000007100    0.000898278   -0.000487737
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.005806333 RMS     0.001586878
- Leave Link  716 at Tue Apr 29 14:14:28 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  716 at Tue Apr 29 15:22:01 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -2447,7 +2447,7 @@
  Lowest energy point so far.  Saving SCF results.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Tue Apr 29 14:14:28 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Tue Apr 29 15:22:01 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -2507,7 +2507,7 @@
      10          1           0       -0.317199   -1.212682    0.893063
  ---------------------------------------------------------------------
  Rotational constants (GHZ):          25.9408870           1.4851171           1.4296149
- Leave Link  202 at Tue Apr 29 14:14:28 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Tue Apr 29 15:22:01 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l301.exe)
  Standard basis: 6-311++G(d,p) (5D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -2527,7 +2527,7 @@
  Two-electron integral symmetry is turned on.
  R6Disp:  Grimme-D2 Dispersion energy=       -0.0035891637 Hartrees.
  Nuclear repulsion after empirical dispersion term =      179.3595621958 Hartrees.
- Leave Link  301 at Tue Apr 29 14:14:28 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Tue Apr 29 15:22:01 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -2539,12 +2539,12 @@
  IXCGrd= 4 IRadAn=           5 IRanWt=          -1 IRanGd=           0 AccXCQ= 0.00D+00.
  Generated NRdTot=       0 NPtTot=           0 NUsed=           0 NTot=          32
  NSgBfM=   166   166   166   166   166 MxSgAt=    10 MxSgA2=    10.
- Leave Link  302 at Tue Apr 29 14:14:28 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Tue Apr 29 15:22:01 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
  (Enter /Applications/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Tue Apr 29 14:14:28 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Tue Apr 29 15:22:01 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l401.exe)
- Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-48729.chk"
+ Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-69354.chk"
  B after Tr=     0.000000    0.000000    0.000000
          Rot=    0.999989    0.004734    0.000195    0.000206 Ang=   0.54 deg.
  Guess basis will be translated and rotated to current coordinates.
@@ -2560,7 +2560,7 @@
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Petite list used in FoFCou.
  Harris En= -253.001599899056    
- Leave Link  401 at Tue Apr 29 14:14:29 2025, MaxMem=   104857600 cpu:               0.8 elap:               0.8
+ Leave Link  401 at Tue Apr 29 15:22:02 2025, MaxMem=   104857600 cpu:               0.8 elap:               0.9
  (Enter /Applications/g16/l502.exe)
  Integral symmetry usage will be decided dynamically.
  Closed shell SCF:
@@ -2732,15 +2732,15 @@
  SCF Done:  E(RwB97XD) =  -264.276448591     A.U. after   11 cycles
             NFock= 11  Conv=0.96D-08     -V/T= 2.0040
  KE= 2.632363620369D+02 PE=-9.733090488225D+02 EE= 2.664366759991D+02
- Leave Link  502 at Tue Apr 29 14:14:46 2025, MaxMem=   104857600 cpu:              16.9 elap:              16.9
+ Leave Link  502 at Tue Apr 29 15:22:23 2025, MaxMem=   104857600 cpu:              19.3 elap:              21.0
  (Enter /Applications/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
  R6Disp: Adding Grimme-D2 dispersion energy 1st derivatives to the gradient.
- Leave Link  701 at Tue Apr 29 14:14:46 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  701 at Tue Apr 29 15:22:23 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Tue Apr 29 14:14:46 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  702 at Tue Apr 29 15:22:23 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -2752,7 +2752,7 @@
          wScrn=  0.000000 ICntrl=      2527 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Symmetry not used in FoFCou.
- Leave Link  703 at Tue Apr 29 14:14:52 2025, MaxMem=   104857600 cpu:               5.9 elap:               5.9
+ Leave Link  703 at Tue Apr 29 15:22:32 2025, MaxMem=   104857600 cpu:               7.7 elap:               8.3
  (Enter /Applications/g16/l716.exe)
  Dipole        = 3.17736835D-03 7.12804419D-03 7.92709814D-03
  ***** Axes restored to original set *****
@@ -2772,7 +2772,7 @@
      10        1          -0.000927957    0.000216632    0.000589273
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.001328826 RMS     0.000666557
- Leave Link  716 at Tue Apr 29 14:14:52 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  716 at Tue Apr 29 15:22:32 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -2848,7 +2848,7 @@
  Lowest energy point so far.  Saving SCF results.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Tue Apr 29 14:14:52 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Tue Apr 29 15:22:32 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -2908,7 +2908,7 @@
      10          1           0       -0.315176   -1.220269    0.890285
  ---------------------------------------------------------------------
  Rotational constants (GHZ):          25.6936300           1.4901693           1.4334915
- Leave Link  202 at Tue Apr 29 14:14:52 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Tue Apr 29 15:22:32 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l301.exe)
  Standard basis: 6-311++G(d,p) (5D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -2928,7 +2928,7 @@
  Two-electron integral symmetry is turned on.
  R6Disp:  Grimme-D2 Dispersion energy=       -0.0035932632 Hartrees.
  Nuclear repulsion after empirical dispersion term =      179.4627665957 Hartrees.
- Leave Link  301 at Tue Apr 29 14:14:52 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Tue Apr 29 15:22:32 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -2940,12 +2940,12 @@
  IXCGrd= 4 IRadAn=           5 IRanWt=          -1 IRanGd=           0 AccXCQ= 0.00D+00.
  Generated NRdTot=       0 NPtTot=           0 NUsed=           0 NTot=          32
  NSgBfM=   166   166   166   166   166 MxSgAt=    10 MxSgA2=    10.
- Leave Link  302 at Tue Apr 29 14:14:52 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Tue Apr 29 15:22:32 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
  (Enter /Applications/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Tue Apr 29 14:14:52 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Tue Apr 29 15:22:32 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l401.exe)
- Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-48729.chk"
+ Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-69354.chk"
  B after Tr=    -0.000000   -0.000000   -0.000000
          Rot=    1.000000   -0.000869   -0.000039   -0.000025 Ang=  -0.10 deg.
  Guess basis will be translated and rotated to current coordinates.
@@ -2961,7 +2961,7 @@
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Petite list used in FoFCou.
  Harris En= -253.001200279993    
- Leave Link  401 at Tue Apr 29 14:14:53 2025, MaxMem=   104857600 cpu:               0.7 elap:               0.7
+ Leave Link  401 at Tue Apr 29 15:22:33 2025, MaxMem=   104857600 cpu:               0.9 elap:               0.9
  (Enter /Applications/g16/l502.exe)
  Integral symmetry usage will be decided dynamically.
  Closed shell SCF:
@@ -3131,15 +3131,15 @@
  SCF Done:  E(RwB97XD) =  -264.276487057     A.U. after   11 cycles
             NFock= 11  Conv=0.25D-08     -V/T= 2.0039
  KE= 2.632468925077D+02 PE=-9.735254727581D+02 EE= 2.665393265977D+02
- Leave Link  502 at Tue Apr 29 14:15:09 2025, MaxMem=   104857600 cpu:              16.5 elap:              16.5
+ Leave Link  502 at Tue Apr 29 15:22:54 2025, MaxMem=   104857600 cpu:              19.3 elap:              21.1
  (Enter /Applications/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
  R6Disp: Adding Grimme-D2 dispersion energy 1st derivatives to the gradient.
- Leave Link  701 at Tue Apr 29 14:15:09 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  701 at Tue Apr 29 15:22:54 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Tue Apr 29 14:15:09 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  702 at Tue Apr 29 15:22:54 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -3151,7 +3151,7 @@
          wScrn=  0.000000 ICntrl=      2527 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Symmetry not used in FoFCou.
- Leave Link  703 at Tue Apr 29 14:15:15 2025, MaxMem=   104857600 cpu:               5.9 elap:               5.9
+ Leave Link  703 at Tue Apr 29 15:23:01 2025, MaxMem=   104857600 cpu:               7.0 elap:               7.7
  (Enter /Applications/g16/l716.exe)
  Dipole        = 1.61955104D-03 4.40662543D-03 1.56977837D-02
  ***** Axes restored to original set *****
@@ -3171,7 +3171,7 @@
      10        1          -0.000058826    0.000183789    0.000031899
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.000242744 RMS     0.000103751
- Leave Link  716 at Tue Apr 29 14:15:15 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  716 at Tue Apr 29 15:23:02 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -3252,7 +3252,7 @@
  Lowest energy point so far.  Saving SCF results.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Tue Apr 29 14:15:15 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Tue Apr 29 15:23:02 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -3312,7 +3312,7 @@
      10          1           0       -0.313311   -1.223794    0.884990
  ---------------------------------------------------------------------
  Rotational constants (GHZ):          25.7074896           1.4906870           1.4339811
- Leave Link  202 at Tue Apr 29 14:15:15 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Tue Apr 29 15:23:02 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l301.exe)
  Standard basis: 6-311++G(d,p) (5D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -3332,7 +3332,7 @@
  Two-electron integral symmetry is turned on.
  R6Disp:  Grimme-D2 Dispersion energy=       -0.0035931005 Hartrees.
  Nuclear repulsion after empirical dispersion term =      179.4903169398 Hartrees.
- Leave Link  301 at Tue Apr 29 14:15:15 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Tue Apr 29 15:23:02 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -3344,17 +3344,17 @@
  IXCGrd= 4 IRadAn=           5 IRanWt=          -1 IRanGd=           0 AccXCQ= 0.00D+00.
  Generated NRdTot=       0 NPtTot=           0 NUsed=           0 NTot=          32
  NSgBfM=   166   166   166   166   166 MxSgAt=    10 MxSgA2=    10.
- Leave Link  302 at Tue Apr 29 14:15:15 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Tue Apr 29 15:23:02 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
  (Enter /Applications/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Tue Apr 29 14:15:15 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Tue Apr 29 15:23:02 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l401.exe)
- Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-48729.chk"
+ Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-69354.chk"
  B after Tr=     0.000000    0.000000   -0.000000
          Rot=    1.000000   -0.000134   -0.000005   -0.000024 Ang=  -0.02 deg.
  Guess basis will be translated and rotated to current coordinates.
  JPrj=2 DoOrth=T DoCkMO=T.
- Leave Link  401 at Tue Apr 29 14:15:15 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  401 at Tue Apr 29 15:23:02 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l502.exe)
  Integral symmetry usage will be decided dynamically.
  Closed shell SCF:
@@ -3508,15 +3508,15 @@
  SCF Done:  E(RwB97XD) =  -264.276488992     A.U. after   10 cycles
             NFock= 10  Conv=0.44D-08     -V/T= 2.0039
  KE= 2.632498882036D+02 PE=-9.735826123120D+02 EE= 2.665659181765D+02
- Leave Link  502 at Tue Apr 29 14:15:30 2025, MaxMem=   104857600 cpu:              14.9 elap:              14.9
+ Leave Link  502 at Tue Apr 29 15:23:21 2025, MaxMem=   104857600 cpu:              18.2 elap:              19.4
  (Enter /Applications/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
  R6Disp: Adding Grimme-D2 dispersion energy 1st derivatives to the gradient.
- Leave Link  701 at Tue Apr 29 14:15:30 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  701 at Tue Apr 29 15:23:21 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Tue Apr 29 14:15:30 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  702 at Tue Apr 29 15:23:21 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -3528,7 +3528,7 @@
          wScrn=  0.000000 ICntrl=      2527 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Symmetry not used in FoFCou.
- Leave Link  703 at Tue Apr 29 14:15:36 2025, MaxMem=   104857600 cpu:               6.1 elap:               6.1
+ Leave Link  703 at Tue Apr 29 15:23:29 2025, MaxMem=   104857600 cpu:               7.2 elap:               7.8
  (Enter /Applications/g16/l716.exe)
  Dipole        =-2.63815668D-04-8.12037989D-04 7.65780451D-03
  ***** Axes restored to original set *****
@@ -3548,7 +3548,7 @@
      10        1           0.000008048    0.000051020   -0.000010677
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.000167203 RMS     0.000044368
- Leave Link  716 at Tue Apr 29 14:15:36 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  716 at Tue Apr 29 15:23:29 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -3629,7 +3629,7 @@
  Lowest energy point so far.  Saving SCF results.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Tue Apr 29 14:15:36 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Tue Apr 29 15:23:29 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -3689,7 +3689,7 @@
      10          1           0       -0.311748   -1.224628    0.882130
  ---------------------------------------------------------------------
  Rotational constants (GHZ):          25.7014184           1.4907428           1.4340061
- Leave Link  202 at Tue Apr 29 14:15:36 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Tue Apr 29 15:23:29 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l301.exe)
  Standard basis: 6-311++G(d,p) (5D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -3709,7 +3709,7 @@
  Two-electron integral symmetry is turned on.
  R6Disp:  Grimme-D2 Dispersion energy=       -0.0035932236 Hartrees.
  Nuclear repulsion after empirical dispersion term =      179.4905168423 Hartrees.
- Leave Link  301 at Tue Apr 29 14:15:36 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Tue Apr 29 15:23:29 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -3721,17 +3721,17 @@
  IXCGrd= 4 IRadAn=           5 IRanWt=          -1 IRanGd=           0 AccXCQ= 0.00D+00.
  Generated NRdTot=       0 NPtTot=           0 NUsed=           0 NTot=          32
  NSgBfM=   166   166   166   166   166 MxSgAt=    10 MxSgA2=    10.
- Leave Link  302 at Tue Apr 29 14:15:36 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Tue Apr 29 15:23:29 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
  (Enter /Applications/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Tue Apr 29 14:15:36 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Tue Apr 29 15:23:29 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l401.exe)
- Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-48729.chk"
+ Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-69354.chk"
  B after Tr=    -0.000000   -0.000000   -0.000000
          Rot=    1.000000    0.000046    0.000001   -0.000009 Ang=   0.01 deg.
  Guess basis will be translated and rotated to current coordinates.
  JPrj=2 DoOrth=T DoCkMO=T.
- Leave Link  401 at Tue Apr 29 14:15:36 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  401 at Tue Apr 29 15:23:29 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l502.exe)
  Integral symmetry usage will be decided dynamically.
  Closed shell SCF:
@@ -3855,15 +3855,15 @@
  SCF Done:  E(RwB97XD) =  -264.276489473     A.U. after    8 cycles
             NFock=  8  Conv=0.87D-08     -V/T= 2.0039
  KE= 2.632499416986D+02 PE=-9.735829301468D+02 EE= 2.665659821333D+02
- Leave Link  502 at Tue Apr 29 14:15:48 2025, MaxMem=   104857600 cpu:              12.0 elap:              12.0
+ Leave Link  502 at Tue Apr 29 15:23:45 2025, MaxMem=   104857600 cpu:              14.9 elap:              16.4
  (Enter /Applications/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
  R6Disp: Adding Grimme-D2 dispersion energy 1st derivatives to the gradient.
- Leave Link  701 at Tue Apr 29 14:15:48 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  701 at Tue Apr 29 15:23:46 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Tue Apr 29 14:15:48 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  702 at Tue Apr 29 15:23:46 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -3875,7 +3875,7 @@
          wScrn=  0.000000 ICntrl=      2527 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Symmetry not used in FoFCou.
- Leave Link  703 at Tue Apr 29 14:15:55 2025, MaxMem=   104857600 cpu:               6.0 elap:               6.0
+ Leave Link  703 at Tue Apr 29 15:23:53 2025, MaxMem=   104857600 cpu:               7.3 elap:               7.6
  (Enter /Applications/g16/l716.exe)
  Dipole        =-2.15761578D-04-4.75821272D-04 2.87603090D-03
  ***** Axes restored to original set *****
@@ -3895,7 +3895,7 @@
      10        1           0.000004271   -0.000004615   -0.000002412
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.000102271 RMS     0.000030120
- Leave Link  716 at Tue Apr 29 14:15:55 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  716 at Tue Apr 29 15:23:53 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -3974,7 +3974,7 @@
  Lowest energy point so far.  Saving SCF results.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Tue Apr 29 14:15:55 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Tue Apr 29 15:23:53 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -4034,7 +4034,7 @@
      10          1           0       -0.311194   -1.225091    0.880552
  ---------------------------------------------------------------------
  Rotational constants (GHZ):          25.7012893           1.4906112           1.4338855
- Leave Link  202 at Tue Apr 29 14:15:55 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Tue Apr 29 15:23:53 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l301.exe)
  Standard basis: 6-311++G(d,p) (5D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -4054,7 +4054,7 @@
  Two-electron integral symmetry is turned on.
  R6Disp:  Grimme-D2 Dispersion energy=       -0.0035932096 Hartrees.
  Nuclear repulsion after empirical dispersion term =      179.4844952689 Hartrees.
- Leave Link  301 at Tue Apr 29 14:15:55 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Tue Apr 29 15:23:53 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -4066,17 +4066,17 @@
  IXCGrd= 4 IRadAn=           5 IRanWt=          -1 IRanGd=           0 AccXCQ= 0.00D+00.
  Generated NRdTot=       0 NPtTot=           0 NUsed=           0 NTot=          32
  NSgBfM=   166   166   166   166   166 MxSgAt=    10 MxSgA2=    10.
- Leave Link  302 at Tue Apr 29 14:15:55 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Tue Apr 29 15:23:53 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
  (Enter /Applications/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Tue Apr 29 14:15:55 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Tue Apr 29 15:23:53 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l401.exe)
- Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-48729.chk"
+ Initial guess from the checkpoint file:  "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-69354.chk"
  B after Tr=     0.000000    0.000000   -0.000000
          Rot=    1.000000    0.000004    0.000001    0.000004 Ang=   0.00 deg.
  Guess basis will be translated and rotated to current coordinates.
  JPrj=2 DoOrth=T DoCkMO=T.
- Leave Link  401 at Tue Apr 29 14:15:55 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  401 at Tue Apr 29 15:23:53 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l502.exe)
  Integral symmetry usage will be decided dynamically.
  Closed shell SCF:
@@ -4200,15 +4200,15 @@
  SCF Done:  E(RwB97XD) =  -264.276489554     A.U. after    8 cycles
             NFock=  8  Conv=0.40D-08     -V/T= 2.0039
  KE= 2.632493734601D+02 PE=-9.735705156407D+02 EE= 2.665601573575D+02
- Leave Link  502 at Tue Apr 29 14:16:07 2025, MaxMem=   104857600 cpu:              12.4 elap:              12.4
+ Leave Link  502 at Tue Apr 29 15:24:09 2025, MaxMem=   104857600 cpu:              14.5 elap:              15.6
  (Enter /Applications/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
  R6Disp: Adding Grimme-D2 dispersion energy 1st derivatives to the gradient.
- Leave Link  701 at Tue Apr 29 14:16:07 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  701 at Tue Apr 29 15:24:09 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Tue Apr 29 14:16:07 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  702 at Tue Apr 29 15:24:09 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -4220,7 +4220,7 @@
          wScrn=  0.000000 ICntrl=      2527 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Symmetry not used in FoFCou.
- Leave Link  703 at Tue Apr 29 14:16:13 2025, MaxMem=   104857600 cpu:               6.1 elap:               6.1
+ Leave Link  703 at Tue Apr 29 15:24:17 2025, MaxMem=   104857600 cpu:               7.2 elap:               7.8
  (Enter /Applications/g16/l716.exe)
  Dipole        =-9.28199107D-05-2.17716863D-04 7.95855596D-05
  ***** Axes restored to original set *****
@@ -4240,7 +4240,7 @@
      10        1           0.000004111   -0.000005700    0.000005073
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.000028860 RMS     0.000008826
- Leave Link  716 at Tue Apr 29 14:16:13 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  716 at Tue Apr 29 15:24:17 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -4368,7 +4368,7 @@
  Largest change from initial coordinates is atom    6       1.760 Angstoms.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Tue Apr 29 14:16:13 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Tue Apr 29 15:24:17 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -4428,7 +4428,7 @@
      10          1           0       -0.311194   -1.225091    0.880552
  ---------------------------------------------------------------------
  Rotational constants (GHZ):          25.7012893           1.4906112           1.4338855
- Leave Link  202 at Tue Apr 29 14:16:13 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Tue Apr 29 15:24:17 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l601.exe)
  Copying SCF densities to generalized density rwf, IOpCl= 0 IROHF=0.
 
@@ -4552,7 +4552,7 @@
  XXYZ=              0.0001 YYXZ=              0.0001 ZZXY=              1.3914
  N-N= 1.794844952689D+02 E-N=-9.735705165991D+02  KE= 2.632493734601D+02
  No NMR shielding tensors so no spin-rotation constants.
- Leave Link  601 at Tue Apr 29 14:16:13 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  601 at Tue Apr 29 15:24:17 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l9999.exe)
  Unable to Open any file for archive entry.
  1\1\GINC-MAC-STUDIO\FOpt\RwB97XD\6-311++G(d,p)\C4H4N2\ROOT\29-Apr-2025
@@ -4570,9 +4570,11 @@
  The archive entry for this job was punched.
 
 
-0EVERYBODY IS IGNORANT, ONLY ON DIFFERENT SUBJECTS.
-0          WILL ROGERS
- Job cpu time:       0 days  0 hours  3 minutes 29.3 seconds.
- Elapsed time:       0 days  0 hours  3 minutes 29.3 seconds.
+ ...THOSE SCIENCES ARE VAIN AND FULL OF ERRORS WHICH 
+ ARE NOT BORN FROM EXPERIMENT, THE MOTHER OF CERTAINTY...
+
+                          -- LEONARDO DA VINCI, 1452-1519
+ Job cpu time:       0 days  0 hours  4 minutes 11.0 seconds.
+ Elapsed time:       0 days  0 hours  4 minutes 30.2 seconds.
  File lengths (MBytes):  RWF=     20 Int=      0 D2E=      0 Chk=      3 Scr=      1
- Normal termination of Gaussian 16 at Tue Apr 29 14:16:13 2025.
+ Normal termination of Gaussian 16 at Tue Apr 29 15:24:17 2025.

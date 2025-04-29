@@ -292,16 +292,21 @@ class Crafter:
                 geoopt_params_psi4["method"] = "wb97x-d"
             geoopt_params_psi4.pop("software", None)
             psi4_flag = True
-        else:
+            g16_flag = False
+        elif kwargs.get("software") == "g16":
             geoopt_params_g16.update(kwargs)
             geoopt_params_g16.pop("software", None)
             psi4_flag = False
-
+            g16_flag = True
+        else:
+            software = kwargs.get("software")
+            assert False, f"Unknown software: {software}. Please check the software name."
 
         if keys is None:
             keys = self.mol_info.keys()
 
         for key in keys:
+            trajectory_psi4 = []
             for i, atoms in enumerate(self.mol_info[key]["aseatoms_list"]):
                 atoms_tmp = atoms.copy()
                 atoms_tmp.pbc = False
@@ -310,7 +315,7 @@ class Crafter:
                     self._assign_totalcharge()
                 nc = self.mol_info[key]["netcharge"]
 
-                if psi4_flag == False:
+                if g16_flag == True:
                     calc_geoopt = Gaussian(label=f'{key}_{i}', charge=nc, **geoopt_params_g16)
                     calc_geoopt.directory = self.mol_info[key]["directory"]
                     atoms_tmp.calc = calc_geoopt
@@ -323,6 +328,7 @@ class Crafter:
                                        charge=nc, 
                                        **geoopt_params_psi4)
                     opt = BFGS(atoms_tmp, trajectory=psi4traj, logfile=psi4log)
+                    trajectory_psi4.append(psi4traj)
                 
                 if do_calc:
                     rmsd_skip = False
@@ -337,16 +343,17 @@ class Crafter:
                                 
                     if rmsd_skip:
                         self.mol_info[key]["aseatoms_geoopt"][i] \
-                                  = self.mol_info[key]["aseatoms_geoopt"][j]
+                                  = read(trajectory_psi4[j],index=-1) # self.mol_info[key]["aseatoms_geoopt"][j]
                         print(f"Skip geometry optimization of {key}_{i}: RMSD = {rmsd_ji} A < {rmsd}")
                         rmsd_skip = False
                     else:
                         self.mol_info[key]["aseatoms_geoopt"][i] = atoms_tmp
                         print(f"Calculating geometry optimization of {key}_{i}")
-                        if psi4_flag == False:
+                        if g16_flag == True:
                             _ = self.mol_info[key]["aseatoms_geoopt"][i].get_potential_energy()
                         elif psi4_flag == True:
                             opt.run(fmax=0.01)
+                            self.mol_info[key]["aseatoms_geoopt"][i] = read(psi4traj, index=-1)
                         print(f"Finished geometry optimization of {key}_{i}")
                         
             minidx = np.array([a.get_potential_energy() for a \

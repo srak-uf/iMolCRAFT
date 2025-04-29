@@ -1,7 +1,7 @@
  Entering Gaussian System, Link 0=g16
  Initial command:
- /Applications/g16/l1.exe "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-49187.inp" -scrdir="/Users/srak/apl/GaussianG16C02_macM/g16_scratch/"
- Entering Link 1 = /Applications/g16/l1.exe PID=     49188.
+ /Applications/g16/l1.exe "/Users/srak/apl/GaussianG16C02_macM/g16_scratch/Gau-69693.inp" -scrdir="/Users/srak/apl/GaussianG16C02_macM/g16_scratch/"
+ Entering Link 1 = /Applications/g16/l1.exe PID=     69694.
   
  Copyright (c) 1988-2021, Gaussian, Inc.  All Rights Reserved.
   
@@ -86,7 +86,7 @@
  5/5=2,38=5/2;
  6/7=2,8=2,9=2,10=2,15=8,20=1,28=1,33=2,42=6/1,2;
  99/5=1,9=1/99;
- Leave Link    1 at Tue Apr 29 14:16:16 2025, MaxMem=           0 cpu:               0.0 elap:               0.0
+ Leave Link    1 at Tue Apr 29 15:24:20 2025, MaxMem=           0 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l101.exe)
  ------------------------------
  Gaussian input prepared by ASE
@@ -120,7 +120,7 @@
  NQMom=    2.0440000   0.0000000   0.0000000   0.0000000   0.0000000   2.0440000   0.0000000   0.0000000   0.0000000   0.0000000
  NMagM=    0.4037610   0.0000000   0.0000000   0.0000000   0.0000000   0.4037610   2.7928460   2.7928460   2.7928460   2.7928460
  AtZNuc=   7.0000000   6.0000000   6.0000000   6.0000000   6.0000000   7.0000000   1.0000000   1.0000000   1.0000000   1.0000000
- Leave Link  101 at Tue Apr 29 14:16:16 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  101 at Tue Apr 29 15:24:20 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -179,7 +179,7 @@
      10          1           0       -1.105005    0.345361    0.880483
  ---------------------------------------------------------------------
  Rotational constants (GHZ):          29.1260507           1.4918085           1.4420828
- Leave Link  202 at Tue Apr 29 14:16:16 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Tue Apr 29 15:24:20 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l301.exe)
  Standard basis: 6-31G(d) (6D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -197,7 +197,7 @@
  Integral buffers will be    131072 words long.
  Raffenetti 1 integral format.
  Two-electron integral symmetry is turned on.
- Leave Link  301 at Tue Apr 29 14:16:16 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Tue Apr 29 15:24:20 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -205,10 +205,10 @@
  One-electron integral symmetry used in STVInt
  NBasis=    98 RedAO= T EigKep=  9.58D-04  NBF=    49    49
  NBsUse=    98 1.00D-06 EigRej= -1.00D+00 NBFU=    49    49
- Leave Link  302 at Tue Apr 29 14:16:16 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  302 at Tue Apr 29 15:24:20 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Tue Apr 29 14:16:16 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Tue Apr 29 15:24:20 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l401.exe)
  ExpMin= 1.61D-01 ExpMax= 4.17D+03 ExpMxC= 6.27D+02 IAcc=3 IRadAn=         5 AccDes= 0.00D+00
  Harris functional with IExCor=  205 and IRadAn=       5 diagonalized for initial guess.
@@ -232,7 +232,7 @@
                  (A) (B) (B) (B) (A) (B) (A) (B) (A) (A) (B) (B)
                  (A) (A) (B) (A) (B)
  The electronic state of the initial guess is 1-A.
- Leave Link  401 at Tue Apr 29 14:16:16 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
+ Leave Link  401 at Tue Apr 29 15:24:20 2025, MaxMem=   104857600 cpu:               0.2 elap:               0.2
  (Enter /Applications/g16/l502.exe)
  Keep R1 ints in memory in symmetry-blocked form, NReq=17666261.
  FoFCou: FMM=F IPFlag=           0 FMFlag=           0 FMFlg1=           0
@@ -417,7 +417,7 @@
  SCF Done:  E(RHF) =  -262.649983287     A.U. after   13 cycles
             NFock= 13  Conv=0.16D-08     -V/T= 1.9988
  KE= 2.629695715998D+02 PE=-9.781545991893D+02 EE= 2.699935756182D+02
- Leave Link  502 at Tue Apr 29 14:16:16 2025, MaxMem=   104857600 cpu:               0.3 elap:               0.3
+ Leave Link  502 at Tue Apr 29 15:24:20 2025, MaxMem=   104857600 cpu:               0.3 elap:               0.3
  (Enter /Applications/g16/l601.exe)
  Copying SCF densities to generalized density rwf, IOpCl= 0 IROHF=0.
  SCF density gives NOpUse=  2 NOpAll=  2.
@@ -640,7 +640,7 @@
  ---------------------------------------------------------------------------------
 
  No NMR shielding tensors so no spin-rotation constants.
- Leave Link  601 at Tue Apr 29 14:16:16 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
+ Leave Link  601 at Tue Apr 29 15:24:20 2025, MaxMem=   104857600 cpu:               0.0 elap:               0.0
  (Enter /Applications/g16/l602.exe)
  FitSet:  NAtFit=    10 NAtPot=    10 NAtFrz=     0 MDM=    14 TotChg=   0.00000
  Merz-Kollman atomic radii used.
@@ -9631,7 +9631,7 @@
  4458 Fit       0.021057
  4459 Fit       0.019422
  -----------------------------------------------------------------
- Leave Link  602 at Tue Apr 29 14:16:16 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
+ Leave Link  602 at Tue Apr 29 15:24:20 2025, MaxMem=   104857600 cpu:               0.1 elap:               0.1
  (Enter /Applications/g16/l9999.exe)
 
  Test job not archived.
@@ -9645,9 +9645,11 @@
  0.9716611,1.9433221,-8.08324,7.0163637,7.0163637\PG=C02 [X(C4H4N2)]\\@
 
 
-0EVERYBODY IS IGNORANT, ONLY ON DIFFERENT SUBJECTS.
-0          WILL ROGERS
+ ...THOSE SCIENCES ARE VAIN AND FULL OF ERRORS WHICH 
+ ARE NOT BORN FROM EXPERIMENT, THE MOTHER OF CERTAINTY...
+
+                          -- LEONARDO DA VINCI, 1452-1519
  Job cpu time:       0 days  0 hours  0 minutes  0.6 seconds.
  Elapsed time:       0 days  0 hours  0 minutes  0.6 seconds.
  File lengths (MBytes):  RWF=     10 Int=      0 D2E=      0 Chk=      2 Scr=      1
- Normal termination of Gaussian 16 at Tue Apr 29 14:16:16 2025.
+ Normal termination of Gaussian 16 at Tue Apr 29 15:24:20 2025.
