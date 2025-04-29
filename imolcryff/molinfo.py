@@ -241,7 +241,9 @@ class Crafter:
                 self.mol_info[key]["rdkit"]["mol2d"] = mol
 
             nc = self.mol_info[key]["netcharge"]
-            il_dict = self._il_assign(mol, mol2d, int(nc))
+            il_dict = self._il_assign(self.mol_info[key]["rdkit"]["mol"],
+                                      self.mol_info[key]["rdkit"]["mol2d"],
+                                      int(nc))
             self.mol_info[key]["metadata"].update(il_dict)
 
     def get_smiles(self, keys=None):

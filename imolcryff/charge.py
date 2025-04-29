@@ -53,12 +53,13 @@ class ChargeCalculator:
             self.g16 = None
         else:
             resp_params.update(self.params)
+            self.params = resp_params
     
     def get_partialcharges(self):
         if self.charge_type == "resp":
-            self._get_resp()
+            self.partial_charges = self._get_resp()
         elif self.charge_type == "am1bcc":
-            self._get_am1bcc()
+            self.partial_charges = self._get_am1bcc()
         else:
             raise ValueError("Unknown charge type. Supported types are: resp, am1-bcc")
 
@@ -76,6 +77,10 @@ class ChargeCalculator:
             print(output)
 
         self.mol2file = output_mol2
+        tripos_atom = read_mol2(self.mol2file)["@<TRIPOS>ATOM"]
+        partialcharges = [ float(atom[-1]) for atom in tripos_atom]
+
+        return partialcharges
 
     def _get_resp(self):
         g16calculator = Gaussian(
@@ -99,9 +104,20 @@ class ChargeCalculator:
                     f"antechamber -i {g16logfile} -fi gout "
                     f"-o {output_mol2} -fo mol2 -at sybyl -c resp -nc {self.charge} -pf y -dr no")
         print(cmd_antech)
-        output = subprocess.getoutput(cmd_antech)
-        print(output)
-        self.mol2file = output_mol2
+
+        for _ in range(10):
+            output = subprocess.getoutput(cmd_antech)
+            if os.path.exists(output_mol2):
+                print(output)
+                self.mol2file = output_mol2
+                tripos_atom = read_mol2(self.mol2file)["@<TRIPOS>ATOM"]
+                partialcharges = [ float(atom[-1]) for atom in tripos_atom]
+                break
+        if os.path.exists(output_mol2) == False:
+            print(output)
+            raise ValueError("Antechamber failed to generate the mol2 file. Check the log.")
+
+        return partialcharges
 
 
 class Psi4ChargeCalculator(ChargeCalculator):
