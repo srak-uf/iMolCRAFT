@@ -94,13 +94,13 @@ class DihedCalculator:
             d3 = self.dihedral_elem_list[di][3] + 1
 
             self.ff_dihedscan[di]["energy"] ,\
-            self.ff_dihedscan[di]["atoms"] = scan_ff_dihedral(ffxml, \
-                                                               top, \
-                                                               self.qm_dihedscan[di]["angles"], \
-                                                               self.qm_dihedscan[di]["atoms"], \
-                                                               self.dihedral_list[di])
+            self.ff_dihedscan[di]["atoms"] = scan_ff_dihedral(ffxml,
+                                                               top,
+                                                               self.qm_dihedscan[di]["angles"],
+                                                               self.dihedral_list[di],
+                                                               self.qm_dihedscan[di]["atoms"],
+                                                               )
             self.ff_dihedscan[di]["angle"] = self.qm_dihedscan[di]["angle"]
-
 
 def load_g16scan(g16logfile):
     try:
@@ -180,21 +180,60 @@ def get_rotatable_dihedral(rdmol):
         
     return dihedral_list, dihedral_elem_list
 
-def scan_ff_dihedral(ffxml, top, angles, atoms_list, dihed_atidx):
+def scan_ff_dihedral(ffxml, top, angles, dihed_atidx, atoms_list=None, geoopt_atoms=None):
+    """
+    Relaxed dihedral scan using OpenMM
+
+    Parameters:
+    - ffxml: str
+        Path to the force field XML file.
+    - top: openmm.app.Topology
+        Topology object for the molecular system.
+    - angles: list of float
+        List of dihedral angles (in degrees) to scan.
+    - dihed_atidx: list of int
+        List of atom indices defining the dihedral angle.
+    - atoms_list: list of ase.Atoms
+        List of ASE Atoms objects for each scan step.
+
+    Returns:
+    - ff_pot_kjmol: numpy.ndarray
+        Array of potential energies (in kJ/mol) for each dihedral angle.
+    - ff_dihedatoms: list of ase.Atoms
+        List of ASE Atoms objects after energy minimization for each angle.
+    """
     dihedral_ffenergy = []
     ff_dihedatoms = []
+
+    d1 = dihed_atidx[0]
+    d2 = dihed_atidx[1]
+    d3 = dihed_atidx[2]
+    d4 = dihed_atidx[3]
+
+    if atoms_list is None and geoopt_atoms is None:
+        AssertionError("Both atoms_list and geoopt_atoms are None. Please provide one of them.")
+    if atoms_list is None:
+        angle_geoopt = geoopt_atoms.get_dihedral(d1,d2,d3,d4)
+        min_idx = np.argmin(np.abs(angle_geoopt - angles))
+        angles = angles[min_idx:] + angles[:min_idx]
+
     with tempfile.TemporaryDirectory() as td:
-        for i in range(len(atoms_list)):
-            pdb_ase = atoms_list[i].copy()
-            pdb_ase.arrays["atomtypes"] = [i for i in range(len(pdb_ase))]
-            temppdb = os.path.join(td, f"temp_dihed_{i}.pdb")
-            write(temppdb, pdb_ase)
-            pdb_omm = PDBFile(temppdb)
-            atomlist_openmm = [a for a in pdb_omm.topology.atoms()]
-            for b in top.bonds():
-                a1 = atomlist_openmm[b.atom1.index]
-                a2 = atomlist_openmm[b.atom2.index]
-                pdb_omm.topology.addBond(a1, a2)
+        for i in range(len(angles)):
+            if atoms_list is not None:
+                pdb_ase = atoms_list[i].copy()
+                pdb_ase.arrays["atomtypes"] = [i for i in range(len(pdb_ase))]
+                temppdb = os.path.join(td, f"temp_dihed_{i}.pdb")
+                write(temppdb, pdb_ase)
+                pdb_omm = PDBFile(temppdb)
+                atomlist_openmm = [a for a in pdb_omm.topology.atoms()]
+                for b in top.bonds():
+                    a1 = atomlist_openmm[b.atom1.index]
+                    a2 = atomlist_openmm[b.atom2.index]
+                    pdb_omm.topology.addBond(a1, a2)
+            
+            else:
+                # rdkitで回転させる？のはだるいから手動でコード書く
+                pass
 
             # relaxed scan
             forcefield = ForceField(ffxml)
@@ -204,10 +243,6 @@ def scan_ff_dihedral(ffxml, top, angles, atoms_list, dihed_atidx):
                 output.write(XmlSerializer.serialize(system))
                 
             restraint = PeriodicTorsionForce()
-            d1 = dihed_atidx[0]
-            d2 = dihed_atidx[1]
-            d3 = dihed_atidx[2]
-            d4 = dihed_atidx[3]
             restraint.addTorsion(d1,d2,d3,d4, 1, (angles[i]+180)*degree, 10000*kilojoules_per_mole)
             system.addForce(restraint)
             integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, 0.004*picoseconds)
@@ -237,6 +272,9 @@ def scan_ff_dihedral(ffxml, top, angles, atoms_list, dihed_atidx):
     ff_pot = np.array(dihedral_ffenergy)
     ff_pot_kjmol = (ff_pot - ff_pot.min())
     return ff_pot_kjmol, ff_dihedatoms
+
+def shift_dihedral(atoms, dihed_list, desired_angle):
+    pass
 
 def parse_g16scan(file):
     with open(file) as f:
