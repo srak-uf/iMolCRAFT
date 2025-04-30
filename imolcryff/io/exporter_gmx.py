@@ -7,6 +7,7 @@ def exporter_gmx(pdb,
                  filename):
     """
     Export a system to GROMACS format.
+    
     Parameters
     ----------
     pdb : str
@@ -15,7 +16,7 @@ def exporter_gmx(pdb,
     system : str
         The path to the system xml file of openmm.
     filename : str
-        The filename of the output file (***.top, ***.gro).
+        The filename of the output file (filename.top, filename.gro).
     """
     pdb_omm = PDBFile(pdb)
     system_omm = XmlSerializer.deserialize(open(system).read())

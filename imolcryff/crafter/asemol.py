@@ -16,7 +16,30 @@ import random
 #################################
 
 class asemol_wrapper:
+    """
+    Wrapper class for ASE Atoms object to handle molecular operations.
+
+    Parameters
+    ----------
+    atoms : ase.Atoms
+        The atoms object to be wrapped.
+    bond_def_file : str, optional
+        Path to the bond definition file. If None, a default file is used.
+    chemical_bonds : pd.DataFrame, optional
+        DataFrame containing the chemical bond definitions. If None, it is read from the bond_def_file.
+    """
     def __init__(self, atoms: ase.Atoms, bond_def_file=None, chemical_bonds=None):
+        """
+        Wrapper class for ASE Atoms object to handle molecular operations.
+        Parameters
+        ----------
+        atoms : ase.Atoms
+            The atoms object to be wrapped.
+        bond_def_file : str, optional
+            Path to the bond definition file. If None, a default file is used.
+        chemical_bonds : pd.DataFrame, optional
+            DataFrame containing the chemical bond definitions. If None, it is read from the bond_def_file.
+        """
         self.atoms = atoms
         self.filename = bond_def_file
         self.chemical_bonds = chemical_bonds
@@ -35,7 +58,15 @@ class asemol_wrapper:
                 self.chemical_bonds.loc[elem_j, elem_i] = data.iloc[:,2].values[i]
 
     def get_bonds(self) -> list:
-        """ase.Atomsから結合リストを生成"""
+        """
+        Returns a list of bonds (pairs of atom indices) based on the distance matrix and the chemical bond definitions.
+        The bonds are determined by checking if the distance between atoms is less than or equal to the defined bond length.
+
+        Returns
+        -------
+        bonds : list
+            List of tuples, where each tuple contains the indices of the two atoms that are bonded.
+        """
         atoms = self.atoms
         geo_matrx = get_distances(atoms.positions,cell=atoms.cell,pbc=True)[1]
         bonds = []
@@ -47,7 +78,15 @@ class asemol_wrapper:
         return bonds
     
     def get_molecules(self):
-        """結合リストから化合物ごとにatom indexのリストを作りそのリストを生成する関数"""
+        """
+        Returns a list of molecules (list of atom indices) from the bonds.
+        The molecules are identified by connected components in the bond graph.
+
+        Returns
+        -------
+        compounds : list
+            List of molecules, where each molecule is represented as a list of atom indices.
+        """
         atoms = self.atoms
         compounds = []
         graph = defaultdict(list)
@@ -55,7 +94,7 @@ class asemol_wrapper:
         if self.bonds is None:
             self.bonds = self.get_bonds()
         
-        # グラフの構築
+        # Construct a graph from the bonds
         for bond in self.bonds:
             atom1, atom2 = bond
             graph[atom1].append(atom2)
@@ -63,7 +102,7 @@ class asemol_wrapper:
         
         visited = set()
         def dfs(atom, compound):
-            # 深さ優先探索で化合物を構築
+            # Perform a depth-first search to find all connected atoms
             if atom not in visited:
                 visited.add(atom)
                 compound.append(atom)
@@ -71,24 +110,43 @@ class asemol_wrapper:
                     dfs(neighbor, compound)
             return compound
         
-        # グラフの各ノードに対してDFSを実行し、化合物を構築
+        # Find all connected components (molecules) in the graph
         for atom in graph:
             if atom not in visited:
                 compound = dfs(atom, [])
                 compounds.append(compound)
         
-        # 生成された化合物の原子リストを作成
+        # Add the atoms that are not part of any bond to the list of molecules
         moleculed_atoms = []
         for molecule in compounds:
             moleculed_atoms.extend(molecule)
 
-        # 結合を作っていない原子を単体として追加
+        # Add single atoms (not part of any bond) as separate molecules
         singleatoms = [[i] for i in range(len(atoms)) if i not in moleculed_atoms]
         compounds.extend(singleatoms)
         
         return compounds
     
     def get_ase_molecules(self, out_nX=False):
+        """
+        Returns a list of molecules (ase.Atoms) and a list of molecule indices.
+        The molecules are unwrapped and the indices are used to identify the molecules.
+
+        Parameters
+        ----------
+        out_nX : bool
+            If True, returns a list of networkx graphs of the molecules.
+        
+        Returns
+        -------
+        asemols : list
+            List of ase.Atoms objects of the molecules.
+        molecule_list : list
+            List of molecule indices.
+        asenX : list
+            If out_nX is True, returns a list of networkx graphs of the molecules.
+            List of networkx graphs of the molecules.
+        """
         asemols = []
         asenX = []
 
@@ -128,7 +186,15 @@ class asemol_wrapper:
             return asemols, molecule_list
 
     def unwrap_molecules(self) -> ase.Atoms:
-        """分子構造を保って原子座標をunwrapする関数"""
+        """
+        Unwraps the positions of atoms in a molecule to their original positions in the unit cell.
+        This is useful for visualizing the molecule in its original orientation.
+
+        Returns
+        -------
+        atoms_unwrap : ase.Atoms
+            Unwrapped atoms object.
+        """
         atoms = self.atoms
         atoms_unwrap = atoms.copy()
         if self.bonds is None:
@@ -159,6 +225,21 @@ class asemol_wrapper:
         return atoms_unwrap
 
 def ase_atoms_to_nx(atoms: ase.Atoms, chemical_bonds=None):
+    """
+    Convert ASE Atoms object to a NetworkX graph representation.
+
+    Parameters
+    ----------
+    atoms : ase.Atoms
+        The atoms object to be converted.
+    chemical_bonds : pd.DataFrame, optional
+        DataFrame containing the chemical bond definitions. If None, it is read from the bond_def_file.
+
+    Returns
+    -------
+    G : networkx.Graph
+        The NetworkX graph representation of the atoms object.
+    """
     G = nx.Graph()
     asemol_wrap = asemol_wrapper(atoms, chemical_bonds=chemical_bonds)
     bonds = asemol_wrap.get_bonds()
@@ -170,13 +251,46 @@ def ase_atoms_to_nx(atoms: ase.Atoms, chemical_bonds=None):
     return G
 
 def is_same_molecule(mol1: ase.Atoms, mol2: ase.Atoms, chemical_bonds):
-    """分子1(ase.atoms)と分子2(ase.atoms)が同じ分子かどうかを判定する関数"""
+    """
+    Check if two molecules (ASE Atoms objects) are the same based on their chemical bonds.
+
+    Parameters
+    ----------
+    mol1 : ase.Atoms
+        The first molecule to compare.
+    mol2 : ase.Atoms
+        The second molecule to compare.
+    chemical_bonds : pd.DataFrame
+        DataFrame containing the chemical bond definitions.
+
+    Returns
+    -------
+    isomorphic : bool
+        True if the two molecules are isomorphic (same structure), False otherwise.
+    """
     G1 = ase_atoms_to_nx(mol1, chemical_bonds)
     G2 = ase_atoms_to_nx(mol2, chemical_bonds)
     return nx.isomorphism.GraphMatcher(G1, G2, node_match=lambda x, y: x['element'] == y['element']).is_isomorphic()
 
 def reorder_atoms(atoms1, atoms2, chemical_bonds):
-    """分子1の原子の並びに基づいて分子2の原子を並べ替える関数, atoms2 を atoms1 に合わせる"""
+    """
+    Reorder the atoms in atoms2 to match the order of atoms in atoms1 based on their chemical bonds.
+    This is useful for comparing two molecules with the same structure but different atom order.
+
+    Parameters
+    ----------
+    atoms1 : ase.Atoms
+        The first molecule (reference) to compare.
+    atoms2 : ase.Atoms
+        The second molecule to reorder.
+    chemical_bonds : pd.DataFrame
+        DataFrame containing the chemical bond definitions.
+    
+    Returns
+    -------
+    reordered_atoms2 : ase.Atoms
+        The reordered atoms2 object.
+    """
     # グラフが同型かどうかをチェック
     G1 = ase_atoms_to_nx(atoms1, chemical_bonds)
     G2 = ase_atoms_to_nx(atoms2, chemical_bonds)
@@ -201,12 +315,15 @@ def kabsch_algorithm(P, Q):
     """
     Calculation of optimal rotation matrix and translation vector by Kabsch algorithm
 
-    Parameters:
+    Parameters
+    ----------
     P : numpy.ndarray
         Coordinates of the first molecule (N x 3)
     Q : numpy.ndarray
         Coordinates of the second molecule (N x 3)
-    Returns:
+
+    Returns
+    -------
     R : numpy.ndarray
         Rotation matrix (3 x 3)
     t : numpy.ndarray
@@ -244,12 +361,15 @@ def cast_molecules(G1, G2):
     """
     Cast molecules using Kabsch algorithm
 
-    Parameters:
+    Parameters
+    ----------
     G1 : networkx.Graph
         First molecule graph
     G2 : networkx.Graph
         Second molecule graph
-    Returns:
+
+    Returns
+    -------
     rmsd: float
         Lowest RMSD among mappings
     positions : np.ndarray
@@ -278,6 +398,16 @@ def cast_molecules(G1, G2):
 
 
 def aseatoms2pdb(filename, atoms):
+    """
+    Write ASE Atoms object to PDB file.
+
+    Parameters
+    ----------
+    filename : str
+        Name of the output PDB file.
+    atoms : ase.Atoms
+        The atoms object to be written to the PDB file.
+    """
     # ATOM      1    1 MOL     1       2.155   3.338  13.788  1.00  0.00           S  
     # pdb_atom_format = '{:6s}{:5d} {:^4s}{:1s}{:3s}{:1s} {:4d}{:1s}{:3s}{:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}{:10s}{:>2s}'
     pdb_atom_format = '{:6s}{:5d} {:^4s}{:1s}{:3s} {:1s}{:4d}{:1s}   {:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}          {:>2s}{:2s}'
@@ -310,7 +440,19 @@ def aseatoms2pdb(filename, atoms):
 
 
 def merge_asemols(asemols):
-    """分子（ase.Atoms class）のリストを受け取り、それらを結合したase.Atoms classを返す関数"""
+    """
+    Merge multiple asemol objects into a single one.
+
+    Parameters
+    ----------
+    asemols : list
+        List of asemol objects to be merged.
+
+    Returns
+    -------
+    merge_asemols : ase.Atoms
+        Merged ase.Atoms object.
+    """
     merge_asemols = asemols[0].copy()
     for i, mol in enumerate(asemols):
         if i > 0:
@@ -318,6 +460,21 @@ def merge_asemols(asemols):
     return merge_asemols
 
 def expand_cell(atoms, length=30):
+    """
+    Expand the cell of the atoms object to fit the specified length.
+    
+    Parameters
+    ----------
+    atoms : ase.Atoms
+        The atoms object to be expanded.
+    length : float
+        The desired length of the cell in Angstroms.
+    
+    Returns
+    -------
+    atoms : ase.Atoms
+        The expanded atoms object.
+    """
     La = atoms.cell.cellpar()[0]
     Lb = atoms.cell.cellpar()[1]    
     Lc = atoms.cell.cellpar()[2]
@@ -331,16 +488,29 @@ def expand_cell(atoms, length=30):
 
 def pdb2packmol(pdbfiles, num_mols=None, cell=None, desired_density=None, outfile="packmol_tmp.xyz"):
     """
-    pdbfiles: list of pdb files
-    num_mols: list of number (or ratio) of molecules of each pdb file
-    cell: cell size
-    desired_density: desired density (kg/m^3)
-    outfile: output file
+    Liquid packing using packmol.
 
-    return: bonds_top, atomslist_mols, molecule_list
-            bonds_top: list of bonds
-            atomslist_mols: list of ase atoms objects
-            molecule_list: list of molecule indices
+    Parameters
+    ----------
+    pdbfiles : list
+        List of PDB files to be packed.
+    num_mols : list, optional
+        List of number of molecules for each PDB file. If None, all files are packed with 1 molecule.
+    cell : list, optional
+        List of cell dimensions [a, b, c]. If None, a default cell size is used.
+    desired_density : float, optional
+        Desired density of the packed system. If None, the density is calculated based on the number of molecules and cell size.
+    outfile : str, optional
+        Output file name for the packed system. Default is "packmol_tmp.xyz".
+
+    Returns
+    -------
+    bonds_top : list
+        List of bonds in the packed system.
+    atomslist_mols : list
+        List of ASE Atoms objects for each molecule in the packed system.
+    molecule_list : list
+        List of molecule indices in the packed system.
     """
     if num_mols == None:
         num_mols = [1 for _ in  pdbfiles]
@@ -395,10 +565,6 @@ def pdb2packmol(pdbfiles, num_mols=None, cell=None, desired_density=None, outfil
     _ = os.system("packmol < "+"pack_tmp.inp")
     atoms_packtmp = read("packmol_tmp.pdb") 
     atoms_packtmp.cell = cell
-    atoms_packtmp.pbc  = True
-    write(f"{outfile}", atoms_packtmp)
-    return bonds_top, atomslist_mols, molecule_list
-
     atoms_packtmp.pbc  = True
     write(f"{outfile}", atoms_packtmp)
     return bonds_top, atomslist_mols, molecule_list

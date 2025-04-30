@@ -11,7 +11,66 @@ import cclib
 import networkx as nx
 
 class DihedCalculator:
+    """
+    Class for dihedral angle calculations using quantum mechanical methods and force fields.
+    This class allows for the calculation of dihedral angles and their corresponding energies
+    using both quantum mechanical methods by Gaussian and force fields.
+
+    Parameters
+    ----------
+    atoms: ase.Atoms
+        ASE Atoms object of the molecule.
+    rdkitmol: rdkit.Chem.rdchem.Mol
+        RDKit molecule object.
+    label: str
+        Label for the calculation.
+    directory: str
+        Directory to save the calculation files.
+    qmparams: dict
+        Parameters for the quantum mechanical calculation.
+
+    Attributes
+    ----------
+    atoms: ase.Atoms
+        ASE Atoms object of the molecule.
+    rdmol: rdkit.Chem.rdchem.Mol
+        RDKit molecule object.
+    nc: int
+        Net charge of the molecule.
+    label: str
+        Label for the calculation.
+    directory: str
+        Directory to save the calculation files.
+    qmparams: dict
+        Parameters for the quantum mechanical calculation.
+    dihedral_list: list
+        List of dihedral angles in the molecule.
+    dihedral_elem_list: list
+        List of elements involved in the dihedral angles.
+    qm_calculators: list
+        List of quantum mechanical calculators for each dihedral angle.
+    ff_calculators: list
+        List of force field calculators for each dihedral angle.
+    qm_dihedscan: list
+        List of dictionaries containing the results of the quantum mechanical dihedral scans.
+    ff_dihedscan: list
+        List of dictionaries containing the results of the force field dihedral scans.
+    """
     def __init__(self, atoms, rdkitmol, label, directory=None, qmparams=None):
+        """
+        Parameters
+        ----------
+        atoms: ase.Atoms
+            ASE Atoms object of the molecule.
+        rdkitmol: rdkit.Chem.rdchem.Mol
+            RDKit molecule object.
+        label: str
+            Label for the calculation.
+        directory: str
+            Directory to save the calculation files.
+        qmparams: dict
+            Parameters for the quantum mechanical calculation.
+        """
         self.atoms = atoms.copy()
         self.atoms.pbc = False
         self.atoms.cell = None
@@ -43,6 +102,16 @@ class DihedCalculator:
         self.ff_dihedscan = [{"angle": [], "energy": [], "atoms": []} for _ in range(len(self.dihedral_list))]
 
     def get_dihedral_qm(self, dihed_list=None, do_calc=True):
+        """
+        Perform dihedral angle calculations using quantum mechanical methods.
+
+        Parameters
+        ----------
+        dihed_list: list of int
+            List of indices of the dihedral angles to be calculated.
+        do_calc: bool
+            If True, perform the calculations. If False, only prepare the input files.
+        """
         if dihed_list is None:
             dihed_list = self.dihedral_list
         
@@ -84,6 +153,22 @@ class DihedCalculator:
                 self.qm_dihedscan[di]["atoms"] = load_g16scan(logfile)
     
     def get_dihedral_ff(self, ffxml, dihed_list=None, angles=None, ini_geom="QM"):
+        """
+        Perform dihedral angle calculations using force fields.
+
+        Parameters
+        ----------
+        ffxml: str
+            Path to the force field XML file.
+        dihed_list: list of int
+            List of indices of the dihedral angles to be calculated.
+        angles: list of float
+            List of dihedral angles (in degrees) to scan.
+        ini_geom: str
+            Initial geometry for the dihedral scan. Can be "QM" or "FF".
+            QM: Use the relaxed scan geometry from the quantum mechanical calculation.
+            FF: Use the initial geometry from the force field calculation.
+        """
         if dihed_list is None:
             dihed_list = self.dihedral_list
         
@@ -150,6 +235,21 @@ def load_g16scan(g16logfile):
     return angle, energy, aseatoms
 
 def get_rotatable_dihedral(rdmol):
+    """
+    Get the list of rotatable dihedral angles in the molecule.
+
+    Parameters
+    ----------
+    rdmol: rdkit.Chem.rdchem.Mol
+        RDKit molecule object.
+
+    Returns
+    -------
+    dihedral_list: list of list of int
+        List of dihedral angles, each defined by a list of four atom indices.
+    dihedral_elem_list: list of list of str
+        List of elements involved in the dihedral angles, each defined by a list of four element symbols.
+    """
     id_mol = copy.deepcopy(rdmol)
     # https://sourceforge.net/p/rdkit/mailman/message/34360982/
     RotatableBond = Chem.MolFromSmarts('[!$(*#*)&!D1]-&!@[!$(*#*)&!D1]')
@@ -201,7 +301,7 @@ def scan_ff_dihedral(ffxml, angles, dihed_atidx, atoms_list=None, geoopt_atoms=N
     """
     Relaxed dihedral scan using OpenMM
 
-    Parameters:
+    Parameters
     ----------
     ffxml: str
         Path to the force field XML file.
@@ -216,7 +316,7 @@ def scan_ff_dihedral(ffxml, angles, dihed_atidx, atoms_list=None, geoopt_atoms=N
     bonds: list of tuple
         List of tuples defining the bonds in the system.
 
-    Returns:
+    Returns
     -------
     ff_pot_kjmol: numpy.ndarray
         Array of potential energies (in kJ/mol) for each dihedral angle.
@@ -335,8 +435,9 @@ def scan_ff_dihedral(ffxml, angles, dihed_atidx, atoms_list=None, geoopt_atoms=N
 def rotate_dihedral(atoms, dihed_list, desired_angle, chemical_bonds=None):
     """
     Rotate the dihedral angle of a molecule.
-    Parameters:
-    -----------
+
+    Parameters
+    ----------
     atoms: ase.Atoms
         The molecule to be rotated.
     dihed_list: list of int
@@ -345,8 +446,9 @@ def rotate_dihedral(atoms, dihed_list, desired_angle, chemical_bonds=None):
         The desired dihedral angle in degrees.
     chemical_bonds: pandas.DataFrame
         The definition of chemical bonds: element1, element2, cutoff.
-    Returns:
-    --------
+    
+    Returns
+    -------
     atoms_rotated: ase.Atoms
         The rotated molecule.
     """
@@ -403,6 +505,19 @@ def rotate_dihedral(atoms, dihed_list, desired_angle, chemical_bonds=None):
 
 
 def parse_g16scan(file):
+    """
+    Parse the output of a Gaussian 16 scan log file.
+
+    Parameters
+    ----------
+    file: str
+        Path to the Gaussian 16 log file.
+
+    Returns
+    -------
+    scanned_energy: list of float
+        List of energies for each scanned dihedral angle.
+    """
     with open(file) as f:
         lines = f.readlines()
         parserd_lines = []

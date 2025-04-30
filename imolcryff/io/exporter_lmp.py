@@ -17,15 +17,16 @@ def exporter_lmp(pdb,
                  filename):
     """
     Export a system to LAMMPS format.
+    
     Parameters
     ----------
     pdb : str
-        The path to the PDB file.
+        The path to the PDB file. 
         The pdb file should contain the topology information.
     system : str
         The path to the system xml file of openmm.
     filename : str
-        The filename of the output file (***.data).
+        The filename of the output file (filename.data).
     """
     pdb_omm = PDBFile(pdb)
     system_omm = XmlSerializer.deserialize(open(system).read())

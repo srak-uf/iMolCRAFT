@@ -30,7 +30,42 @@ psi4_resp_params = ESPSettings(
 )
 
 class ChargeCalculator:
+    """
+    A class to calculate the partial charges of a molecule using different methods.
+    Supported methods are: RESP, AM1-BCC.
+
+    Parameters
+    ----------
+    atoms : ase.Atoms
+        The atoms object to calculate the charge for.
+    charge_type : str
+        The type of charge calculation to perform. Supported types are: resp, am1-bcc
+    netcharge : int
+        The net charge of the molecule.
+    label : str
+        The label for the output files.
+    directory : str, optional
+        The directory to save the output files. If None, the current working directory is used.
+    params : dict, optional
+        The parameters for the charge calculation. If None, default parameters are used.
+    """
     def __init__(self, atoms, charge_type, netcharge, label, directory=None, params=None):
+        """
+        Parameters
+        ----------
+        atoms : ase.Atoms
+            The atoms object to calculate the charge for.
+        charge_type : str
+            The type of charge calculation to perform. Supported types are: resp, am1-bcc
+        netcharge : int
+            The net charge of the molecule.
+        label : str
+            The label for the output files.
+        directory : str, optional
+            The directory to save the output files. If None, the current working directory is used.
+        params : dict, optional
+            The parameters for the charge calculation. If None, default parameters are used.
+        """
         self.atoms = atoms.copy()
         self.atoms.pbc = False
         self.atoms.cell = None
@@ -56,6 +91,9 @@ class ChargeCalculator:
             self.params = resp_params
     
     def get_partialcharges(self):
+        """
+        Calculate the partial charges of the molecule using the specified method.
+        """
         if self.charge_type == "resp":
             self.partial_charges = self._get_resp()
         elif self.charge_type == "am1bcc":
@@ -121,7 +159,41 @@ class ChargeCalculator:
 
 
 class Psi4ChargeCalculator(ChargeCalculator):
+    """
+    A class to calculate the partial charges (RESP) of a molecule using Psi4.
+
+    Parameters
+    ----------
+    molecule : openff.toolkit.topology.Molecule
+        The molecule object to calculate the charge for.
+    charge_type : str
+        The type of charge calculation to perform. Supported types are: resp
+    netcharge : int
+        The net charge of the molecule.
+    label : str
+        The label for the output files.
+    directory : str, optional
+        The directory to save the output files. If None, the current working directory is used.
+    params : dict, optional
+        The parameters for the charge calculation. If None, default parameters are used.
+    """
     def __init__(self, molecule, charge_type, netcharge, label, directory=None, params=None):
+        """
+        Parameters
+        ----------
+        molecule : openff.toolkit.topology.Molecule
+            The molecule object to calculate the charge for.
+        charge_type : str
+            The type of charge calculation to perform. Supported types are: resp
+        netcharge : int
+            The net charge of the molecule.
+        label : str
+            The label for the output files.
+        directory : str, optional
+            The directory to save the output files. If None, the current working directory is used.
+        params : dict, optional
+            The parameters for the charge calculation. If None, default parameters are used.
+        """
         self.molecule = molecule
         self.charge_type = charge_type
         self.params = params
@@ -145,6 +217,9 @@ class Psi4ChargeCalculator(ChargeCalculator):
                                       )
     
     def get_partialcharges(self):
+        """
+        Calculate the partial charges of the molecule using the specified method.
+        """
         if self.charge_type == "resp":
             self.partial_charges = self._get_resp()
         else:

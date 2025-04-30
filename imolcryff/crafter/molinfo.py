@@ -45,14 +45,14 @@ class Crafter:
     generation. It integrates multiple tools and libraries like ASE, OpenFF, Psi4, and RDKit 
     to streamline molecular modeling workflows.
 
-    Parameters:
+    Parameters
     ----------
     yml : str, optional
         Path to a YAML file containing parameters for geometry optimization, 
         charge calculation, force field generation, and molecular structure.
         If provided, the parameters and structure will be loaded automatically.
 
-    Attributes:
+    Attributes
     ----------
     mol_info : dict
         A dictionary to store molecular information for each molecule.
@@ -85,6 +85,20 @@ class Crafter:
             self.from_yaml(yml)
 
     def from_yaml(self, filename):
+        """
+        Read a YAML file and extract parameters for geometry optimization,
+        charge calculation, force field generation, and molecular structure.
+        The YAML file should contain the following keys:
+        - geoopt: Parameters for geometry optimization.
+        - charge: Parameters for charge calculation.
+        - forcefield: Parameters for force field generation.
+        - structure: Information about the molecular structure (e.g., crystal or liquid).
+
+        Parameters
+        ----------
+        filename : str
+            Path to the YAML file.
+        """
         data = self._parser_yaml(filename)
         self.params_geoopt = data["geoopt"]
         self.params_charge = data["charge"]
@@ -92,6 +106,19 @@ class Crafter:
         self.structure = data["structure"]
 
     def prep(self, do_opt=True, do_charge=True):
+        """
+        Prepare the system by reading the structure and generating the necessary
+        molecular information. This includes reading the structure file,
+        generating the RDKit molecule, and performing geometry optimization
+        and charge calculation if specified.
+
+        Parameters
+        ----------
+        do_opt : bool, optional
+            If True, perform geometry optimization. Default is True.
+        do_charge : bool, optional
+            If True, perform charge calculation. Default is True.
+        """
         # initial structure generation
         if self.structure["type"] == "crystal":
             self.from_crystal(self.structure["cif"])
@@ -111,6 +138,13 @@ class Crafter:
             self.get_molecule_off()
         
     def build(self):
+        """
+        Build the system using the prepared molecules and force field parameters.
+        This method generates the system XML files and creates the OpenMM system.
+        It handles both crystal and liquid structures, creating the necessary
+        supercell and adding bonds between atoms.
+        The generated system is saved in an XML format for later use.
+        """
         self.get_molecule_off()
         molecules = []
         
@@ -218,7 +252,7 @@ class Crafter:
         """
         Append List of ase.Atoms to mol_info dictionary
         
-        Parameters:
+        Parameters
         ----------
         atomslist: List of ase.Atoms
         key: key of mol_info dictionary
@@ -238,6 +272,14 @@ class Crafter:
         write(f"{key}/{key}.xyz", atomslist[0], format="xyz")
 
     def get_rdkitmol(self, keys=None, il_assign=True):
+        """
+        Get RDKit molecule from ASE atoms
+        Parameters
+        ----------
+        keys: list of keys to get RDKit molecule
+        il_assign: bool
+            If True, assign special ionic liquids to the molecule
+        """
         if keys is None:
             keys = self.mol_info.keys()
 
@@ -255,6 +297,12 @@ class Crafter:
             self.mol_info[key]["rdkit"] = {"mol": mol, "mol2d": mol2d}
 
     def get_smiles(self, keys=None):
+        """
+        Get SMILES from RDKit molecule
+        Parameters
+        ----------
+        keys: list of keys to get SMILES
+        """
         if keys is None:
             keys = self.mol_info.keys()
         for key in keys:
@@ -264,6 +312,13 @@ class Crafter:
             self.mol_info[key]["SMILES"] = Chem.MolToSmiles(mol)
 
     def get_sdf(self, keys=None):
+        """
+        Get SDF from RDKit molecule
+
+        Parameters
+        ----------
+        keys: list of keys to get SDF
+        """
         if keys is None:
             keys = self.mol_info.keys()
 
@@ -283,6 +338,20 @@ class Crafter:
 
     # GeoOptimizerとして別ファイルに移す案もあり
     def get_optstructure(self, keys=None, do_calc=True, rmsd=0.2, **kwargs):
+        """
+        Get optimized structure using Gaussian or Psi4
+
+        Parameters
+        ----------
+        keys: list of keys to get optimized structure
+        do_calc: bool
+            If True, perform geometry optimization. Default is True.
+        rmsd: float
+            If the RMSD between the current and previous molecules is less than this value,
+            skip the geometry optimization. Default is 0.2 A^2.
+        kwargs: dict
+            Additional parameters for geometry optimization.
+        """
         geoopt_params_g16 = {
                 "method": "wb97xd",
                 "basis": "6-311+g(2d,p)",
@@ -369,6 +438,15 @@ class Crafter:
             self.mol_info[key]["aseatoms_stable"] = self.mol_info[key]["aseatoms_geoopt"][minidx]
 
     def get_molecule_off(self, keys=None, **kwargs):
+        """
+        Get OpenFF molecule from ASE atoms
+
+        Parameters
+        ----------
+        keys: list of keys to get OpenFF molecule
+        kwargs: dict
+            Additional attributes for OpenFF molecule.
+        """
         if keys is None:
             keys = self.mol_info.keys()
 
@@ -397,7 +475,14 @@ class Crafter:
         """
         Get partial charges by RESP or AM1-BCC
         charge_type: "resp" or "am1bcc"
+
+        Parameters
+        ----------
         keys: list of keys to get partial charges
+        params_ff: dict
+            Force field parameters for charge calculation.
+        kwargs: dict
+            Additional parameters for charge calculation.
         """
         if keys is None:
             keys = self.mol_info.keys()
@@ -455,6 +540,15 @@ class Crafter:
             self._adjust_charges(params_ff)
     
     def get_dihedral_qm(self, keys=None, do_calc=True):
+        """
+        Get dihedral angles using quantum mechanical calculations
+
+        Parameters
+        ----------
+        keys: list of keys to get dihedral angles
+        do_calc: bool
+            If True, perform dihedral angle scan calculation. Default is True.
+        """
         if keys is None:
             keys = self.mol_info.keys()
 
@@ -475,6 +569,15 @@ class Crafter:
             self.mol_info[key]["DihedCalc"].get_dihedral_qm(do_calc=do_calc)
     
     def get_dihedral_ff(self, keys=None, do_calc=True):
+        """
+        Get dihedral angles using force field parameters
+
+        Parameters
+        ----------
+        keys: list of keys to get dihedral angles
+        do_calc: bool
+            If True, perform dihedral angle scan calculation. Default is True.
+        """
         if keys is None:
             keys = self.mol_info.keys()
         for key in keys:
@@ -511,6 +614,14 @@ class Crafter:
             self.mol_info[key]["partial_charges"] = charges
 
     def save_crafter(self, filename="crafter.pkl"):
+        """
+        Save the Crafter object to a file using pickle.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the file to save the Crafter object to.
+        """
         with open(filename, mode='wb') as f:
             pickle.dump(self,f)
         
@@ -522,6 +633,14 @@ class Crafter:
                 pickle.dump(mol_info, f)
     
     def load_crafter(self, filename):
+        """
+        Load the Crafter object from a file using pickle.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the file to load the Crafter object from.
+        """
         with open(filename, mode='rb') as f:
             crafter = pickle.load(f)
         self.mol_info = crafter.mol_info

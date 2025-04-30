@@ -1,6 +1,25 @@
 from openff.toolkit.topology import Molecule
 
 def read_mol2(filename):
+    """
+    Read a mol2 file and return a dictionary with the contents.
+    The dictionary will contain the keys "@<TRIPOS>MOLECULE", "@<TRIPOS>ATOM",
+    "@<TRIPOS>BOND", and "@<TRIPOS>SUBSTRUCTURE".
+    Each key will contain a list of lists, where each inner list represents a line
+    in the corresponding section of the mol2 file.
+    The first element of each inner list is the line number, and the rest are the
+    corresponding values.
+
+    Parameters
+    ----------
+    filename : str
+        The name of the mol2 file to read.
+        
+    Returns
+    -------
+    dict
+        A dictionary containing the contents of the mol2 file.
+    """
     with open(filename) as f:
         l = f.readlines()
         mol2_dict = {}
@@ -15,7 +34,15 @@ def read_mol2(filename):
 def write_mol2(filename, input):
     """
     Write a mol2 file from a dictionary or a molecule object.
-    
+
+    Parameters
+    ----------
+    filename : str
+        The name of the file to write to.
+    input : dict or openff.toolkit.topology.Molecule
+        The input data to write. If a dictionary, it should contain the keys
+        "@<TRIPOS>MOLECULE", "@<TRIPOS>ATOM", "@<TRIPOS>BOND", and "@<TRIPOS>SUBSTRUCTURE".
+        If a molecule object, it will be written in the mol2 format.
     """
     if isinstance(input, dict):
         dict_flag = True

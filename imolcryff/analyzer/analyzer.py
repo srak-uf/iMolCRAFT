@@ -6,6 +6,29 @@ import mdtraj as md
 
 
 def calc_rdf(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
+    """
+    Calculate averaged radial distribution function (RDF) between two elements.
+
+    Parameters
+    ----------
+    u : MDAnalysis.Universe
+        MDAnalysis universe object.
+    elem1 : str
+        Element symbol of the first atom type.
+    elem2 : str
+        Element symbol of the second atom type.
+    rmax : float, optional
+        Maximum distance for RDF calculation (default is 8.0).
+    dr : float, optional
+        Bin width for RDF calculation (default is 0.01).
+
+    Returns
+    -------
+    r : numpy.ndarray
+        Array of distances.
+    g : numpy.ndarray
+        Array of RDF values.
+    """
     u_select1 = u.select_atoms(f"element {elem1}")
     u_select2 = u.select_atoms(f"element {elem2}")
     rdf = mda.InterRDF(u_select1, u_select2, range=(0,rmax), nbins=int(rmax/dr))
@@ -17,6 +40,27 @@ def calc_rdf(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
     return r, g
 
 def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
+    """
+    Calculate radial distribution function (RDF) between two elements for each frame.
+
+    Parameters
+    ----------
+    u : MDAnalysis.Universe
+        MDAnalysis universe object.
+    elem1 : str
+        Element symbol of the first atom type.
+    elem2 : str
+        Element symbol of the second atom type.
+    rmax : float, optional
+        Maximum distance for RDF calculation (default is 8.0).
+    dr : float, optional
+        Bin width for RDF calculation (default is 0.01).
+
+    Returns
+    -------
+    rdf_list : numpy.ndarray
+        Array of RDF values for each frame.
+    """
     u_select1 = u.select_atoms(f"element {elem1}")
     u_select2 = u.select_atoms(f"element {elem2}")
     rdf = mda.InterRDF(u_select1, u_select2, range=(0,rmax), nbins=int(rmax/dr))
@@ -30,6 +74,36 @@ def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
     return np.array(rdf_list)
 
 def calc_adf_frame(xtcfile, pdbfile, elem1, elem2, elem3,rcut12=3.0, rcut23=3.0):
+    """
+    Calculate angle distribution function (ADF) between three elements.
+    The function calculates the angle formed by three atoms of different types
+    (elem1-elem2-elem3) in a molecular dynamics simulation. It computes the
+    distances between pairs of atoms, filters them based on cutoff distances,
+    and then calculates the angles formed by the selected pairs. The resulting
+    angles are binned into a histogram to create the angle distribution function.
+
+    Parameters
+    ----------
+    xtcfile : str
+        Path to the XTC file.
+    pdbfile : str
+        Path to the PDB file.
+    elem1 : str
+        Element symbol of the first atom type.
+    elem2 : str
+        Element symbol of the second atom type.
+    elem3 : str
+        Element symbol of the third atom type.
+    rcut12 : float, optional
+        Cutoff distance for the first pair of elements (default is 3.0).
+    rcut23 : float, optional
+        Cutoff distance for the second pair of elements (default is 3.0).
+
+    Returns
+    -------
+    prob_123 : numpy.ndarray
+        Array of angle distribution function values for each frame.
+    """
     # angle elem1-elem2-elem3
     rcut12 /= 10.0
     rcut23 /= 10.0
@@ -72,6 +146,38 @@ def calc_adf_frame(xtcfile, pdbfile, elem1, elem2, elem3,rcut12=3.0, rcut23=3.0)
 
 
 def calc_adf(xtcfile, pdbfile, elem1, elem2, elem3,rcut12=3.0, rcut23=3.0):
+    """
+    Calculate angle distribution function (ADF) between three elements.
+    The function calculates the angle formed by three atoms of different types
+    (elem1-elem2-elem3) in a molecular dynamics simulation. It computes the
+    distances between pairs of atoms, filters them based on cutoff distances,
+    and then calculates the angles formed by the selected pairs. The resulting
+    angles are binned into a histogram to create the angle distribution function.
+
+    Parameters
+    ----------
+    xtcfile : str
+        Path to the XTC file.
+    pdbfile : str
+        Path to the PDB file.
+    elem1 : str
+        Element symbol of the first atom type.
+    elem2 : str
+        Element symbol of the second atom type.
+    elem3 : str
+        Element symbol of the third atom type.
+    rcut12 : float, optional
+        Cutoff distance for the first pair of elements (default is 3.0).
+    rcut23 : float, optional
+        Cutoff distance for the second pair of elements (default is 3.0).
+
+    Returns
+    -------
+    deg_123 : numpy.ndarray
+        Array of angles in degrees.
+    prob_123 : numpy.ndarray
+        Array of angle distribution function values for each frame.
+    """
     prob_123 = calc_adf_frame(xtcfile, pdbfile, elem1, elem2, elem3, rcut12=rcut12, rcut23=rcut23)
     bins = np.arange(0, 180+0.001, 1)
     deg_123 = bins[:-1]
@@ -79,6 +185,23 @@ def calc_adf(xtcfile, pdbfile, elem1, elem2, elem3,rcut12=3.0, rcut23=3.0):
     return deg_123, prob_123
 
 def calc_density_frame(u: MDAnalysis.Universe):
+    """
+    Calculate density for each frame in the trajectory.
+    The density is calculated using the formula:
+    density = (total mass of atoms) / (volume of the system)
+    The volume is obtained from the dimensions of the simulation box.
+    The density is returned in g/cm^3.
+
+    Parameters
+    ----------
+    u : MDAnalysis.Universe
+        MDAnalysis universe object.
+
+    Returns
+    -------
+    density : numpy.ndarray
+        Array of density values for each frame.
+    """
     total_mass = sum(u.atoms.masses)
     densities = []
     for ts in u.trajectory:
@@ -90,11 +213,50 @@ def calc_density_frame(u: MDAnalysis.Universe):
     return density
 
 def calc_density(u: MDAnalysis.Universe):
+    """
+    Calculate average density of the system.
+    The density is calculated using the formula:
+    density = (total mass of atoms) / (volume of the system)
+    The volume is obtained from the dimensions of the simulation box.
+    The density is returned in g/cm^3.
+
+    Parameters
+    ----------
+    u : MDAnalysis.Universe
+        MDAnalysis universe object.
+    Returns
+    -------
+    density : float
+        Average density of the system in g/cm^3.
+    """
     density_frame = calc_density_frame(u)
     density = np.mean(density_frame) # density (g cm-3)
     return density
 
 def calc_cellpar_frame(u: MDAnalysis.Universe, target="all"):
+    """
+    Calculate cell parameters for each frame in the trajectory.
+    The cell parameters are extracted from the dimensions of the simulation box.
+
+    Parameters
+    ----------
+    u : MDAnalysis.Universe
+        MDAnalysis universe object.
+    target : str, optional
+        Target cell parameter to extract. Options are:
+        'all' (default), 'La_A', 'Lb_A', 'Lc_A', 'alpha_deg', 'beta_deg', 'gamma_deg'.
+        'all' returns all cell parameters.
+        'La_A', 'Lb_A', 'Lc_A' return the lengths of the cell vectors.
+        'alpha_deg', 'beta_deg', 'gamma_deg' return the angles between the cell vectors in degrees.
+
+    Returns
+    -------
+    cellpar : numpy.ndarray
+        Array of cell parameters for each frame.
+        If target is 'all', shape is (n_frames, 6).
+        If target is 'La_A', 'Lb_A', 'Lc_A', shape is (n_frames, 1).
+        If target is 'alpha_deg', 'beta_deg', 'gamma_deg', shape is (n_frames, 1).
+    """
     if target == "all":
         idx = range(0,6)
     elif target == "La_A":
