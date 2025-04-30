@@ -1,0 +1,30 @@
+@import url("css/theme.css");
+
+.tight-table td {
+    white-space: normal !important;
+}
+
+.toggle .header {
+    display: block;
+    clear: both;
+    padding-top: -10px;
+    padding-bottom: 20px;
+}
+
+.toggle .header:after {
+    content: " ▼";
+}
+
+.toggle .header.open:after {
+    content: " ▲";
+}
+
+/* Custom colors */
+/* Icon surrounding color */
+.wy-side-nav-search, .wy-nav-top { /* above navigation, behind logo */
+    background: #f3f3f3; 
+}
+
+.icon.icon-home { /* link above logo */
+    color: #6c6a6a;
+}

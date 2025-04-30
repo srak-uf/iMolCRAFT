@@ -1,0 +1,26 @@
+### macOS ###
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+
+### Python ###
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+### Sphinx ###
+# Sphinx documentation
+docs/build/
+
+imolcryff.egg-info/
+
+### Antechamber ###
+ANTECHAMBER_*
+ANTECHAMBER.FRCMOD
+ATOMTYPE.INF
+molecule.frcmod
+
+### psi4 ###
+psi*.*.clean
