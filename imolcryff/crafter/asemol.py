@@ -158,7 +158,7 @@ class asemol_wrapper:
                 ref_done = list(set(ref_done))
         return atoms_unwrap
 
-def ase_atoms_to_nx(atoms: ase.Atoms, chemical_bonds):
+def ase_atoms_to_nx(atoms: ase.Atoms, chemical_bonds=None):
     G = nx.Graph()
     asemol_wrap = asemol_wrapper(atoms, chemical_bonds=chemical_bonds)
     bonds = asemol_wrap.get_bonds()

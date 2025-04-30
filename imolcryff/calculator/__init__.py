@@ -1,2 +1,2 @@
 from .charge import *
-from .dihedral import * 
+from .dihedral import *
