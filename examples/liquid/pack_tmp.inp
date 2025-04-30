@@ -1,0 +1,14 @@
+seed  1961
+tolerance 2 
+filetype pdb 
+output  packmol_tmp.pdb  
+pbc 30 30 30 
+structure  atoms_0.pdb 
+  number  65 
+end structure 
+structure  atoms_1.pdb 
+  number  65 
+end structure 
+structure  atoms_2.pdb 
+  number  130 
+end structure 

@@ -10,8 +10,8 @@ from dmff.optimize import MultiTransform, genOptimizer
 import optax
 import mdtraj as md
 import os, shutil, copy
-from imolcryff.dmff_utils import *
-from imolcryff.analyzer   import *
+from imolcryff.trainer.dmff_utils import *
+from imolcryff.analyzer.analyzer   import *
 
 dmff_params = parser_dmffyaml("dmff.yml")
 init_stru = dmff_params["sampling"]["init_structure"]

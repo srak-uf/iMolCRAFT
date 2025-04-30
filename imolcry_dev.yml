@@ -13,6 +13,7 @@ dependencies:
   - mdtraj=1.9.7
   - openbabel=3.1.1
   - openff-forcefields=2024.09.0
+  - openff-recharge
   - openmm=8.1.2
   - openmmforcefields=0.14.1
   - packmol>=20.15
