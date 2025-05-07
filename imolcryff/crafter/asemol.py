@@ -155,6 +155,8 @@ class asemol_wrapper:
         self.atoms = self.unwrap_molecules()
 
         for i_mol in range(len(self.molecules)):
+            # self.molecules[i_mol]を小さい順に並べ替え
+            self.molecules[i_mol] = sorted(self.molecules[i_mol])
             asemols.append(self.atoms[self.molecules[i_mol]])
         
         molecule_list = []
