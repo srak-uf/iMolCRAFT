@@ -1,7 +1,7 @@
 # Installation of developer version
 ```
-git clone git@github.com:srak-uf/imolcryff.git
-cd imolcryff
+git clone git@github.com:srak-uf/iMolCRAFT.git
+cd iMolCRAFT
 conda env create -f imolcry_dev.yml # this script can be used in linux
 conda activate imc_dev
 git clone https://github.com/srak-uf/DMFF
