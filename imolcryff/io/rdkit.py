@@ -66,68 +66,111 @@ def atoms2rdkit(atoms, nc=0, il_assign=True):
     return mol, mol2d, il_dict
 
 def _il_assign(mol, mol2d, nc):
-    fsalike_Nindex = []
-    fsalike_Sindex = []
-    fsalike_Oindex = []
-    il_dict = {}
-    if nc < 0:
+    def assign_pf6(mol, mol2d):
+        """
+        Check if the molecule is PF6
+        """
         atoms = mol.GetAtoms()
         atoms2d = mol2d.GetAtoms()
+        pf6like_Pindex = []
+        pf6like_Findex = []
+        il_dict = {}
 
-        # Check FSA-like N, S, and O atoms
-        for i in range(len(atoms)):
-            if atoms[i].GetTotalValence() == 3 and atoms[i].GetSymbol() == "N":
+        PF6_flag = False
+        for atom in atoms:
+            if atom.GetSymbol() == "P" and atoms[0].GetSymbol() == "P":
+                PF6_flag = True
+
+        if PF6_flag:
+            for i, atom in enumerate(atoms):
+                if atom.GetSymbol() == "F":
+                    atom.SetFormalCharge(0)
+                    atoms2d[i].SetFormalCharge(0)
+                    pf6like_Findex.append(i)
+                elif atom.GetSymbol() == "P":
+                    atom.SetFormalCharge(-1)
+                    atoms2d[i].SetFormalCharge(-1)
+                    pf6like_Pindex.append(i)
+        
+        il_dict["PF6_P"] = pf6like_Pindex
+        il_dict["PF6_F"] = pf6like_Findex
+        return il_dict
+
+    def assign_fsalike(mol, mol2d, nc):
+        """
+        Check if the molecule is FSA-like
+        """
+        fsalike_Nindex = []
+        fsalike_Sindex = []
+        fsalike_Oindex = []
+        il_dict = {}
+        if nc < 0:
+            atoms = mol.GetAtoms()
+            atoms2d = mol2d.GetAtoms()
+
+            # Check FSA-like N, S, and O atoms
+            for i in range(len(atoms)):
+                if atoms[i].GetTotalValence() == 3 and atoms[i].GetSymbol() == "N":
+                    for bond in atoms[i].GetBonds():
+                        if bond.GetEndAtom().GetSymbol() == "S":
+                            s_index = bond.GetEndAtomIdx()
+                            if atoms[s_index].GetTotalValence() == 6:
+                                fsalike_Nindex.append(i)
+                                fsalike_Sindex.append(s_index)
+                        elif bond.GetBeginAtom().GetSymbol() == "S":
+                            s_index = bond.GetBeginAtomIdx()
+                            if atoms[s_index].GetTotalValence() == 6:
+                                fsalike_Nindex.append(i)
+                                fsalike_Sindex.append(s_index)
+
+            fsalike_Nindex = list(set(fsalike_Nindex))
+            fsalike_Sindex = list(set(fsalike_Sindex))
+
+            # Sに結合しているO原子のindexをfsalike_Oindexに追加
+            for i in fsalike_Sindex:
                 for bond in atoms[i].GetBonds():
-                    if bond.GetEndAtom().GetSymbol() == "S":
-                        s_index = bond.GetEndAtomIdx()
-                        if atoms[s_index].GetTotalValence() == 6:
-                            fsalike_Nindex.append(i)
-                            fsalike_Sindex.append(s_index)
-                    elif bond.GetBeginAtom().GetSymbol() == "S":
-                        s_index = bond.GetBeginAtomIdx()
-                        if atoms[s_index].GetTotalValence() == 6:
-                            fsalike_Nindex.append(i)
-                            fsalike_Sindex.append(s_index)
+                    if bond.GetEndAtom().GetSymbol() == "O":
+                        fsalike_Oindex.append(bond.GetEndAtomIdx())
+                    elif bond.GetBeginAtom().GetSymbol() == "O":
+                        fsalike_Oindex.append(bond.GetBeginAtomIdx())
+            fsalike_Oindex = list(set(fsalike_Oindex))
 
-        fsalike_Nindex = list(set(fsalike_Nindex))
-        fsalike_Sindex = list(set(fsalike_Sindex))
+            for i in fsalike_Nindex:
+                atoms[i].SetFormalCharge(-1)
+                atoms2d[i].SetFormalCharge(-1)
+                for b_idx, bond in enumerate(atoms[i].GetBonds()):
+                    if bond.GetBondType() == Chem.rdchem.BondType.DOUBLE:
+                        ## 3d rdkitmol
+                        bond.SetBondType(Chem.rdchem.BondType.SINGLE)
+                        ## 2d rdkitmol
+                        bond2d = atoms2d[i].GetBonds()[b_idx]
+                        bond2d.SetBondType(Chem.rdchem.BondType.SINGLE)
 
-        # Sに結合しているO原子のindexをfsalike_Oindexに追加
-        for i in fsalike_Sindex:
-            for bond in atoms[i].GetBonds():
-                if bond.GetEndAtom().GetSymbol() == "O":
-                    fsalike_Oindex.append(bond.GetEndAtomIdx())
-                elif bond.GetBeginAtom().GetSymbol() == "O":
-                    fsalike_Oindex.append(bond.GetBeginAtomIdx())
-        fsalike_Oindex = list(set(fsalike_Oindex))
+            for i in fsalike_Sindex:
+                for b_idx, bond in enumerate(atoms[i].GetBonds()):
+                    bonded_element = [bond.GetBeginAtom().GetSymbol(), bond.GetEndAtom().GetSymbol()]
+                    if bond.GetBondType() == Chem.rdchem.BondType.SINGLE \
+                        and "O" in bonded_element:
+                        oxygen_idx = bond.GetBeginAtomIdx() if bonded_element[0] == "O" else bond.GetEndAtomIdx()
+                        ## 3d rdkitmol
+                        bond.SetBondType(Chem.rdchem.BondType.DOUBLE)
+                        atoms[oxygen_idx].SetFormalCharge(0)
 
-        for i in fsalike_Nindex:
-            atoms[i].SetFormalCharge(-1)
-            atoms2d[i].SetFormalCharge(-1)
-            for b_idx, bond in enumerate(atoms[i].GetBonds()):
-                if bond.GetBondType() == Chem.rdchem.BondType.DOUBLE:
-                    ## 3d rdkitmol
-                    bond.SetBondType(Chem.rdchem.BondType.SINGLE)
-                    ## 2d rdkitmol
-                    bond2d = atoms2d[i].GetBonds()[b_idx]
-                    bond2d.SetBondType(Chem.rdchem.BondType.SINGLE)
+                        ## 2d rdkitmol
+                        bond2d = atoms2d[i].GetBonds()[b_idx]
+                        bond2d.SetBondType(Chem.rdchem.BondType.DOUBLE)
+                        atoms2d[oxygen_idx].SetFormalCharge(0)
 
-        for i in fsalike_Sindex:
-            for b_idx, bond in enumerate(atoms[i].GetBonds()):
-                bonded_element = [bond.GetBeginAtom().GetSymbol(), bond.GetEndAtom().GetSymbol()]
-                if bond.GetBondType() == Chem.rdchem.BondType.SINGLE \
-                    and "O" in bonded_element:
-                    oxygen_idx = bond.GetBeginAtomIdx() if bonded_element[0] == "O" else bond.GetEndAtomIdx()
-                    ## 3d rdkitmol
-                    bond.SetBondType(Chem.rdchem.BondType.DOUBLE)
-                    atoms[oxygen_idx].SetFormalCharge(0)
-
-                    ## 2d rdkitmol
-                    bond2d = atoms2d[i].GetBonds()[b_idx]
-                    bond2d.SetBondType(Chem.rdchem.BondType.DOUBLE)
-                    atoms2d[oxygen_idx].SetFormalCharge(0)
-
-        il_dict["FSA_N"] = fsalike_Nindex
-        il_dict["FSA_S"] = fsalike_Sindex
-        il_dict["FSA_O"] = fsalike_Oindex
-    return il_dict
+            il_dict["FSA_N"] = fsalike_Nindex
+            il_dict["FSA_S"] = fsalike_Sindex
+            il_dict["FSA_O"] = fsalike_Oindex
+        
+    il_dict = assign_pf6(mol, mol2d)
+    if il_dict is not None:
+        print("PF6-like molecule detected during rdkit conversion.")
+        return il_dict
+    
+    il_dict = assign_fsalike(mol, mol2d, nc)
+    if il_dict is not None:
+        print("FSA-like molecule detected during rdkit conversion.")
+        return il_dict

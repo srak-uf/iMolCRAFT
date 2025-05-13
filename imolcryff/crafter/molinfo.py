@@ -154,14 +154,14 @@ class Crafter:
             molecules.append(molecule)
         
         if self.params_ff["fftype"].split("-")[0] == "gaff":
-            fftemplate = GAFFilTemplateGenerator(molecules=molecules,
-                                                 forcefield=self.params_ff["fftype"],
-                                                 il_assign=self.params_ff.get("fsa_assign", None))
+            fftemplate_gen = GAFFilTemplateGenerator(molecules=molecules,
+                                                     forcefield=self.params_ff["fftype"],
+                                                     il_assign=self.params_ff.get("fsa_assign", None))
         else:
             assert False, "Unknown forcefield type. Please check the forcefield type."
         
         # output xml files
-        ffxmlfiles = gafftemplate2xml(molecules, fftemplate, ion_ffxml=self.params_ff.get("iontype", "amber/ions/ionsff99_tip3p.xml"))
+        ffxmlfiles = gafftemplate2xml(molecules, fftemplate_gen, ion_ffxml=self.params_ff.get("iontype", "amber/ions/ionsff99_tip3p.xml"))
 
         # create structure
         ## crystal structure
