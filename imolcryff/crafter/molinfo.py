@@ -456,7 +456,7 @@ class Crafter:
             if not os.path.exists(sdffile):
                 self.get_sdf()
             
-            molecule_off = Molecule.from_file(sdffile)
+            molecule_off = Molecule.from_file(sdffile, allow_undefined_stereo=True)
             if list(self.mol_info[key]["partial_charges"]) != []:
                 molecule_off.partial_charges = Quantity(self.mol_info[key]["partial_charges"],
                                                         toolkit.unit.elementary_charge)
@@ -646,18 +646,38 @@ class Crafter:
         self.mol_info = crafter.mol_info
 
     def _assign_totalcharge(self):
+        import networkx as nx
+        def _extract_ring(nxmol):
+            ring = nx.cycle_basis(nxmol)
+            ring_list = []
+            element_list = []
+            for r in ring:
+                ring_list.append(r)
+                element_list.append([nxmol.nodes[i]['element'] for i in r])
+            return ring_list, element_list
+        
         num_charge_none = 0
         total_charge = 0
         for key in self.mol_info.keys():
             totalnum_elec = self.mol_info[key]["aseatoms_list"][0].get_atomic_numbers().sum()
             openshell_flag = totalnum_elec % 2 == 1
+            mim_flag = False
+            if openshell_flag:
+                rings, elements = _extract_ring(self.mol_info[key]["networkX"][0])
+                for i in range(len(rings)):
+                    r = rings[i]
+                    e = elements[i]
+                    if e.count('C') == 3 and e.count('N') == 2 and len(r) == 5:
+                        mim_flag = True
             self.mol_info[key]["symbol"] = str(self.mol_info[key]["aseatoms_list"][0].symbols)
-            if self.mol_info[key]["symbol"] in ["Li", "Na", "K", "Rb", "Cs", "Mg"]:
+            if self.mol_info[key]["symbol"] in ["Li", "Na", "K", "Rb", "Cs"]:
                 self.mol_info[key]["netcharge"] = 1
             elif self.mol_info[key]["symbol"] in ["F", "Cl", "Br", "I"]:
                 self.mol_info[key]["netcharge"] = -1
             elif self.mol_info[key]["symbol"] in ["Mg", "Ca", "Sr", "Ba"]:
                 self.mol_info[key]["netcharge"] = 2
+            elif mim_flag:
+                self.mol_info[key]["netcharge"] = 1
             elif openshell_flag:
                 self.mol_info[key]["netcharge"] = None
             else:
