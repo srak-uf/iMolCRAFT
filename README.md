@@ -9,6 +9,12 @@ cd DMFF
 pip install -e . 
 cd ..
 
+git clone https://github.com/srak-uf/openff-recharge
+cd openff-recharge
+pip install -e .
+cd ..
+pip uninstall dataclasses -y
+
 # Installation of iMolCryFF
 pip install -e .
 
