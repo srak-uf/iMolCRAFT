@@ -25,5 +25,3 @@ dependencies:
     - jaxopt==0.8.1
     - optax==0.2.3
     - pymbar==4.0.1
-    - git+https://github.com/srak-uf/openff-recharge.git
-    - git+https://github.com/srak-uf/DMFF.git
