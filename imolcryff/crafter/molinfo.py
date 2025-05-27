@@ -3,7 +3,7 @@ from rdkit.Chem import rdDetermineBonds, rdDepictor
 from ase.io import read, write
 from ase import Atoms
 from ase.calculators.gaussian import Gaussian
-from ase.optimize import BFGS
+from ase.optimize import BFGS,LBFGS,LBFGSLineSearch
 from ase.calculators.psi4 import Psi4
 import os, copy, pickle, yaml, tempfile
 import numpy as np
@@ -383,7 +383,7 @@ class Crafter:
             keys = self.mol_info.keys()
 
         for key in keys:
-            trajectory_psi4 = []
+            trajectory = []
             for i, atoms in enumerate(self.mol_info[key]["aseatoms_list"]):
                 atoms_tmp = atoms.copy()
                 atoms_tmp.pbc = False
@@ -396,6 +396,7 @@ class Crafter:
                     calc_geoopt = Gaussian(label=f'{key}_{i}', charge=nc, **geoopt_params_g16)
                     calc_geoopt.directory = self.mol_info[key]["directory"]
                     atoms_tmp.calc = calc_geoopt
+                    trajectory.append(atoms_tmp.calc.label+".log")
                 elif psi4_flag == True:
                     psi4traj = os.path.join(self.mol_info[key]["directory"], f'{key}_{i}_opt.traj')
                     psi4log = os.path.join(self.mol_info[key]["directory"], f'{key}_{i}_opt.log')
@@ -405,7 +406,7 @@ class Crafter:
                                        charge=nc, 
                                        **geoopt_params_psi4)
                     opt = BFGS(atoms_tmp, trajectory=psi4traj, logfile=psi4log)
-                    trajectory_psi4.append(psi4traj)
+                    trajectory.append(psi4traj)
                 
                 if do_calc:
                     rmsd_skip = False
@@ -420,7 +421,7 @@ class Crafter:
                                 
                     if rmsd_skip:
                         self.mol_info[key]["aseatoms_geoopt"][i] \
-                                  = read(trajectory_psi4[j],index=-1) # self.mol_info[key]["aseatoms_geoopt"][j]
+                                  = read(trajectory[j],index=-1) # self.mol_info[key]["aseatoms_geoopt"][j]
                         print(f"Skip geometry optimization of {key}_{i}: RMSD = {rmsd_ji} A < {rmsd}")
                         rmsd_skip = False
                     else:
@@ -429,7 +430,15 @@ class Crafter:
                         if g16_flag == True:
                             _ = self.mol_info[key]["aseatoms_geoopt"][i].get_potential_energy()
                         elif psi4_flag == True:
-                            opt.run(fmax=0.01)
+                            opt_flag = opt.run(fmax=0.01,steps=128)
+                            if opt_flag == False:
+                                opt = LBFGS(atoms_tmp, trajectory=psi4traj, logfile=psi4log)
+                                opt_flag = opt.run(fmax=0.01,steps=128)
+                            if opt_flag == False:
+                                opt = LBFGSLineSearch(atoms_tmp, trajectory=psi4traj, logfile=psi4log)
+                                opt_flag = opt.run(fmax=0.01,steps=128)
+                            if opt_flag == False:
+                                sys.exit(f"Geometry optimization error!!!: {key}")
                             self.mol_info[key]["aseatoms_geoopt"][i] = read(psi4traj, index=-1)
                         print(f"Finished geometry optimization of {key}_{i}")
                         
