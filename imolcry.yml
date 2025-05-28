@@ -6,6 +6,7 @@ dependencies:
   - ambertools=23.3
   - ase=3.23.0
   - cclib=1.8.1
+  - geometric
   - gromacs=2023.4
   - jupyter=1.0.0
   - lammps=2024.08.29
