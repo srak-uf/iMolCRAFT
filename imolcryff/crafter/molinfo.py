@@ -5,7 +5,7 @@ from ase import Atoms
 from ase.calculators.gaussian import Gaussian
 from ase.optimize import BFGS,LBFGS,LBFGSLineSearch
 from ase.calculators.psi4 import Psi4
-import os, copy, pickle, yaml, tempfile
+import os, copy, pickle, yaml, tempfile, shutil
 import numpy as np
 from openff.toolkit.topology import Molecule
 from openff.toolkit import Quantity
@@ -423,15 +423,14 @@ class Crafter:
                     if rmsd_skip:
                         self.mol_info[key]["aseatoms_geoopt"][i] \
                                   = read(trajectory[j],index=-1)
+                        shutil.copy(trajectory[j],trajectory[i])
                         print(f"Skip geometry optimization of {key}_{i}: RMSD = {rmsd_ji} A < {rmsd}")
                         rmsd_skip = False
                     else:
                         self.mol_info[key]["aseatoms_geoopt"][i] = atoms_tmp
                         print(f"Calculating geometry optimization of {key}_{i}")
-                        if g16_flag == True:
-                            _ = self.mol_info[key]["aseatoms_geoopt"][i].get_potential_energy()
-                        elif psi4_flag == True:
-                            _ = self.mol_info[key]["aseatoms_geoopt"][i].get_potential_energy()
+                        _ = self.mol_info[key]["aseatoms_geoopt"][i].get_potential_energy()
+                        if psi4_flag == True:
                             self.mol_info[key]["aseatoms_geoopt"][i].positions = \
                                     self.mol_info[key]["aseatoms_geoopt"][i].calc.atoms.positions
                         print(f"Finished geometry optimization of {key}_{i}")
