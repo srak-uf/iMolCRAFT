@@ -287,8 +287,8 @@ class Crafter:
             nc = self.mol_info[key]["netcharge"]
             if il_assign:
                 mol, mol2d, il_dict = atoms2rdkit(self.mol_info[key]["aseatoms_list"][0],
-                                                nc=nc,
-                                                il_assign=True)
+                                                  nc=nc,
+                                                  il_assign=True)
                 self.mol_info[key]["metadata"].update(il_dict)
             else:
                 mol, mol2d = atoms2rdkit(self.mol_info[key]["aseatoms_list"][0],
@@ -658,6 +658,15 @@ class Crafter:
                 element_list.append([nxmol.nodes[i]['element'] for i in r])
             return ring_list, element_list
         
+        def _Ncation(nxmol):
+            n_Ncation = 0
+            for i in range(len(nxmol.nodes)):
+                node = nxmol.nodes[i]
+                edges_containing_node = list(nxmol.edges([i]))
+                if node["element"] == "N" and len(edges_containing_node) == 4:
+                    n_Ncation += 1
+            return n_Ncation
+        
         num_charge_none = 0
         total_charge = 0
         for key in self.mol_info.keys():
@@ -671,6 +680,12 @@ class Crafter:
                     e = elements[i]
                     if e.count('C') == 3 and e.count('N') == 2 and len(r) == 5:
                         mim_flag = True
+                
+                chg_cation = _Ncation(self.mol_info[key]["networkX"][0])
+                if chg_cation > 0:
+                    self.mol_info[key]["netcharge"] = chg_cation
+                    openshell_flag = False
+
             self.mol_info[key]["symbol"] = str(self.mol_info[key]["aseatoms_list"][0].symbols)
             if self.mol_info[key]["symbol"] in ["Li", "Na", "K", "Rb", "Cs"]:
                 self.mol_info[key]["netcharge"] = 1
@@ -682,7 +697,7 @@ class Crafter:
                 self.mol_info[key]["netcharge"] = 1
             elif openshell_flag:
                 self.mol_info[key]["netcharge"] = None
-            else:
+            elif self.mol_info[key]["netcharge"] is None:
                 self.mol_info[key]["netcharge"] = 0
         for key in self.mol_info.keys():
             if self.mol_info[key]["netcharge"] is None:
