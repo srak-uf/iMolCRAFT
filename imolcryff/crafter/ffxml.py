@@ -65,7 +65,7 @@ def gafftemplate2xml(mmm, fftemplate_gen, ion_ffxml=None):
         ff = Hamiltonian(pf6xml)
         atoms = molecule2aseatoms(molecule_off)
         angles, angles_idx = get_element_angles(atoms, "F", "P", "F")
-        angles_180_idx = np.where(np.abs(angles - 180) < 1e-2)[0]
+        angles_180_idx = np.where(np.abs(angles - 180) < 1)[0]
         P_idx = [ i for i, atom in enumerate(molecule_off.atoms) \
                                             if atom.atomic_number == 15 ]
         F_idx = [ i for i, atom in enumerate(molecule_off.atoms) \
