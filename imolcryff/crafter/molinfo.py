@@ -77,6 +77,7 @@ class Crafter:
             If provided, the parameters and structure will be loaded automatically.
         """
         self.mol_info = {}
+        self.molatoms = None
         self.params_geoopt = None
         self.params_charge = None
         self.params_ff = None
@@ -646,6 +647,7 @@ class Crafter:
         with open(filename, mode='rb') as f:
             crafter = pickle.load(f)
         self.mol_info = crafter.mol_info
+        self.__dict__.update(crafter.__dict__)
 
     def _assign_totalcharge(self):
         import networkx as nx
