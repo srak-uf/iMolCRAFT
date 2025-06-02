@@ -290,7 +290,8 @@ class Crafter:
                 mol, mol2d, il_dict = atoms2rdkit(self.mol_info[key]["aseatoms_list"][0],
                                                   nc=nc,
                                                   il_assign=True)
-                self.mol_info[key]["metadata"].update(il_dict)
+                if il_dict is not None:               
+                    self.mol_info[key]["metadata"].update(il_dict)
             else:
                 mol, mol2d = atoms2rdkit(self.mol_info[key]["aseatoms_list"][0],
                                          nc=nc,
@@ -456,8 +457,9 @@ class Crafter:
         for key in keys:
             dirname = self.mol_info[key]["directory"]
             sdffile = os.path.join(dirname, f"{key}.sdf")
-            if not os.path.exists(sdffile):
-                self.get_sdf()
+            # if not os.path.exists(sdffile):
+            #     self.get_sdf()
+            self.get_sdf()
             
             molecule_off = Molecule.from_file(sdffile, allow_undefined_stereo=True)
             if list(self.mol_info[key]["partial_charges"]) != []:

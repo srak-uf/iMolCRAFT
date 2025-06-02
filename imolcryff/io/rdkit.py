@@ -77,11 +77,12 @@ def _il_assign(mol, mol2d, nc):
         il_dict = {}
 
         PF6_flag = False
+        P_flag = False
         for atom in atoms:
             if atom.GetSymbol() == "P" and atoms[0].GetSymbol() == "P":
-                PF6_flag = True
+                P_flag = True
 
-        if PF6_flag:
+        if P_flag:
             for i, atom in enumerate(atoms):
                 if atom.GetSymbol() == "F":
                     atom.SetFormalCharge(0)
@@ -92,9 +93,14 @@ def _il_assign(mol, mol2d, nc):
                     atoms2d[i].SetFormalCharge(-1)
                     pf6like_Pindex.append(i)
         
-        il_dict["PF6_P"] = pf6like_Pindex
-        il_dict["PF6_F"] = pf6like_Findex
-        return il_dict
+        if len(pf6like_Findex) == 6 and len(pf6like_Pindex) == 1:
+            PF6_flag = True
+        if not PF6_flag:
+            return None
+        else:
+            il_dict["PF6_P"] = pf6like_Pindex
+            il_dict["PF6_F"] = pf6like_Findex
+            return il_dict
 
     def assign_fsalike(mol, mol2d, nc):
         """
@@ -164,6 +170,11 @@ def _il_assign(mol, mol2d, nc):
             il_dict["FSA_N"] = fsalike_Nindex
             il_dict["FSA_S"] = fsalike_Sindex
             il_dict["FSA_O"] = fsalike_Oindex
+        
+        if len(fsalike_Nindex) == 0 or len(fsalike_Sindex) == 0:
+            return None
+        else:
+            return il_dict
         
     il_dict = assign_pf6(mol, mol2d)
     if il_dict is not None:
