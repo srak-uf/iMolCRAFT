@@ -60,7 +60,8 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
             # if we have seen the atom type, delete it from the OG params,
             # not the copy!
             else:
-                del params.atom_types[atom_type]
+                # # # # del params.atom_types[atom_type] # # これでいい？
+                pass
 
         params.write(ffxml, **kwargs)
         ffxml_contents = ffxml.getvalue()
