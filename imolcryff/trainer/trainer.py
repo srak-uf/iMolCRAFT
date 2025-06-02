@@ -64,7 +64,7 @@ def make_dihedtrainer(
                                                   params_all))
             E_min = jnp.min(E_dmff)
             E_dmff = E_dmff - E_min
-            kT = 2.494 # 300 K = 2.494 kJ/mol
+            kT = 2.494 * 5/3 # 300 K = 2.494 kJ/mol
             weights_pts = jnp.piecewise(y_gt, [y_gt<25, y_gt>=25],
                                         [lambda x: jnp.array(1.0),
                                          lambda x: jnp.exp(-(x-25)/kT)])
@@ -162,9 +162,11 @@ class DihedTrainer:
                 self.loss.append(train_state.loss)
                 print(f"loss {train_state.loss}")
                 self.epoch.append(epoch)
-                self.torsion_gen.overwrite(train_state.paramset_dihed)
                 io = XMLIO()
-                io.writeXML(f"loop-{epoch+1}.xml", self.torsion_gen.ffinfo)
+                io.writeXML(f"loop-{epoch}.xml", self.torsion_gen.ffinfo)
+                self.torsion_gen.overwrite(train_state.paramset_dihed)
+                io2 = XMLIO()
+                io2.writeXML(f"loop-{epoch+1}.xml", self.torsion_gen.ffinfo)
                 self.calculator.get_dihedral_ff(f"loop-{epoch+1}.xml",
                                                 angles=None,
                                                 ini_geom="FF")

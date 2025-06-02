@@ -427,6 +427,10 @@ def aseatoms2pdb(filename, atoms):
         cryst_line = "CRYST1{:9.3f}{:9.3f}{:9.3f}{:7.2f}{:7.2f}{:7.2f} P 1  \n".format(Lx, Ly, Lz, alpha, beta, gamma)
         f.write(cryst_line)
         f.write("MODEL     1\n")
+        if 'residuenumbers' not in atoms.arrays.keys():
+            atoms.arrays["residuenumbers"] = np.array([1 for _ in range(len(atoms))])
+            atoms.arrays["residuenames"] = np.array([f"M1" for _ in range(len(atoms))])
+
         for i, atom in enumerate(atoms):
             if i >0 and atoms.arrays["residuenumbers"][i-1] != atoms.arrays["residuenumbers"][i]:
                 atomname = 0
