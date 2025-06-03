@@ -354,7 +354,7 @@ def get_rescharges_from_residues(ff, ratio=None):
     else:
         return rescharges
 
-def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params):
+def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params, useDispersionCorrection=False):
     """
     Run MD simulation with OpenMM
 
@@ -366,6 +366,12 @@ def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params):
         Path to the force field XML file
     trajectory : str
         Path to the output trajectory file
+    sampling_params : dict
+        Dictionary containing sampling parameters such as temperature, annealing steps, etc.
+    ff_params : dict
+        Dictionary containing force field parameters such as cutoff radius
+    useDispersionCorrection : bool, optional
+        Whether to use dispersion correction in the nonbonded force. Default is False.
 
     Returns
     -------
@@ -398,7 +404,10 @@ def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params):
                                      rigidWater=False)
     for force in system.getForces():
         if isinstance(force, openmm.NonbondedForce):
-            force.setUseDispersionCorrection(False)
+            if useDispersionCorrection:
+                force.setUseDispersionCorrection(True)
+            else:
+                force.setUseDispersionCorrection(False)
     
     if sampling_params["ensemble"] == "isonpt":
         system.addForce(openmm.MonteCarloBarostat(1.0*unit.bar, T*unit.kelvin))
@@ -503,6 +512,7 @@ def get_loss_autograd(ffparams: dict,
                       target_gt: dict,
                       target_pred: dict,
                       pressure: float = 1.0,
+                      useDispersionCorrection: bool = False
                       ):
     """
     Calculate the loss function for the given parameters.
@@ -530,6 +540,8 @@ def get_loss_autograd(ffparams: dict,
         Predicted values for the targets.
     pressure : float, optional
         Pressure in bar. Default is 1.0.
+    useDispersionCorrection : bool, optional
+        Whether to use dispersion correction in the nonbonded force. Default is False.
     Returns
     -------
     loss : float
@@ -541,7 +553,8 @@ def get_loss_autograd(ffparams: dict,
         del ffparams_wo_charge["NonbondedForce"]["charges"]
         pots = ff_d.createPotential(topology,
                                     nonbondedMethod=app.PME,
-                                    nonbondedCutoff=rc*unit.nanometer)
+                                    nonbondedCutoff=rc*unit.nanometer,
+                                    useDispersionCorrection=useDispersionCorrection)
         efunc = jit(pots.getPotentialFunc())
         if ensemble in ["isonpt", "anisonpt", "trinpt"]:
             ens = "npt"
