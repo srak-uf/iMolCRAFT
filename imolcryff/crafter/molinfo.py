@@ -126,9 +126,14 @@ class Crafter:
         elif self.structure["type"] == "liquid":
             for i, atoms in enumerate(self.structure["molecules"]):
                 atoms = read(atoms)
+                asemol_wrap = asemol_wrapper(atoms)
+                self.atoms_unwrap = asemol_wrap.unwrap_molecules()
+                _, _, networkX \
+                    = asemol_wrap.get_ase_molecules(out_nX=True)
                 self.append_fromAtomsList([atoms],
                                           f"MOL_{i}",
-                                          Nmols=int(self.structure["nmols"][i]))
+                                          Nmols=int(self.structure["nmols"][i]),
+                                          networkX=networkX)
             self._assign_totalcharge()
         self.get_rdkitmol()
         self.get_molecule_off()
