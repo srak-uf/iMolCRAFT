@@ -1,5 +1,5 @@
 geoopt:
-  basis: 6-311++g(d,p)
+  basis: 6-311+g(2d,p)
   method: wb97xd
   software: psi4
 charge:
