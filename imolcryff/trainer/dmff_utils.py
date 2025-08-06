@@ -178,22 +178,41 @@ def merge_xml(ffxml_list, outxml):
 
     return os.path.join("xmlfiles",outxml)
 
-def neutralize(ffparams, num_elems):
+def neutralize(ffparams, natoms_list, target_lists=None, target_charges=None):
     """
     Neutralize the system by adjusting the charges.
     Parameters
     ----------
     ffparams : dict
         Force field parameters.
-    num_elems : jnp.ndarray
-        Number of elements in the system.
+    natoms_list : jnp.ndarray
+        List of number of atoms in the system.
+    target_lists : list, optional
+        List of targets to make charge the target_charges value. If None, all atoms are neutralized.
+        ex: [[0, 1], [2, 3]] means that the first two atoms are neutralized to target_charges[0] and the next two atoms are neutralized to target_charges[1].
+    target_charges : list, optional
+        List of target charges for the atoms. If None, the charges are neutralized to zero.
+        ex: [0.0, 2.0] means that the first two atoms are neutralized to 0.0 and the next two atoms are neutralized to 2.0.
     Returns
     -------
     ffparams : dict
         Updated force field parameters with neutralized charges.
     """
-    net_q = jnp.dot(ffparams['NonbondedForce']['charges'], num_elems)
-    ffparams['NonbondedForce']['charges'] = ffparams['NonbondedForce']['charges'] - net_q / num_elems.sum()
+    if target_lists is not None and target_charges is not None:
+        assert len(target_lists) == len(target_charges), "len(target_lists) != len(target_charges)"
+        for i, target_list in enumerate(target_lists):
+            net_q = jnp.dot(ffparams['NonbondedForce']['charges'][jnp.array(target_list)],
+                            natoms_list[jnp.array(target_list)])
+            desired_q = target_charges[i]
+            natoms_list_sum = natoms_list[jnp.array(target_list)].sum()
+            charges_mod = ffparams['NonbondedForce']['charges'][jnp.array(target_list)] + \
+                             (desired_q - net_q) / natoms_list_sum
+            ffparams['NonbondedForce']['charges'] = \
+                ffparams['NonbondedForce']['charges'].at[jnp.array(target_list)].set(charges_mod)
+    else:
+        net_q = jnp.dot(ffparams['NonbondedForce']['charges'], natoms_list)
+        ffparams['NonbondedForce']['charges'] = ffparams['NonbondedForce']['charges'] - net_q / natoms_list.sum()
+    
     return ffparams
 
 def get_charges_types(topdata: app.Topology, ff, gen_dmfftop=False):
@@ -315,15 +334,15 @@ def get_rescharges_from_residues(ff, ratio=None):
     -------
     rescharges : list
         List of residue charges.
-    num_elems : jnp.ndarray, optional
-        Number of elements in the system if ratio is provided.
+    natoms_list : jnp.ndarray, optional
+        List of number of atoms in the system if ratio is provided.
     """
     residues = ff.ffinfo['Residues']
     rescharges = []
     
     if ratio is not None:
         assert len(residues) == len(ratio), "len(residues) != len(ratio)"
-        num_elems = []
+        natoms_list = []
 
     for i_res in range(len(residues)):
         residue = residues[i_res]
@@ -332,7 +351,7 @@ def get_rescharges_from_residues(ff, ratio=None):
             t = p["type"]
             c = p["charge"]
             if ratio is not None:
-                num_elems.append(ratio[i_res])
+                natoms_list.append(ratio[i_res])
 
             if t not in chargedict:
                 chargedict[t] = {}
@@ -350,7 +369,7 @@ def get_rescharges_from_residues(ff, ratio=None):
         rescharges.append(chargedict)
 
     if ratio is not None:
-        return rescharges, jnp.array(num_elems)
+        return rescharges, jnp.array(natoms_list)
     else:
         return rescharges
 

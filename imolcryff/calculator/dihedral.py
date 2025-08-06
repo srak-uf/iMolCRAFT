@@ -15,7 +15,7 @@ class DihedCalculator:
     """
     Class for dihedral angle calculations using quantum mechanical methods and force fields.
     This class allows for the calculation of dihedral angles and their corresponding energies
-    using both quantum mechanical methods by Gaussian and force fields.
+    using both quantum mechanical methods (Gaussian) and force fields.
 
     Parameters
     ----------
@@ -81,7 +81,7 @@ class DihedCalculator:
         if qmparams is None:
             self.qmparams = {
                             "method": "wb97xd",
-                            "basis": "6-311++g(d,p)",
+                            "basis": "6-311+g(2d,p)",
                             "opt": "modredundant",
                             # "mem": "92GB",
                             # "nprocshared": 40,
@@ -100,7 +100,7 @@ class DihedCalculator:
         self.qm_calculators = [None for _ in range(len(self.dihedral_list))]
         self.ff_calculators = [None for _ in range(len(self.dihedral_list))]
         self.qm_dihedscan = [{"angles_deg": [], "energy_kjmol": [], "atoms": []} for _ in range(len(self.dihedral_list))]
-        self.ff_dihedscan = [{"angle_deg": [], "energy_kjmol": [], "atoms": []} for _ in range(len(self.dihedral_list))]
+        self.ff_dihedscan = [{"angles_deg": [], "energy_kjmol": [], "atoms": []} for _ in range(len(self.dihedral_list))]
 
     def get_dihedral_qm(self, dihed_idx=None, do_calc=True):
         """
