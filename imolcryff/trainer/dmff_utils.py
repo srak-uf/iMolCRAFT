@@ -178,7 +178,10 @@ def merge_xml(ffxml_list, outxml):
 
     return os.path.join("xmlfiles",outxml)
 
-def neutralize(ffparams, natoms_list, target_lists=None, target_charges=None):
+import jax.numpy as jnp
+
+
+def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=None):
     """
     Neutralize the system by adjusting the charges.
     Parameters
@@ -209,10 +212,23 @@ def neutralize(ffparams, natoms_list, target_lists=None, target_charges=None):
                              (desired_q - net_q) / natoms_list_sum
             ffparams['NonbondedForce']['charges'] = \
                 ffparams['NonbondedForce']['charges'].at[jnp.array(target_list)].set(charges_mod)
-    else:
+        
+        if nc is not None:
+            # Constrained charge index
+            target_all = list(set([i for sublist in target_lists for i in sublist]))
+            
+            # all index
+            nottarget_list = jnp.array([natoms_list[i] for i in range(len(natoms_list)) if i not in target_all])
+            nottarget_idx = jnp.array([i for i in range(len(natoms_list)) if i not in target_all])
+            
+            # Update charges for non-targeted atoms
+            net_q = jnp.dot(ffparams['NonbondedForce']['charges'], natoms_list)
+            ffparams['NonbondedForce']['charges'] = \
+                ffparams['NonbondedForce']['charges'].at[nottarget_idx].set(ffparams['NonbondedForce']['charges'][nottarget_idx] - (net_q-nc) / nottarget_list.sum())
+    elif nc is not None:
         net_q = jnp.dot(ffparams['NonbondedForce']['charges'], natoms_list)
-        ffparams['NonbondedForce']['charges'] = ffparams['NonbondedForce']['charges'] - net_q / natoms_list.sum()
-    
+        ffparams['NonbondedForce']['charges'] = ffparams['NonbondedForce']['charges'] - (net_q-nc) / natoms_list.sum()
+
     return ffparams
 
 def get_charges_types(topdata: app.Topology, ff, gen_dmfftop=False):
