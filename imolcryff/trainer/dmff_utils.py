@@ -305,6 +305,16 @@ def update_ffinfo_from_params(ff, params):
         for i,_ in enumerate(ff.ffinfo['Residues'][i_res]["particles"]):
             ff.ffinfo['Residues'][i_res]["particles"][i]["charge"] = params["NonbondedForce"]["charges"][idx]
             idx += 1
+    
+    idx = 0
+    for i_res in range(len(ff.ffinfo['Residues'])):
+        for i,_ in enumerate(ff.ffinfo['Residues'][i_res]["vsites"]):
+            n_weights = len([key for key in ff.ffinfo['Residues'][i_res]["vsites"][i].keys() \
+                             if key.startswith("weight")])
+            for i_weight in range(n_weights):
+                ff.ffinfo['Residues'][i_res]["vsites"][i][f"weight{i_weight+1}"] = params["vsites_weight"][idx]
+                idx += 1
+
     return ff
 
 def get_chgparams_from_rescharges(params, rescharges):
@@ -319,6 +329,24 @@ def get_chgparams_from_rescharges(params, rescharges):
                     params["NonbondedForce"]["charges"] = params["NonbondedForce"]["charges"].at[idx+ishift].set(res[t][key]["value"])
                     natoms += 1
         ishift += natoms
+    return params
+
+def vsiteinfo_to_params(ff, params):
+    """
+    Convert vsite information from ff.ffinfo to params.
+    """
+    # vsiteinfo = ff.ffinfo["Residues"][0]["vsites"]
+    weights = []
+    for i_res in range(len(ff.ffinfo['Residues'])):
+        for i_vs, _ in enumerate(ff.ffinfo['Residues'][i_res]["vsites"]):
+            weights_tmp = [value for key, value in ff.ffinfo["Residues"][i_res]["vsites"][i_vs].items() if key.startswith("weight")]
+            # weights_tmpのすべての要素をweightsに追加
+            weights.extend(weights_tmp)
+
+    params["vsites_weight"] = jnp.zeros(len(weights))
+    for i in range(len(weights)):
+        params["vsites_weight"] = params["vsites_weight"].at[i].set(weights[i])
+    
     return params
 
 def update_rescharges_from_params(rescharges, params):

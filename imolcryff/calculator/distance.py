@@ -1,7 +1,7 @@
 from rdkit import Chem
 from openmm import HarmonicBondForce, LangevinMiddleIntegrator
 from openmm.unit import kelvin, picosecond, picoseconds, degree, kilojoules_per_mole, angstrom
-from openmm.app import NoCutoff, Simulation, PDBFile, ForceField
+from openmm.app import NoCutoff, Simulation, PDBFile, ForceField, Modeller
 from openmm.openmm import XmlSerializer
 import numpy as np
 from ase.io import read, write
@@ -251,6 +251,31 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
         List of ASE Atoms objects for each distance.
     """
     from ..crafter.asemol import aseatoms2pdb, asemol_wrapper, merge_asemols
+
+    def check_vsite(ffxml):
+        """
+        Check if the force field XML file contains virtual sites.
+        """
+        from openmm.app import ForceField
+        from dmff import Hamiltonian
+
+        num_vsites = 0
+        ff = Hamiltonian(ffxml)
+        for residue in ff.ffinfo["Residues"]:
+            if "vsites" in residue.keys():
+                num_vsites += len(residue["vsites"])
+        return num_vsites
+
+    def delvsite_pdb(pdbfile):
+        """
+        Delete virtual sites from the PDB file.
+        """
+        with open(pdbfile, 'r') as f:
+            lines = f.readlines()
+        lines = [line for line in lines if not line.split()[-1] == "EP"]
+        with open(pdbfile, 'w') as f:
+            f.writelines(lines)
+
     distance_ff_energy = []
     ff_distance_atoms = []
     d1 = dist_atidx[0]
@@ -274,13 +299,8 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
                 pdb_ase.arrays["atomtypes"] = [i for i in range(len(pdb_ase))]
                 temppdb = os.path.join(td, f"temp_dist_{i}.pdb")
                 aseatoms2pdb(temppdb, pdb_ase)
-                pdb_omm = PDBFile(temppdb)
-                atomlist_openmm = [a for a in pdb_omm.topology.atoms()]
-                for b in bonds:
-                    a1 = atomlist_openmm[b[0]]
-                    a2 = atomlist_openmm[b[1]]
-                    pdb_omm.topology.addBond(a1, a2)
-                PDBFile.writeFile(pdb_omm.topology, pdb_omm.positions, open(temppdb, 'w'))
+                aseatoms2pdb("wovsite.pdb", pdb_ase)
+                
             else:
                 # Set the positions for the distance calculation
                 temppdb = os.path.join(td, f"temp_distance_{i}.pdb")
@@ -289,36 +309,49 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
                 atoms.positions = pos_prev
                 atoms_desireddistance = change_distance(atoms, dist_atidx, distances[i])
                 aseatoms2pdb(temppdb, atoms_desireddistance)
-                # write(f"hoge_{i}.xyz", atoms_desireddistance)
-                pdb_omm = PDBFile(temppdb)
-                atomlist_openmm = [a for a in pdb_omm.topology.atoms()]
-                for b in bonds:
-                    a1 = atomlist_openmm[b[0]]
-                    a2 = atomlist_openmm[b[1]]
-                    pdb_omm.topology.addBond(a1, a2)
-                PDBFile.writeFile(pdb_omm.topology, pdb_omm.positions, open(temppdb, 'w'))
-            
+                aseatoms2pdb("wovsite.pdb", atoms_desireddistance)
+
+            pdb_omm = PDBFile(temppdb)
+            atomlist_openmm = [a for a in pdb_omm.topology.atoms()]
+            for b in bonds:
+                a1 = atomlist_openmm[b[0]]
+                a2 = atomlist_openmm[b[1]]
+                pdb_omm.topology.addBond(a1, a2)
+            pos = pdb_omm.getPositions()
+            topology = pdb_omm.topology
+            num_vsites = check_vsite(ffxml)
+
+            if num_vsites > 0:
+                modeller = Modeller(pdb_omm.topology, pdb_omm.positions)
+                modeller.addExtraParticles(ForceField(ffxml))
+                pos = modeller.getPositions()
+                topology = modeller.topology
+
+            PDBFile.writeFile(topology, pos, open(temppdb, 'w'))
+
             # relaxed scan
             forcefield = ForceField(ffxml)
-            system = forcefield.createSystem(pdb_omm.topology, 
-            nonbondedMethod=NoCutoff)
+            system = forcefield.createSystem(topology, nonbondedMethod=NoCutoff)
             tempsysxml = os.path.join(td, "system.xml")
             with open(tempsysxml, 'w') as output:
                 output.write(XmlSerializer.serialize(system))
             restraint = HarmonicBondForce()
-            restraint.addBond(d1, d2, distances[i]*angstrom, 1000000*kilojoules_per_mole/angstrom**2)
+            map_idx_wovsite2vsite = [i for i, atom in enumerate(topology.atoms()) if atom.element != None]
+            d1_wv = map_idx_wovsite2vsite[d1]
+            d2_wv = map_idx_wovsite2vsite[d2]
+            restraint.addBond(d1_wv, d2_wv, distances[i]*angstrom, 100000000*kilojoules_per_mole/angstrom**2)
             system.addForce(restraint)
             integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, 0.004*picoseconds)
-            simulation = Simulation(pdb_omm.topology, system, integrator)
-            simulation.context.setPositions(pdb_omm.positions)
+            simulation = Simulation(topology, system, integrator)
+            simulation.context.setPositions(pos)
             simulation.minimizeEnergy()
             state = simulation.context.getState(getPositions=True, getEnergy=True)
             crd = simulation.context.getState(getPositions=True).getPositions()
-            PDBFile.writeFile(pdb_omm.topology, crd, open(temppdb, 'w'))
-            PDBFile.writeFile(pdb_omm.topology, crd, open("hoge.pdb", 'w'))
+            PDBFile.writeFile(topology, crd, open(temppdb, 'w'))
+            PDBFile.writeFile(topology, crd, open("hoge.pdb", 'w'))
 
             pos_prev = []
-            for p in state.getPositions():
+            for p in state.getPositions():  
                 p = np.array(p)
                 xx = p[0].value_in_unit(angstrom)
                 yy = p[1].value_in_unit(angstrom)
@@ -339,6 +372,10 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
                 potential_energies.append(state.getPotentialEnergy().real)
             
             distance_ff_energy.append(sum(potential_energies))
+
+            if num_vsites > 0:
+                # Remove virtual sites from the PDB file
+                delvsite_pdb(temppdb)
             atoms = read(temppdb)
             atoms.cell = None
             atoms.pbc = False
