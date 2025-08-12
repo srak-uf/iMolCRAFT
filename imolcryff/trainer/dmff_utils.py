@@ -118,31 +118,33 @@ def parser_dmffyaml(yaml_file):
     
     return data
 
-def get_target_gt(params: dict):
+def get_target_gt(optscheme_params: dict):
     """
     Get the ground truth values for the targets from the parameters obtained by parser_dmffyaml().
 
     Parameters
     ----------
-    params : dict
-        Parameters obtained from parser_dmffyaml().
+    optscheme_params : dict
+        Parameters for the optimization scheme, including target parameters.
+        keys(optscheme_params[targets]) = ['density_gcm3', 'La_A', 'Lb_A', 'Lc_A', 'rdf', 'adf']
+
     Returns
     -------
     target_gt : dict
         Dictionary containing the ground truth values for the targets.
     """
     target_gt = {}
-    for target_name in params["opt_scheme"]["targets"].keys():
+    for target_name in optscheme_params["targets"].keys():
         if target_name not in ["rdf", "adf"]:
             target_gt[target_name] = {}
-            target_gt[target_name]["gt"] = float(params["opt_scheme"]["targets"][target_name]["gt"])
-            target_gt[target_name]["weight"] = float(params["opt_scheme"]["targets"][target_name]["weight"])
+            target_gt[target_name]["gt"] = float(optscheme_params["targets"][target_name]["gt"])
+            target_gt[target_name]["weight"] = float(optscheme_params["targets"][target_name]["weight"])
         else:
             target_gt[target_name] = {}
-            for key in params["opt_scheme"]["targets"][target_name].keys():
+            for key in optscheme_params["targets"][target_name].keys():
                 target_gt[target_name][key] = {}
-                gt_file = params["opt_scheme"]["targets"][target_name][key]["gt"]
-                weight = params["opt_scheme"]["targets"][target_name][key]["weight"]
+                gt_file = optscheme_params["targets"][target_name][key]["gt"]
+                weight = optscheme_params["targets"][target_name][key]["weight"]
                 target_gt[target_name][key]["gt"] = np.loadtxt(gt_file).T[1]
                 target_gt[target_name][key]["weight"] = float(weight)
     return target_gt
@@ -312,7 +314,7 @@ def update_ffinfo_from_params(ff, params):
             n_weights = len([key for key in ff.ffinfo['Residues'][i_res]["vsites"][i].keys() \
                              if key.startswith("weight")])
             for i_weight in range(n_weights):
-                ff.ffinfo['Residues'][i_res]["vsites"][i][f"weight{i_weight+1}"] = params["vsites_weight"][idx]
+                ff.ffinfo['Residues'][i_res]["vsites"][i][f"weight{i_weight+1}"] = params["VsiteForce"]["weight"][idx]
                 idx += 1
 
     return ff
@@ -343,10 +345,11 @@ def vsiteinfo_to_params(ff, params):
             # weights_tmpのすべての要素をweightsに追加
             weights.extend(weights_tmp)
 
-    params["vsites_weight"] = jnp.zeros(len(weights))
+    params["VsiteForce"] = {}
+    params["VsiteForce"]["weight"] = jnp.zeros(len(weights))
     for i in range(len(weights)):
-        params["vsites_weight"] = params["vsites_weight"].at[i].set(weights[i])
-    
+        params["VsiteForce"]["weight"] = params["VsiteForce"]["weight"].at[i].set(weights[i])
+
     return params
 
 def update_rescharges_from_params(rescharges, params):
@@ -374,6 +377,7 @@ def get_rescharges_from_residues(ff, ratio=None):
         Force field object.
     ratio : list, optional
         List of ratios for each residue. Default is None.
+
     Returns
     -------
     rescharges : list
@@ -515,7 +519,7 @@ def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params, useDisp
     return state_init #, key
 
 
-def get_target_pred_frame(xtcfile, pdbfile, dmff_params: dict):
+def get_target_pred_frame(xtcfile, pdbfile, optscheme_params: dict):
     """
     Get the predicted values for the targets from the parameters obtained by parser_dmffyaml().
     Parameters
@@ -524,15 +528,17 @@ def get_target_pred_frame(xtcfile, pdbfile, dmff_params: dict):
         Path to the XTC file.
     pdbfile : str
         Path to the PDB file.
-    dmff_params : dict
-        Parameters obtained from parser_dmffyaml().
+    optscheme_params : dict 
+        Parameters for the optimization scheme, including target parameters.
+        keys(optscheme_params[targets]) = ['density_gcm3', 'La_A', 'Lb_A', 'Lc_A', 'rdf', 'adf']
+    
     Returns
     -------
     target_pred : dict
         Dictionary containing the predicted values for the targets.
     """
     target_pred = {}
-    target_params = dmff_params["opt_scheme"]["targets"]
+    target_params = optscheme_params["targets"]
     u = MDAnalysis.Universe(pdbfile, xtcfile)
 
     for target_name in target_params.keys():

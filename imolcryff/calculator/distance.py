@@ -251,30 +251,7 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
         List of ASE Atoms objects for each distance.
     """
     from ..crafter.asemol import aseatoms2pdb, asemol_wrapper, merge_asemols
-
-    def check_vsite(ffxml):
-        """
-        Check if the force field XML file contains virtual sites.
-        """
-        from openmm.app import ForceField
-        from dmff import Hamiltonian
-
-        num_vsites = 0
-        ff = Hamiltonian(ffxml)
-        for residue in ff.ffinfo["Residues"]:
-            if "vsites" in residue.keys():
-                num_vsites += len(residue["vsites"])
-        return num_vsites
-
-    def delvsite_pdb(pdbfile):
-        """
-        Delete virtual sites from the PDB file.
-        """
-        with open(pdbfile, 'r') as f:
-            lines = f.readlines()
-        lines = [line for line in lines if not line.split()[-1] == "EP"]
-        with open(pdbfile, 'w') as f:
-            f.writelines(lines)
+    from ..crafter.ffxml import check_vsite, delvsite_pdb
 
     distance_ff_energy = []
     ff_distance_atoms = []

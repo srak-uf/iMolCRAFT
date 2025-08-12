@@ -34,7 +34,7 @@ cov_map = pots.meta['cov_map']
 ffparams = ff.getParameters().parameters
 efunc = jax.jit(pots.getPotentialFunc())
 
-charges, types, topdata = get_charges_types(pdb.topology, ff, gen_dmfftop=True)
+# charges, types, topdata = get_charges_types(pdb.topology, ff, gen_dmfftop=True)
 rescharges, num_elems = get_rescharges_from_residues(ff, ratio=res_ratio)
 ffparams = get_chgparams_from_rescharges(ffparams, rescharges)
 rescharges = update_rescharges_from_params(rescharges, ffparams)

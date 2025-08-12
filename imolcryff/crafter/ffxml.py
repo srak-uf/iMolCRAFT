@@ -11,6 +11,31 @@ def get_element_fromtype(ptype, ff):
         if at["class"] == ptype:
             return at["element"]
 
+
+def check_vsite(ffxml):
+    """
+    Check if the force field XML file contains virtual sites.
+    """
+    from openmm.app import ForceField
+    from dmff import Hamiltonian
+
+    num_vsites = 0
+    ff = Hamiltonian(ffxml)
+    for residue in ff.ffinfo["Residues"]:
+        if "vsites" in residue.keys():
+            num_vsites += len(residue["vsites"])
+    return num_vsites
+
+def delvsite_pdb(pdbfile):
+    """
+    Delete virtual sites from the PDB file.
+    """
+    with open(pdbfile, 'r') as f:
+        lines = f.readlines()
+    lines = [line for line in lines if not line.split()[-1] == "EP"]
+    with open(pdbfile, 'w') as f:
+        f.writelines(lines)
+
 def gafftemplate2xml(mmm, fftemplate_gen, ion_ffxml=None):
     """
     Generate GAFF XML files for a list of molecules.
