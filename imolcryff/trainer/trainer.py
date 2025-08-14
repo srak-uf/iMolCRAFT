@@ -209,10 +209,10 @@ class DistanceTrainer:
         self.inputs = {"positions": [],
                        "pairs": [],
                        "dihed_index": []}
-        self.loss = []
-        self.epoch = []
-        self.all_loss = []
-        self.all_epoch = []
+        self.losses = []
+        self.epochs = []
+        self.all_losses = []
+        self.all_epochs = []
 
     def setup(self, trainer_checkpoint=None):
         shutil.copyfile(self.ffxml, "loop-0.xml")
@@ -240,6 +240,10 @@ class DistanceTrainer:
             self.inputs["positions"] = dump_dict["positions"]
             self.inputs["pairs"] = dump_dict["pairs"]
             self._epoch = dump_dict["epoch"] + 1
+            self.all_losses = dump_dict["all_losses"]
+            self.all_epochs = dump_dict["all_epochs"]
+            self.losses = dump_dict["losses"]
+            self.epochs = dump_dict["epochs"]
         else:
             self.trainer = make_distance_trainer(self.optimizer)
             self.train_state = self.trainer.init_step(self.ffparams, self.ff, self.rescharges)
@@ -269,7 +273,6 @@ class DistanceTrainer:
     def fit(self, steps=1000, relax_steps=20, add_mask_fn=None, ffparams_modify=None):
         p_train_step = self.trainer.train_step
         for epoch in range(self._epoch, steps+1):
-            print(f"epoch {epoch}")
             start_time = time.time()
             self.train_state = p_train_step(self.train_state,
                                             self.inputs,
@@ -280,10 +283,10 @@ class DistanceTrainer:
                                             )
             end_time = time.time()
             print(f"Time taken for epoch {epoch}: {end_time - start_time:.2f} seconds")
-            self.all_loss.append(self.train_state.loss)
-            self.all_epoch.append(epoch)
+            self.all_losses.append(self.train_state.loss)
+            self.all_epochs.append(epoch)
             self._epoch = epoch + 1
-            
+
             if epoch % relax_steps==0:
                 # self.trainerをpickleで保存
                 with open(f"train_state.pkl", "wb") as f:
@@ -296,13 +299,17 @@ class DistanceTrainer:
                         "positions": self.inputs["positions"],
                         "pairs": self.inputs["pairs"],
                         "epoch": epoch,
+                        "losses": self.losses,
+                        "epochs": self.epochs,
+                        "all_losses": self.all_losses,
+                        "all_epochs": self.all_epochs
                     }
                     pickle.dump(dump_dict, f)
 
                 print(f"epoch {epoch}")
-                self.loss.append(self.train_state.loss)
-                print(f"loss {self.train_state.loss}")
-                self.epoch.append(epoch)
+                self.losses.append(self.train_state.loss)
+                self.epochs.append(epoch)
+                print(f"loss {self.train_state.loss}, best loss {min(self.losses)} at epoch {self.epochs[np.argmin(self.losses)]}")
                 self.train_state.ff.renderXML(f"loop-{epoch+1}.xml")
                 self.calculator.do_ffscan(f"loop-{epoch+1}.xml",
                                           ini_geom="QM")
