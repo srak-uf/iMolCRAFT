@@ -64,91 +64,63 @@ def make_distance_trainer(
         gt_scans: ground truth scans (jnp.array)
         natoms_list: list of number of atoms in each residue
         charge_params, sigma_params, epsilon_params: dicts with target lists for parameters
-        """
-        inputs = inputs
-        gt_scans = gt_scans
-        # ffparams = train_state.ffparams
-        # ff = train_state.ff
-        
-        def get_loss_autograd(ffparams, ff, topology, positions, pairs, y_gt):
-            def Loss(ffparams, y_gt):
-                # ここでefuncを再定義することでchargesやvsiteの微分を可能にしている
-                ff_d = update_ffinfo_from_params(ff, ffparams)
-                # ffparams_wo_charge = copy.deepcopy(ffparams)
-                ffparams_wo_charge = {}
-                for key in ffparams.keys():
-                    if key == "NonbondedForce":
-                        ffparams_wo_charge[key] = {}
-                        for key2 in ffparams[key].keys():
-                            if key2 != "charges":
-                                ffparams_wo_charge[key][key2] = ffparams[key][key2]
-                    elif key == "VsiteForce":
-                        pass
-                    else:
-                        ffparams_wo_charge[key] = ffparams[key]
-                # ffparams_wo_charge = ffparams
-                # if "NonbondedForce" in ffparams_wo_charge:
-                #     if "charges" in ffparams_wo_charge["NonbondedForce"]:
-                #         del ffparams_wo_charge["NonbondedForce"]["charges"]
-                # if "VsiteForce" in ffparams_wo_charge:
-                #     del ffparams_wo_charge["VsiteForce"]
+        """ 
+        def Loss(ffparams, ff, topology, positions, pairs, y_gt):
+            # ここでefuncを再定義することでchargesやvsiteの微分を可能にしている
+            ff_d = update_ffinfo_from_params(ff, ffparams)
+            ffparams_wo_charge = {}
+            for key in ffparams.keys():
+                if key == "NonbondedForce":
+                    ffparams_wo_charge[key] = {}
+                    for key2 in ffparams[key].keys():
+                        if key2 != "charges":
+                            ffparams_wo_charge[key][key2] = ffparams[key][key2]
+                elif key == "VsiteForce":
+                    pass
+                else:
+                    ffparams_wo_charge[key] = ffparams[key]
 
-                # print(f"ffparams_wo_charge: {ffparams_wo_charge}")
-                pots = ff_d.createPotential(topology) # should be pdb topology wo vsites
-                efunc = pots.getPotentialFunc()
-                batched_efunc = jit(vmap(lambda x: efunc(x, None, pairs[0], ffparams_wo_charge)))
-                E_dmff = batched_efunc(positions)   
-                E_min = jnp.min(E_dmff)
-                E_dmff = E_dmff - E_min
-                kT = 2.494 * 5/3 # 300 K = 2.494 kJ/mol
-                weights_pts = jnp.piecewise(y_gt, [y_gt<100, y_gt>=100],
-                                            [lambda x: jnp.array(1.0),
-                                             lambda x: jnp.exp(-(x-100)/kT)])
-                dE = E_dmff - y_gt
-                mse = dE**2 * weights_pts / jnp.sum(weights_pts)
-                mse = jnp.sum(mse)
-                return mse
+            # print(f"ffparams_wo_charge: {ffparams_wo_charge}")
+            pots = ff_d.createPotential(topology) # should be pdb topology wo vsites
+            efunc = pots.getPotentialFunc()
+            # batched_efunc = jit(vmap(lambda x: efunc(x, None, pairs[0], ffparams_wo_charge)))
+            batched_efunc = vmap(lambda x: efunc(x, None, pairs[0], ffparams_wo_charge))
+            E_dmff = batched_efunc(positions)
+            E_min = jnp.min(E_dmff)
+            E_dmff = E_dmff - E_min
+            kT = 2.494 * 5/3 # 300 K = 2.494 kJ/mol
+            weights_pts = jnp.piecewise(y_gt, [y_gt<100, y_gt>=100],
+                                        [lambda x: jnp.array(1.0),
+                                         lambda x: jnp.exp(-(x-100)/kT)])
+            dE = E_dmff - y_gt
+            mse = dE**2 * weights_pts / jnp.sum(weights_pts)
+            mse = jnp.sum(mse)
+            return mse
 
-            loss, gradient = value_and_grad(Loss, argnums=0)(ffparams, y_gt)
-            return loss, gradient
+        ###########################
 
         # initialize gradient
         grads = tree_map(lambda x: x*0.0, train_state.ffparams)
         loss = 0.0
 
         for i_dihed in range(len(inputs["positions"])):
-            loss_tmp, grads_tmp = get_loss_autograd(
-                                              train_state.ffparams,
-                                              train_state.ff,
-                                              topology,
-                                              inputs["positions"][i_dihed],
-                                              inputs["pairs"][i_dihed],
-                                              gt_scans[i_dihed])
-            if jnp.isnan(loss_tmp):
-                print("NaN loss detected, slightly perturbing inputs.")
-                # inputs["positions"][i_dihed]をちょっといじる
-                key = jax.random.PRNGKey(0)
-                random_values = jax.random.uniform(key, 
-                                                   shape=inputs["positions"][i_dihed].shape, 
-                                                   minval=-0.0005, maxval=0.0005)
-                inputs["positions"] = inputs["positions"].at[i_dihed].set(inputs["positions"][i_dihed] + random_values)
-
-                loss_tmp, grads_tmp = get_loss_autograd(
-                                              train_state.ffparams,
-                                              train_state.ff,
-                                              topology,
-                                              inputs["positions"][i_dihed],
-                                              inputs["pairs"][i_dihed],
-                                              gt_scans[i_dihed])
+            ## for debug
+            # grads_tmp = tree_map(lambda x: x*0.0, train_state.ffparams)
+            # loss_tmp = 0.0
+            ###############
+            loss_tmp, grads_tmp = value_and_grad(Loss, argnums=0)(train_state.ffparams,
+                                                                  train_state.ff,
+                                                                  topology,
+                                                                  inputs["positions"][i_dihed],
+                                                                  inputs["pairs"][i_dihed],
+                                                                  gt_scans[i_dihed])
 
             loss += loss_tmp
             grads = tree_map(lambda x, y: x + y, grads, grads_tmp)
 
-        # print(f"grads: {grads}")
         if add_mask_fn is not None:
             grads = add_mask_fn(grads)
 
-        starttime = time.time()
         updates, new_opt_state = optimizer.update(grads, train_state.opt_state)
         # print(f"updates: {updates}")
         ffparams = optax.apply_updates(train_state.ffparams, updates)
@@ -159,14 +131,19 @@ def make_distance_trainer(
         ff = update_ffinfo_from_params(train_state.ff, ffparams)
         rescharges = update_rescharges_from_params(train_state.rescharges, ffparams)
         ff = update_ffinfo_from_rescharges(ff, rescharges)
-        params_wo_charge = copy.deepcopy(ffparams)
-        if "NonbondedForce" in params_wo_charge:
-            if "charges" in params_wo_charge["NonbondedForce"]:
-                del params_wo_charge["NonbondedForce"]["charges"]
-        if "VsiteForce" in params_wo_charge:
-            del params_wo_charge["VsiteForce"]
+        ffparams_wo_charge = {}
+        for key in train_state.ffparams.keys():
+            if key == "NonbondedForce":
+                ffparams_wo_charge[key] = {}
+                for key2 in train_state.ffparams[key].keys():
+                    if key2 != "charges":
+                        ffparams_wo_charge[key][key2] = train_state.ffparams[key][key2]
+            elif key == "VsiteForce":
+                pass
+            else:
+                ffparams_wo_charge[key] = train_state.ffparams[key]
 
-        ff.getParameters().parameters = params_wo_charge
+        ff.getParameters().parameters = ffparams_wo_charge
 
         return DistanceTrainState(ffparams=ffparams,
                                   ff=ff,
@@ -234,6 +211,8 @@ class DistanceTrainer:
                        "dihed_index": []}
         self.loss = []
         self.epoch = []
+        self.all_loss = []
+        self.all_epoch = []
 
     def setup(self, trainer_checkpoint=None):
         shutil.copyfile(self.ffxml, "loop-0.xml")
@@ -301,9 +280,10 @@ class DistanceTrainer:
                                             )
             end_time = time.time()
             print(f"Time taken for epoch {epoch}: {end_time - start_time:.2f} seconds")
+            self.all_loss.append(self.train_state.loss)
+            self.all_epoch.append(epoch)
             self._epoch = epoch + 1
-            self.ffparams = self.train_state.ffparams
-            self.ff = self.train_state.ff
+            
             if epoch % relax_steps==0:
                 # self.trainerをpickleで保存
                 with open(f"train_state.pkl", "wb") as f:
