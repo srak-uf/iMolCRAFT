@@ -99,19 +99,17 @@ class DistanceCalculator:
         self.scan_idx = scan_idx
 
         self.rmin = []
-        self.rmax1 = []
+        self.dr = []
         for d in self.scan_idx:
-            rmin = self.atoms.get_distance(d[0], d[1])*0.6
+            rmin = self.atoms.get_distance(d[0], d[1])*0.8
             rmin = float("%.1f" % rmin)
             self.rmin.append(rmin)
-            rmax1 = self.atoms.get_distance(d[0], d[1])*1.2
-            rmax1 = float("%.1f" % rmax1)
-            self.rmax1.append(rmax1)
+            dr = self.atoms.get_distance(d[0], d[1])*0.1
+            dr = float("%.1f" % dr)
+            self.dr.append(dr)
 
         if scan_ranges is None:
-            self.scan_ranges = [np.concatenate([np.arange(self.rmin[i], self.rmax1[i], 0.1), 
-                                                np.arange(self.rmax1[i]+0.5, 6.0, 0.5), 
-                                                np.arange(7.0, 10.0, 1.0)]) for i in range(len(scan_idx))]
+            self.scan_ranges = [np.concatenate([np.arange(self.rmin[i], 6.0, self.dr[i])]) for i in range(len(scan_idx))]
         else:
             self.scan_ranges = scan_ranges
 
@@ -359,7 +357,7 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
             ff_distance_atoms.append(atoms)
 
     ff_pot = np.array(distance_ff_energy)
-    ff_pot_kjmol = (ff_pot - ff_pot.min())
+    ff_pot_kjmol = ff_pot # (ff_pot - ff_pot.min())
     # distancesを小さい順にソート
     zip_lists = zip(distances, ff_pot_kjmol, ff_distance_atoms)
     # 昇順でソート
