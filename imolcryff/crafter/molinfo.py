@@ -15,7 +15,7 @@ from openmm import *
 from .asemol import asemol_wrapper, cast_molecules, pdb2packmol, merge_asemols, aseatoms2pdb
 from .ffxml import gafftemplate2xml
 from .gaffil_generators import GAFFilTemplateGenerator
-from ..calculator import DihedCalculator, Psi4GeoOptimizer
+from ..calculator import DihedralCalculator, Psi4GeoOptimizer
 from ..calculator import ChargeCalculator, Psi4ChargeCalculator
 
 from ..io.rdkit import atoms2rdkit
@@ -569,14 +569,14 @@ class Crafter:
                 atoms = self.mol_info[key]["aseatoms_list"][0]
 
             if self.mol_info[key]["DihedCalc"] is None:
-                self.mol_info[key]["DihedCalc"] = DihedCalculator(
+                self.mol_info[key]["DihedCalc"] = DihedralCalculator(
                     atoms=atoms,
                     rdkitmol=self.mol_info[key]["rdkit"]["mol"],
                     label=key,
                     directory = self.mol_info[key]["directory"],
                 )
             
-            self.mol_info[key]["DihedCalc"].get_dihedral_qm(do_calc=do_calc)
+            self.mol_info[key]["DihedCalc"].do_qmscan(do_calc=do_calc)
     
     def get_dihedral_ff(self, keys=None, do_calc=True):
         """
@@ -591,7 +591,7 @@ class Crafter:
         if keys is None:
             keys = self.mol_info.keys()
         for key in keys:
-            self.mol_info[key]["DihedCalc"].get_dihedral_ff(do_calc=do_calc)
+            self.mol_info[key]["DihedCalc"].do_ffscan(do_calc=do_calc)
 
     def _adjust_charges(self, ff_params=None):
         for key in self.mol_info.keys():

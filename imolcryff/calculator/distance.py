@@ -274,7 +274,7 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
                 pdb_ase.arrays["atomtypes"] = [i for i in range(len(pdb_ase))]
                 temppdb = os.path.join(td, f"temp_dist_{i}.pdb")
                 aseatoms2pdb(temppdb, pdb_ase)
-                aseatoms2pdb("wovsite.pdb", pdb_ase)
+                # aseatoms2pdb("wovsite.pdb", pdb_ase)
                 
             else:
                 # Set the positions for the distance calculation
@@ -284,7 +284,7 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
                 atoms.positions = pos_prev
                 atoms_desireddistance = change_distance(atoms, dist_atidx, distances[i])
                 aseatoms2pdb(temppdb, atoms_desireddistance)
-                aseatoms2pdb("wovsite.pdb", atoms_desireddistance)
+                # aseatoms2pdb("wovsite.pdb", atoms_desireddistance)
 
             pdb_omm = PDBFile(temppdb)
             atomlist_openmm = [a for a in pdb_omm.topology.atoms()]

@@ -18,10 +18,6 @@ import mdtraj as md
 from jax import value_and_grad, jit, vmap
 from jax.tree_util import tree_map
 import optax
-from tqdm import tqdm
-from typing import NamedTuple, Callable
-from ..calculator import DihedCalculator
-from ..crafter.ffxml import check_vsite, delvsite_pdb
 from ..trainer.dmff_utils import get_loss_autograd, merge_xml, neutralize, \
     update_rescharges_from_params, update_ffinfo_from_rescharges, \
     get_chgparams_from_rescharges, get_rescharges_from_residues, \
@@ -115,8 +111,6 @@ class DistanceTrainer(BaseTrainer):
                        "pairs": [],
                        "dihed_index": []}
         self.calculator = calculator
-        self.all_losses = []
-        self.all_epochs = []
 
     def setup(self):
         self.calculator.do_ffscan(self.ffxml, ini_geom="QM")
@@ -265,168 +259,107 @@ class DistanceTrainer(BaseTrainer):
 
         return trainer
 
-
-class DihedTrainState(NamedTuple):
-    paramset_dihed: ParamSet
-    paramset_all: ParamSet
-    opt_state: dict
-    loss: float = 0.0
-    # loss: list = []
-
-class _DihedTrainer(NamedTuple):
-    init_step: Callable
-    train_step: Callable
-
-def make_dihedtrainer(
-    potentials: Potential,
-    optimizer: optax.GradientTransformation,
-) -> _DihedTrainer:
-
-    def init_step(paramset_dihed_init, paramset_all_init):
-        opt_state = optimizer.init(paramset_dihed_init)
-        return DihedTrainState(paramset_dihed=paramset_dihed_init,
-                              paramset_all=paramset_all_init,
-                              opt_state=opt_state)
-
-    def train_step(train_state, inputs, gt_scans):
-        inputs = inputs
-        gt_scans = gt_scans
-        paramset_all = train_state.paramset_all
-
-        def add_grad(grad1:ParamSet, grad2:ParamSet):
-            for k in grad1.parameters.keys():
-                for t in grad1.parameters[k].keys():
-                    grad1.parameters[k][t] += grad2.parameters[k][t]
-            return ParamSet(grad1.parameters, grad1.mask)
+class DihedralTrainer(BaseTrainer):
+    # xml, pdbfile with topology, DihedralCalculator
+    def __init__(self,
+                 ffxml,
+                 pdbfile,
+                 calculator,
+                 loss_fn,
+                 relax_steps=20,
+                 opt_fftypes=["PeriodicTorsionForce/proper_phase", 
+                              "PeriodicTorsionForce/proper_k"],
+                 label=None,
+                 batch_size=1,
+                 optimizer_algo="adam",
+                 lr=0.01,
+                 clip=0.1):
         
-        def compute_loss(paramset_dihed, positions, pairs, y_gt):
-            efunc = potentials.getPotentialFunc()
-            params_dihed = paramset_dihed.parameters
-            params_all = copy.deepcopy(paramset_all)
-            params_all['PeriodicTorsionForce']["proper_phase"] = \
-                    params_dihed["PeriodicTorsionForce"]["proper_phase"]
-            params_all['PeriodicTorsionForce']["proper_k"] = \
-                    params_dihed["PeriodicTorsionForce"]["proper_k"]
-            E_dmff = jnp.zeros((positions.shape[0],), dtype=jnp.float64)
-            for ipt in range(len(positions)):
-                E_dmff = E_dmff.at[ipt].set(efunc(positions[ipt], 
-                                                  None,
-                                                  pairs[ipt],
-                                                  params_all))
-            E_min = jnp.min(E_dmff)
-            E_dmff = E_dmff - E_min
-            kT = 2.494 * 5/3 # 300 K = 2.494 kJ/mol
-            weights_pts = jnp.piecewise(y_gt, [y_gt<25, y_gt>=25],
-                                        [lambda x: jnp.array(1.0),
-                                         lambda x: jnp.exp(-(x-25)/kT)])
-            dE = E_dmff - y_gt
-            mse = dE**2 * weights_pts / jnp.sum(weights_pts)
-            mse = jnp.sum(mse)
-            # mse = jnp.sum((E_dmff - y_gt)**2)
-            return mse
-
-        lossgrad_fn = jit(value_and_grad(compute_loss, argnums=(0)))
-        for i_dihed in range(len(inputs["positions"])):
-            loss_tmp, grads_tmp = lossgrad_fn(train_state.paramset_dihed,
-                                      inputs["positions"][i_dihed],
-                                      inputs["pairs"][i_dihed],
-                                      gt_scans[i_dihed])
-            if i_dihed == 0:
-                loss = loss_tmp
-                grads = grads_tmp
-            else:
-                loss += loss_tmp
-                grads = add_grad(grads, grads_tmp)
-
-        # train_state.loss.append(loss)
-        updates, new_opt_state = optimizer.update(grads, train_state.opt_state)
-        new_paramset_dihed = optax.apply_updates(train_state.paramset_dihed, updates)
-        return DihedTrainState(paramset_dihed=new_paramset_dihed,
-                               paramset_all=train_state.paramset_all,
-                               opt_state=new_opt_state,
-                            #    loss=train_state.loss)
-                               loss=loss)
-    
-    return _DihedTrainer(init_step, train_step)
-
-
-class DihedTrainer:
-    # xml, pdbfile with topology, DihedCalculator
-    def __init__(self, ffxml, pdb, calculator, batch_size=1,
-                 optimizer=optax.adam(learning_rate=0.1)):
-        self.ffxml = ffxml
-        self.ff = Hamiltonian(ffxml)
-        self.pdb = app.PDBFile(pdb)
-        self.potentials = self.ff.createPotential(self.pdb.topology)
-        self.calculator = calculator
-        self.optimizer = optimizer
+        super().__init__(ffxml_list=[ffxml],
+                         nums_ffxml=[1],
+                         pdbfile=pdbfile,
+                         loss_fn=loss_fn,
+                         opt_fftypes=opt_fftypes,
+                         batch_size=batch_size,
+                         optimizer_algo=optimizer_algo,
+                         label=label,
+                         lr=lr,
+                         clip=clip)
+        
+        self.relax_steps = relax_steps
         self.inputs = {"positions": [],
                        "pairs": [],
                        "dihed_index": []}
-        self.ytrue = []
-        self.loss = []
-        self.epoch = []
+        self.calculator = calculator
 
     def setup(self):
-        shutil.copyfile(self.ffxml, "loop-0.xml")
-        self.calculator.get_dihedral_ff(f"loop-0.xml", angles=None, ini_geom="FF")
+        GT_scans = []
+        for i in range(len(self.calculator.qm_scan)):
+            GT_scans.append(self.calculator.qm_scan[i]["energy_kjmol"])
+        self.GT_scans = jnp.array(GT_scans)
+
         positions_list = []
         jnp_pairs_list = []
-        GT_scans = []
-        for i in range(len(self.calculator.dihedral_list)):
-            self.calculator.get_dihedral_ff(f"loop-0.xml", i, angles=None, ini_geom="FF")
-            positions = [atoms.positions for atoms in self.calculator.ff_dihedscan[i]["atoms"]]
+        for i in range(len(self.calculator.ff_scan)):
+            self.calculator.do_ffscan(self.ffxml, i, angles=None)
+            positions = [atoms.positions for atoms in self.calculator.ff_scan[i]["atoms"]]
             positions_list.append(positions)
-
             jnp_pairs= []
-            for i_dihed in range(len(self.calculator.ff_dihedscan[0]["atoms"])):
+            for i_dihed in range(len(self.calculator.ff_scan[0]["atoms"])):
                 nbList = NoCutoffNeighborList(cov_map=self.potentials.meta["cov_map"])
                 nbList.allocate(positions_list[0][i_dihed])
                 jnp_pairs.append(nbList.pairs)
             jnp_pairs_list.append(jnp_pairs)
-
-            GT_scan = self.calculator.qm_dihedscan[i]["energies_kjmol"]
-            GT_scans.append(GT_scan)
-
-        self.GT_scans = GT_scans
-        self.ytrue = jnp.array(self.ytrue)
         self.inputs["positions"] = jnp.array(positions_list, dtype=jnp.float32)/10 # nm
         self.inputs["pairs"] = jnp.array(jnp_pairs_list)
+        self.opt_state = self.optimizer.init(self.ffparams)
+    
+    def get_loss_gradients(self):
+        grads = tree_map(lambda x: x*0.0, self.ffparams)
+        loss = 0.0
+        for i_dihed in range(len(self.inputs["positions"])):
+            loss_tmp, grads_tmp = value_and_grad(self.loss_fn, argnums=0)(self.ffparams,
+                                                                self.ff,
+                                                                self.pdb.topology,
+                                                                self.inputs["positions"][i_dihed],
+                                                                self.inputs["pairs"][i_dihed],
+                                                                self.GT_scans[i_dihed])
+            loss += loss_tmp
+            grads = tree_map(lambda x, y: x + y, grads, grads_tmp)
+        return loss, grads
 
-        # Parameters
-        self.paramset_dihed = ParamSet()
-        self.torsion_gen = PeriodicTorsionGenerator(self.ff.ffinfo, self.paramset_dihed)
-        paramset_all_init = self.ff.getParameters()
-        paramset_all_init.to_jax()
-        self.paramset_all = copy.deepcopy(paramset_all_init)
+    def after_step(self):
+        self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
+        self.rescharges = update_rescharges_from_params(self.rescharges, self.ffparams)
+        self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
+        ffparams_wo_charge = {}
+        for key in self.ffparams.keys():
+            if key == "NonbondedForce":
+                ffparams_wo_charge[key] = {}
+                for key2 in self.ffparams[key].keys():
+                    if key2 != "charges":
+                        ffparams_wo_charge[key][key2] = self.ffparams[key][key2]
+            elif key == "VsiteForce":
+                pass
+            else:
+                ffparams_wo_charge[key] = self.ffparams[key]
+        self.ff.getParameters().parameters = ffparams_wo_charge
 
-    def fit(self, steps=1000, relax_steps=20):
-        trainer = make_dihedtrainer(self.potentials, self.optimizer)
-        p_train_step = jax.jit(trainer.train_step)
-        train_state = trainer.init_step(self.paramset_dihed, self.paramset_all)
-        for epoch in range(steps+1):
-            train_state = p_train_step(train_state,
-                                       self.inputs,
-                                       self.GT_scans)
-            if epoch % relax_steps==0:
-                self.loss.append(train_state.loss)
-                self.epoch.append(epoch)
-                io = XMLIO()
-                io.writeXML(f"loop-{epoch}.xml", self.torsion_gen.ffinfo)
-                self.torsion_gen.overwrite(train_state.paramset_dihed)
-                io2 = XMLIO()
-                io2.writeXML(f"loop-{epoch+1}.xml", self.torsion_gen.ffinfo)
-                self.calculator.get_dihedral_ff(f"loop-{epoch+1}.xml",
-                                                angles=None,
-                                                ini_geom="FF")
-                positions_list = []
-                for i in range(len(self.calculator.dihedral_list)):
-                    positions = [atoms.positions for atoms in self.calculator.ff_dihedscan[i]["atoms"]]
-                    positions_list.append(positions)
-                positions_list = jnp.array(positions_list)/10 # Angstrom to nm
-                self.inputs["positions"] = positions_list
-
-
+        epoch = self._epoch + 1
+        if epoch % self.relax_steps == 0:
+            self.ff.renderXML(f"loop-{epoch}.xml")
+            self.calculator.do_ffscan(f"loop-{epoch}.xml",
+                                      angles=None,
+                                      ini_geom="QM")
+            positions_list = []
+            for i in range(len(self.calculator.ff_scan)):
+                positions = [jnp.array(atoms.positions, dtype=jnp.float64) / 10 \
+                        for atoms in self.calculator.ff_scan[i]["atoms"]]
+                if self.num_vsites > 0:
+                    positions = [self.potentials.topology.addVSiteToPos(p) for p in positions]
+                positions_list.append(positions)
+            positions_list = jnp.array(positions_list)
+            self.inputs["positions"] = positions_list
 
 
 class ThermodynamicTrainer:

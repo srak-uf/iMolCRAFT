@@ -1,6 +1,5 @@
 geoopt:
   basis: 6-311++g(d,p)
-  # basis: 6-31g(d)
   method: wb97xd
   # method: hf
   software: psi4

@@ -15,12 +15,8 @@ import jax
 import jax.numpy as jnp
 import os
 import mdtraj as md
-from jax import value_and_grad, jit
 import optax
 import time
-from tqdm import tqdm
-from typing import NamedTuple, Callable
-from ..calculator import DihedCalculator
 from ..crafter.ffxml import check_vsite, delvsite_pdb
 from ..trainer.dmff_utils import get_loss_autograd, merge_xml, neutralize, \
     update_rescharges_from_params, update_ffinfo_from_rescharges, \
