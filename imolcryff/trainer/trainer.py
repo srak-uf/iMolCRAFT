@@ -28,6 +28,7 @@ from ..trainer.dmff_utils import get_loss_autograd, merge_xml, neutralize, \
     update_ffinfo_from_params, vsiteinfo_to_params, md_sample, \
     saver_wresults, get_target_pred_frame, get_target_gt, plot_compare
 from ..trainer.base import BaseTrainer
+from openmm import unit
 
 def mse_energy(e_ff, e_qm, weight_scheme="uniform", norm_var=True):
     """
@@ -44,7 +45,7 @@ def mse_energy(e_ff, e_qm, weight_scheme="uniform", norm_var=True):
     if norm_var:
         var_qm = jnp.var(e_qm)
     else:
-        var_qm = 1.0  # Avoid division by zero if variance is not calculated
+        var_qm = 1.0
     # [(e_mm[0] - e_qm[0] - delta_e)^2, (e_mm[1]-e_qm[1]-delta_e)^2,..] のarrayを作成
     se_array = jnp.square(e_ff - e_qm - delta_e)
     if weight_scheme == "uniform":
@@ -93,6 +94,7 @@ class DistanceTrainer(BaseTrainer):
                  opt_fftypes=["NonbondedForce/charges",
                               "NonbondedForce/sigma",
                               "NonbondedForce/epsilon"],
+                 label=None,
                  batch_size=1,
                  optimizer_algo="adam",
                  lr=0.01,
@@ -105,6 +107,7 @@ class DistanceTrainer(BaseTrainer):
                          opt_fftypes=opt_fftypes,
                          batch_size=batch_size,
                          optimizer_algo=optimizer_algo,
+                         label=label,
                          lr=lr,
                          clip=clip)
         self.relax_steps = relax_steps
@@ -202,25 +205,37 @@ class DistanceTrainer(BaseTrainer):
                     "epoch": self._epoch,
                     "losses": self.losses,
                     "epochs": self.epochs,
-                    "modifyfns": self._modifyfns
+                    "label": self.label,
+                    "optimizer_algo": self.optimizer_algo,
+                    "opt_fftypes": self.opt_fftypes,
+                    "lr": self.lr,
+                    "clip": self.clip
                 }
                 pickle.dump(dump_dict, f)
 
+    @classmethod
     def from_checkpoint(cls,
                         trainer_checkpoint,
                         ffxml_list,
                         nums_ffxml,
                         pdbfile,
                         loss_fn = None,
-                        opt_fftypes=["NonbondedForce/charges",
-                                     "NonbondedForce/sigma",
-                                     "NonbondedForce/epsilon"],
-                        optimizer_algo="adam",
-                        lr=0.01,
-                        clip=0.01):
+                        opt_fftypes=None,
+                        optimizer_algo=None,
+                        lr=None,
+                        clip=None):
 
         with open(trainer_checkpoint, "rb") as f:
             dump_dict = pickle.load(f)
+
+        if lr is None:
+            lr = dump_dict["lr"]
+        if clip is None:
+            clip = dump_dict["clip"]
+        if optimizer_algo is None:
+            optimizer_algo = dump_dict["optimizer_algo"]
+        if opt_fftypes is None:
+            opt_fftypes = dump_dict["opt_fftypes"]
 
         trainer = cls(ffxml_list=ffxml_list,
                       nums_ffxml=nums_ffxml,
@@ -229,6 +244,7 @@ class DistanceTrainer(BaseTrainer):
                       loss_fn=loss_fn,
                       opt_fftypes=opt_fftypes,
                       optimizer_algo=optimizer_algo,
+                      label=dump_dict["label"],
                       lr=lr,
                       clip=clip)
         
@@ -246,7 +262,6 @@ class DistanceTrainer(BaseTrainer):
         trainer._epoch = dump_dict["epoch"]
         trainer.losses = dump_dict["losses"]
         trainer.epochs = dump_dict["epochs"]
-        trainer._modifyfns = dump_dict["modifyfns"]
 
         return trainer
 
@@ -394,9 +409,7 @@ class DihedTrainer:
                                        self.inputs,
                                        self.GT_scans)
             if epoch % relax_steps==0:
-                print(f"epoch {epoch}")
                 self.loss.append(train_state.loss)
-                print(f"loss {train_state.loss}")
                 self.epoch.append(epoch)
                 io = XMLIO()
                 io.writeXML(f"loop-{epoch}.xml", self.torsion_gen.ffinfo)
@@ -414,7 +427,7 @@ class DihedTrainer:
                 self.inputs["positions"] = positions_list
 
 
-from openmm import unit
+
 
 class ThermodynamicTrainer:
     def __init__(

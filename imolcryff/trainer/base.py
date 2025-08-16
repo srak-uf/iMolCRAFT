@@ -40,6 +40,7 @@ class BaseTrainer:
                  pdbfile,
                  loss_fn,
                  opt_fftypes,
+                 label=None,
                  batch_size=1,
                  optimizer_algo="adam",
                  lr=0.0001,
@@ -51,7 +52,13 @@ class BaseTrainer:
 
         assert len(ffxml_list) == len(nums_ffxml), "Length of ffxml_list and nums_ffxml must be the same."
 
-        xmlfile = merge_xml(ffxml_list, "merge.xml")
+        if label is None:
+            label = [f"{os.path.splitext(os.path.basename(ffxml))[0]}{num}" for ffxml, num in zip(ffxml_list, nums_ffxml)]
+            self.label = "_".join(label)
+        else:
+            self.label = label
+
+        xmlfile = merge_xml(ffxml_list, f"{self.label}.xml")
         self.ffxml = xmlfile
         self.ff = Hamiltonian(self.ffxml)
         self.num_vsites = check_vsite(self.ffxml)
@@ -82,6 +89,8 @@ class BaseTrainer:
             lr = [lr] * len(opt_fftypes)
             clip = [clip] * len(opt_fftypes)
 
+        self.lr = lr
+        self.clip = clip
         multiTrans = MultiTransform(self.ffparams)
         self.optimizer_algo = optimizer_algo
         for i, opt_fftype in enumerate(self.opt_fftypes):
@@ -128,6 +137,7 @@ class BaseTrainer:
         self.loss, grads = self.get_loss_gradients()
         grads = self._do_modify("after_grad", grads)
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
+        # print("Updates: ", updates)
         self.ffparams = optax.apply_updates(self.ffparams, updates)
         self.ffparams = self._do_modify("after_update", self.ffparams)
 
@@ -160,6 +170,11 @@ class BaseTrainer:
             self.before_step()
             self.training_step()
             self.after_step()
+            if len(self.losses) == 0 or self.loss < min(self.losses):
+                self.best_params = self.ffparams
+                self.best_epoch = self._epoch
+                self.best_loss = self.loss
+                self.ff.renderXML(f"{self.label}_best.xml")
             self.epochs.append(self._epoch)
             self.losses.append(self.loss)
             if i_epoch % checkpoint_frequency == 0:

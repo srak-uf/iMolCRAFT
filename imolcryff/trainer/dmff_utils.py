@@ -347,6 +347,7 @@ def vsiteinfo_to_params(ff, params):
 
     params["VsiteForce"] = {}
     params["VsiteForce"]["weight"] = jnp.zeros(len(weights))
+    params["VsiteForce"]["scale"] = jnp.zeros(len(weights))
     for i in range(len(weights)):
         params["VsiteForce"]["weight"] = params["VsiteForce"]["weight"].at[i].set(weights[i])
 
