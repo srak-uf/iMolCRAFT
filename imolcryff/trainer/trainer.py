@@ -9,6 +9,7 @@ from dmff.mbar import MBAREstimator, Sample, OpenMMSampleState
 import pickle
 from openmm import app
 from openmm.app import NoCutoff, Simulation, PDBFile, ForceField, Modeller
+from ase import units
 import copy, shutil
 import numpy as np
 import jax
@@ -24,14 +25,19 @@ from ..trainer.dmff_utils import get_loss_autograd, merge_xml, neutralize, \
     update_ffinfo_from_params, vsiteinfo_to_params, md_sample, \
     saver_wresults, get_target_pred_frame, get_target_gt, plot_compare
 from ..trainer.base import BaseTrainer
+from ..calculator import DihedralCalculator
 from openmm import unit
 
-def mse_energy(e_ff, e_qm, weight_scheme="uniform", norm_var=True):
+def mse_energy(e_ff, e_qm, weight_scheme="uniform", norm_var=True, zeropoint="auto", temperature=500):
     """
     Calculate the mean squared error between two energy arrays.
     :param e_ff: Array of energies from the force field.
     :param e_qm: Array of energies from quantum mechanics.
     :param weight_scheme: Optional weighting scheme for the energies.
+    :param zeropoint: Optional zero-point energy correction.
+                        If "auto", the zero-point energy is determined automatically.
+                        If "qmmin", the zero-point energy is set to the minimum QM energy.
+                        if None, the zero-point energy is not corrected.
     """
     implemented_weight_schemes = ["uniform", "boltzmann", "nonboltzmann"]
     if weight_scheme not in implemented_weight_schemes:
@@ -43,11 +49,20 @@ def mse_energy(e_ff, e_qm, weight_scheme="uniform", norm_var=True):
     else:
         var_qm = 1.0
     # [(e_mm[0] - e_qm[0] - delta_e)^2, (e_mm[1]-e_qm[1]-delta_e)^2,..] のarrayを作成
-    se_array = jnp.square(e_ff - e_qm - delta_e)
+    if zeropoint == "auto":
+        se_array = jnp.square(e_ff - e_qm - delta_e)
+    elif zeropoint == "qmmin":
+        qm_argmin = jnp.argmin(e_qm)
+        e_qm_min = e_qm[qm_argmin]
+        e_ff_min = e_ff[qm_argmin]
+        se_array = jnp.square(e_ff - e_ff_min - (e_qm - e_qm_min))
+    elif zeropoint is None:
+        se_array = jnp.square(e_ff - e_qm)
+
     if weight_scheme == "uniform":
         weight = jnp.ones_like(e_qm) / len(e_qm)
     elif weight_scheme == "boltzmann":
-        kT = 2.494 * 5/3  # 300 K = 2.494 kJ/mol
+        kT = units.kB * temperature * (units.kJ / units.mol) ** -1  # 300 K = 2.494 kJ/mol
         ave = jnp.mean(e_qm)
         weight = jnp.exp(-(e_qm - ave) / kT)
         weight = weight / jnp.sum(weight)
@@ -264,7 +279,7 @@ class DihedralTrainer(BaseTrainer):
     def __init__(self,
                  ffxml,
                  pdbfile,
-                 calculator,
+                 calculator: DihedralCalculator,
                  loss_fn,
                  relax_steps=20,
                  opt_fftypes=["PeriodicTorsionForce/proper_phase", 
@@ -301,7 +316,7 @@ class DihedralTrainer(BaseTrainer):
         positions_list = []
         jnp_pairs_list = []
         for i in range(len(self.calculator.ff_scan)):
-            self.calculator.do_ffscan(self.ffxml, i, angles=None)
+            self.calculator.do_ffscan(self.ffxml, i, angles="QM", ini_geom="FF")
             positions = [atoms.positions for atoms in self.calculator.ff_scan[i]["atoms"]]
             positions_list.append(positions)
             jnp_pairs= []
@@ -349,8 +364,8 @@ class DihedralTrainer(BaseTrainer):
         if epoch % self.relax_steps == 0:
             self.ff.renderXML(f"loop-{epoch}.xml")
             self.calculator.do_ffscan(f"loop-{epoch}.xml",
-                                      angles=None,
-                                      ini_geom="QM")
+                                      angles="QM",
+                                      ini_geom="FF")
             positions_list = []
             for i in range(len(self.calculator.ff_scan)):
                 positions = [jnp.array(atoms.positions, dtype=jnp.float64) / 10 \

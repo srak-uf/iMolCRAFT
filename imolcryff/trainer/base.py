@@ -110,6 +110,9 @@ class BaseTrainer:
         self.losses = []
         self.epochs = []
         self._modifyfns = {}
+        # self._modifyfns["after_grad"]は与えられたgradをそのまま返す
+        self._modifyfns["after_grad"] = lambda grads: grads
+        self._modifyfns["after_update"] = lambda ffparams: ffparams
 
     def add_modifyfn(self, type_fn, fn):
         types_modifyfn = [
@@ -151,7 +154,7 @@ class BaseTrainer:
         """
         pass
 
-    def write_checkpoint(self):
+    def write_checkpoint(self, checkpoint_frequency):
         """
         This method writes the current state of the trainer to a checkpoint file.
         It can be overridden in subclasses to implement custom behavior.
