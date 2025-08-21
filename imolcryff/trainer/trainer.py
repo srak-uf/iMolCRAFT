@@ -1,7 +1,6 @@
+from sympy import ff
 from dmff import Hamiltonian, DMFFTopology
 from dmff.common.nblist import NoCutoffNeighborList
-from dmff.generators.classical import PeriodicTorsionGenerator
-from dmff.api.paramset import ParamSet
 from dmff.api.xmlio import XMLIO
 from dmff.api.hamiltonian import Potential
 from dmff.optimize import MultiTransform, genOptimizer
@@ -9,97 +8,24 @@ from dmff.mbar import MBAREstimator, Sample, OpenMMSampleState
 import pickle
 from openmm import app
 from openmm.app import NoCutoff, Simulation, PDBFile, ForceField, Modeller
-from ase import units
-import copy, shutil
-import numpy as np
-import jax
 import jax.numpy as jnp
 import os
 import mdtraj as md
-from jax import value_and_grad, jit, vmap
+from jax import value_and_grad
 from jax.tree_util import tree_map
-import optax
-from ..trainer.dmff_utils import get_loss_autograd, merge_xml, neutralize, \
+from ..trainer.dmff_utils import  \
     update_rescharges_from_params, update_ffinfo_from_rescharges, \
-    get_chgparams_from_rescharges, get_rescharges_from_residues, \
-    update_ffinfo_from_params, vsiteinfo_to_params, md_sample, \
-    saver_wresults, get_target_pred_frame, get_target_gt, plot_compare
-from ..trainer.base import BaseTrainer
-from ..calculator import DihedralCalculator
+    update_ffinfo_from_params, md_sample, get_target_pred_frame, get_target_gt
+from .base import BaseTrainer
+from ..calculator import DihedralCalculator, DistanceCalculator
 from openmm import unit
-
-def mse_energy(e_ff, e_qm, weight_scheme="uniform", norm_var=True, zeropoint="auto", temperature=500):
-    """
-    Calculate the mean squared error between two energy arrays.
-    :param e_ff: Array of energies from the force field.
-    :param e_qm: Array of energies from quantum mechanics.
-    :param weight_scheme: Optional weighting scheme for the energies.
-    :param zeropoint: Optional zero-point energy correction.
-                        If "auto", the zero-point energy is determined automatically.
-                        If "qmmin", the zero-point energy is set to the minimum QM energy.
-                        if None, the zero-point energy is not corrected.
-    """
-    implemented_weight_schemes = ["uniform", "boltzmann", "nonboltzmann"]
-    if weight_scheme not in implemented_weight_schemes:
-        raise ValueError(f"Unknown weight scheme: {weight_scheme}")
-    
-    delta_e = (e_ff - e_qm) / len(e_qm)
-    if norm_var:
-        var_qm = jnp.var(e_qm)
-    else:
-        var_qm = 1.0
-    # [(e_mm[0] - e_qm[0] - delta_e)^2, (e_mm[1]-e_qm[1]-delta_e)^2,..] のarrayを作成
-    if zeropoint == "auto":
-        se_array = jnp.square(e_ff - e_qm - delta_e)
-    elif zeropoint == "qmmin":
-        qm_argmin = jnp.argmin(e_qm)
-        e_qm_min = e_qm[qm_argmin]
-        e_ff_min = e_ff[qm_argmin]
-        se_array = jnp.square(e_ff - e_ff_min - (e_qm - e_qm_min))
-    elif zeropoint is None:
-        se_array = jnp.square(e_ff - e_qm)
-
-    if weight_scheme == "uniform":
-        weight = jnp.ones_like(e_qm) / len(e_qm)
-    elif weight_scheme == "boltzmann":
-        kT = units.kB * temperature * (units.kJ / units.mol) ** -1  # 300 K = 2.494 kJ/mol
-        ave = jnp.mean(e_qm)
-        weight = jnp.exp(-(e_qm - ave) / kT)
-        weight = weight / jnp.sum(weight)
-    elif weight_scheme == "nonboltzmann":
-        pass
-    mse = jnp.sum(se_array * weight) / var_qm
-
-    return mse
-
-def loss_energy(ffparams, ff, topology, positions, pairs, y_gt):
-    ff_d = update_ffinfo_from_params(ff, ffparams)
-    ffparams_wo_charge = {}
-    for key in ffparams.keys():
-        if key == "NonbondedForce":
-            ffparams_wo_charge[key] = {}
-            for key2 in ffparams[key].keys():
-                if key2 != "charges":
-                    ffparams_wo_charge[key][key2] = ffparams[key][key2]
-        elif key == "VsiteForce":
-            pass
-        else:
-            ffparams_wo_charge[key] = ffparams[key]
-
-    pots = ff_d.createPotential(topology) # should be pdb topology wo vsites
-    efunc = pots.getPotentialFunc()
-    batched_efunc = vmap(lambda x: efunc(x, None, pairs[0], ffparams_wo_charge))
-    e_ff = batched_efunc(positions)
-    loss = mse_energy(e_ff, y_gt, weight_scheme="uniform", norm_var=True)
-    return loss
-
 
 class DistanceTrainer(BaseTrainer):
     def __init__(self,
                  ffxml_list,
                  nums_ffxml,
                  pdbfile,
-                 calculator,
+                 calculator: DistanceCalculator,
                  loss_fn,
                  relax_steps=20,
                  opt_fftypes=["NonbondedForce/charges",
@@ -377,171 +303,252 @@ class DihedralTrainer(BaseTrainer):
             self.inputs["positions"] = positions_list
 
 
-class ThermodynamicTrainer:
+class ThermodynamicTrainer(BaseTrainer):
     def __init__(
             self,
-            dmff_params,
-            label,
-            chkfile=None):
+            ffxml_list,
+            nums_ffxml,
+            pdbfile,
+            loss_fn,
+            sampling_params,
+            target_params,
+            opt_fftypes=["NonbondedForce/charges",
+                         "NonbondedForce/sigma",
+                         "NonbondedForce/epsilon"],
+            label=None,
+            optimizer_algo="adam",
+            lr=0.0001,
+            clip=0.1
+            ):
         
-        ffxml_list = dmff_params["forcefield"]["xml_list"]
-        self.initial_xml = merge_xml(ffxml_list, "epoch-0.xml")
-        self.ff = Hamiltonian(ffxml_list)
-        self.pdbfile = dmff_params["sampling"]["init_structure"]
-        self.pdbfile_wovs = self.pdbfile
-        self.pdb = PDBFile(self.pdbfile)
-        self.pdb_wovs = PDBFile(self.pdbfile)
-
-        # Virtual sites
-        modeller = app.Modeller(self.pdb.topology, self.pdb.getPositions())
-        modeller.addExtraParticles(app.ForceField(self.initial_xml))
-        self.pos = modeller.getPositions()
-        self.topology = modeller.topology
-        num_vsites = 0
-        for residue in self.ff.ffinfo["Residues"]:
-            if "vsites" in residue.keys():
-                num_vsites += len(residue["vsites"])
-        if num_vsites > 0:
-            basename = os.path.splitext(self.pdbfile)[0]
-            self.pdbfile = basename + "_vs.pdb"
-            app.PDBFile.writeFile(self.topology, self.pos, open(self.pdbfile, "w"))
-
-        # MD + Energy function setup
-        self.rc = float(dmff_params["forcefield"]["rcut_nm"])
-        pots = self.ff.createPotential(self.pdb.topology,
-                                       nonbondedMethod=app.PME,
-                                       nonbondedCutoff=self.rc*unit.nanometer)
-        self.cov_map = pots.meta['cov_map']
-        self.ffparams = self.ff.getParameters().parameters
-        res_ratio = dmff_params["forcefield"]["residue_ratio"]
-        self.rescharges, self.natoms_list = get_rescharges_from_residues(self.ff, ratio=res_ratio)
-        self.T_K = float(dmff_params["sampling"]["temperature_K"])
-        self.P_bar = float(dmff_params["sampling"]["pressure_bar"])
-        self.ensemble = dmff_params["sampling"]["ensemble"]
-
-        self.neff = dmff_params["opt_scheme"]["neff"]
-
         # params
-        self.sampling_params = dmff_params["sampling"]
-        self.forcefield_params = dmff_params["forcefield"]
-        self.optscheme_params = dmff_params["opt_scheme"]
+        self.sampling_params = sampling_params
+        self.target_params = target_params
 
-    def setup(self, checkpoint=None):
-        state_name = "loop-0"
-        self.state_init = md_sample(self.pdbfile,
-                               self.initial_xml,
-                               f"{state_name}.xtc",
-                               self.sampling_params,
-                               self.forcefield_params)
-        self.saver = saver_wresults(self.optscheme_params)
+        super().__init__(ffxml_list=ffxml_list,
+                         nums_ffxml=nums_ffxml,
+                         pdbfile=pdbfile,
+                         loss_fn=loss_fn,
+                         opt_fftypes=opt_fftypes,
+                         optimizer_algo=optimizer_algo,
+                         label=label,
+                         lr=lr,
+                         clip=clip)
+        
+        # MD + Energy function setup
+        if isinstance(self.sampling_params, dict):
+            self.pdb = [self.pdb]
+            self.pdbfile = [self.pdbfile]
+            self.potentials = [self.potentials]
+            self.topology = [self.topology]
+            self.sampling_params = [self.sampling_params]
+        elif isinstance(self.sampling_params, list):
+            self.pdbfile = []
+            self.pdb = []
+            self.potentials = []
+            self.topology = []
+            self.T_K = []
+            for i, sampling_param in enumerate(self.sampling_params):
+                self.pdbfile.append(sampling_param["init_structure"])
+                self.pdb.append(app.PDBFile(self.pdbfile[i]))
+                self.potentials.append(self.ff.createPotential(self.pdb[i].topology,
+                                                               nonbondedMethod=app.PME,
+                                                               nonbondedCutoff=self.rc*unit.nanometer))
+                self.topology.append(self.pdb[i].topology)
+                if self.num_vsites > 0:
+                    modeller = Modeller(self.pdb[i].topology, self.pdb[i].positions)
+                    modeller.addExtraParticles(ForceField(self.ffxml))
+                    pos = modeller.getPositions()
+                    self.topology[i] = modeller.topology
+                else:
+                    self.topology[i] = self.pdb[i].topology
+        else:
+            raise AssertionError("Invalid sampling parameters")
+
+        self.T_K = []
+        self.P_bar = []
+        self.anneal_steps = []
+        self.anneal_Tmax = []
+        self.anneal_steps = []
+        self.anneal_totalsteps = []
+        self.relax_steps = []
+        self.rc_nm = []
+        self.prod_steps = []
+        self.nstxout = []
+        self.neff = []
+        self.dt_fs = []
+        self.ensemble = []
+        for i, sampling_param in enumerate(self.sampling_params):
+            self.T_K.append(float(sampling_param["temperature_K"]))
+            self.P_bar.append(float(sampling_param["pressure_bar"]))
+            self.anneal_steps.append(int(sampling_param["anneal_steps"]))
+            self.anneal_Tmax.append(float(sampling_param["anneal_Tmax"]))
+            self.anneal_totalsteps.append(int(sampling_param["anneal_totalsteps"]))
+            self.relax_steps.append(int(sampling_param["relax_steps"]))
+            self.rc_nm.append(float(sampling_param["rcut_nm"]))
+            self.prod_steps.append(float(sampling_param["prod_steps"]))
+            self.nstxout.append(int(sampling_param["nstxout"]))
+            self.neff.append(int(sampling_param["neff"]))
+            self.dt_fs.append(float(sampling_param["dt_fs"]))
+            self.ensemble.append(sampling_param["ensemble"])
+
+        # target
+        if isinstance(self.target_params, dict):
+            self.target_params = [self.target_params]
+        assert len(self.target_params) == len(self.sampling_params), \
+            "Options scheme parameters and sampling parameters must have the same length"
+        self.target_gt = []
+        self.target_pred_frame = []
+        self.utarget = []
+        self.resample = [False for i in range(len(self.sampling_params))]
+
+        # loss function
+        if not isinstance(self.loss_fn, list):
+            self.loss_fn = [self.loss_fn for _ in range(len(self.sampling_params))]
+
+    def setup(self):
         self.estimator = MBAREstimator()
-        state = OpenMMSampleState(state_name,
-                                  self.initial_xml,
-                                  self.pdbfile_wovs, # without virtual sites
-                                  temperature=self.T_K,
-                                  pressure=self.P_bar,
-                                  nonbondedMethod=app.PME,
-                                  nonbondedCutoff=self.rc*unit.nanometer)
-        traj = md.load(f'xtcfiles/{state_name}.xtc', top=self.pdbfile)
-        sample = Sample(traj, state_name)
-        self.estimator.add_state(state)
-        self.estimator.add_sample(sample)
+        for i in range(len(self.sampling_params)):
+            state_name = f"sample_{i}"
+            xtcfile = md_sample(self.pdbfile[i],
+                                self.ffxml,
+                                f"{state_name}.xtc",
+                                self.rc_nm[i],
+                                self.T_K[i],
+                                self.anneal_Tmax[i],
+                                self.anneal_steps[i],
+                                self.anneal_totalsteps[i],
+                                self.dt_fs[i],
+                                self.nstxout[i],
+                                self.relax_steps[i],
+                                self.prod_steps[i],
+                                self.ensemble[i]
+                                )
+            state = OpenMMSampleState(state_name,
+                                      self.ffxml,
+                                      self.pdbfile[i], # without virtual sites
+                                      temperature=self.T_K[i],
+                                      pressure=self.P_bar[i],
+                                      nonbondedMethod=app.PME,
+                                      nonbondedCutoff=self.rc_nm[i]*unit.nanometer)
+            traj = md.load(xtcfile, top=self.pdbfile[i])
+            sample = Sample(traj, state_name)
+            self.estimator.add_state(state)
+            self.estimator.add_sample(sample)
+
+            self.target_gt.append(get_target_gt(self.target_params[i]))
+            self.target_pred_frame.append(get_target_pred_frame(xtcfile,
+                                                                self.pdbfile[i],
+                                                                self.target_params[i]))
+        self.estimator.optimize_mbar()
+        self.opt_state = self.optimizer.init(self.ffparams)
+
+    def get_loss_gradients(self):
+        grads = tree_map(lambda x: x*0.0, self.ffparams)
+        loss = 0.0
+        for i in range(len(self.sampling_params)):
+            (loss_tmp, (utarget, wresults)), grads_tmp = value_and_grad(self.loss_fn[i], argnums=0, has_aux=True)(
+                                                             self.ffparams,
+                                                             self.ff,
+                                                             self.pdb[i].topology, # wo virtual sites
+                                                             self.potentials[i].meta['cov_map'],
+                                                             self.rc_nm[i],
+                                                             self.ensemble[i],
+                                                             self.T_K[i],
+                                                             self.estimator,
+                                                             self.target_gt[i],
+                                                             self.target_pred_frame[i],
+                                                             pressure=self.P_bar[i]
+                                                             )
+            loss += loss_tmp
+            grads = tree_map(lambda x, y: x + y, grads, grads_tmp)
+            self.utarget.append(utarget)
+        if jnp.isnan(loss) == True:
+            self.resample = [True for i in range(len(self.sampling_params))]
+
+        return loss, grads
+
+    def _resample(self):
+        if len(self.estimator.states) > 0:
+            removedstatename = [self.estimator.states[i].name for i, flag in enumerate(self.resample) if flag]
+            removedstateidx = [i for i, flag in enumerate(self.resample) if flag]
+        else:
+            removedstatename = [self.estimator.states[i].name for i in self.sampling_params]
+            removedstateidx = [i for i in self.sampling_params]
+
+        for idx in removedstateidx:
+            if len(removedstatename) > 0:
+                self.estimator.remove_state(removedstatename[idx])
+                # self.estimator.remove_sample(removedstatename[idx])
+                state_name = removedstatename[idx]
+            elif len(removedstateidx) > 0:
+                state_name = f"sample_{idx}"
+            xtcfile = md_sample(self.pdbfile[idx],
+                                self.ffxml,
+                                f"{state_name}.xtc",
+                                self.rc_nm[idx],
+                                self.T_K[idx],
+                                self.anneal_Tmax[idx],
+                                self.anneal_steps[idx],
+                                self.anneal_totalsteps[idx],
+                                self.dt_fs[idx],
+                                self.nstxout[idx],
+                                self.relax_steps[idx],
+                                self.prod_steps[idx],
+                                self.ensemble[idx])
+            traj = md.load(f"{xtcfile}", top=self.pdbfile[idx])
+            state = OpenMMSampleState(state_name,
+                                    self.ffxml,
+                                    self.pdbfile[idx], # without virtual sites
+                                    temperature=self.T_K[idx],
+                                    pressure=self.P_bar[idx],
+                                    nonbondedMethod=app.PME,
+                                    nonbondedCutoff=self.rc_nm[idx]*unit.nanometer)
+            sample = Sample(traj, state_name)
+            self.estimator.add_state(state)
+            self.estimator.add_sample(sample)
         self.estimator.optimize_mbar()
 
-        self.target_gt = get_target_gt(self.optscheme_params)
-        self.target_pred_frame = get_target_pred_frame("xtcfiles/loop-0.xtc",
-                                                      self.pdbfile,
-                                                      self.optscheme_params)
+    def after_step(self):
+        if True in self.resample:
+            self._resample()
+            self.resample = [False for i in range(len(self.sampling_params))]
+        else:
+            self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
+            self.rescharges = update_rescharges_from_params(self.rescharges, self.ffparams)
+            self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
+            ffparams_wo_charge = {}
+            for key in self.ffparams.keys():
+                if key == "NonbondedForce":
+                    ffparams_wo_charge[key] = {}
+                    for key2 in self.ffparams[key].keys():
+                        if key2 != "charges":
+                            ffparams_wo_charge[key][key2] = self.ffparams[key][key2]
+                elif key == "VsiteForce":
+                    pass
+                else:
+                    ffparams_wo_charge[key] = self.ffparams[key]
+            self.ff.getParameters().parameters = ffparams_wo_charge
+            os.makedirs("xmlfiles", exist_ok=True)
+            self.ff.renderXML(f"xmlfiles/epoch-{self._epoch}.xml")
+            self.ffxml = f'xmlfiles/epoch-{self._epoch}.xml'
 
-    def fit(self, steps=500, add_mask_fn=None, modify_ffparams=None):
-        for i_epoch in range(1, steps+1):
-            (loss, (utarget, wresults)), gradient = get_loss_autograd(
-                                                    ffparams,
-                                                    ff,
-                                                    self.pdb_wovs.topology, # wo virtual sites
-                                                    self.cov_map,
-                                                    self.rc,
-                                                    self.ensemble,
-                                                    self.T_K,
-                                                    self.estimator,
-                                                    self.target_gt,
-                                                    self.target_pred_frame,
-                                                    pressure=self.P_bar
-                                                    )
-
-            if jnp.isnan(loss) == False:
-                nan_flag = False
-                print("Loss:", loss)
-                self.saver.append(i_epoch-1, float(loss), wresults)
-                if os.path.isfile(f"xmlfiles/epoch-{i_epoch-1}.xml") == False:
-                    for i in range(i_epoch, 0, -1): # "xmlfiles/epoch-*.xmlのうち、引数が最新のものをコピー
-                        if os.path.isfile(f"xmlfiles/epoch-{i-2}.xml"):
-                            shutil.copy(f"xmlfiles/epoch-{i-2}.xml", f"xmlfiles/epoch-{i_epoch-1}.xml")
-                            break
-                
-                gradient = add_mask_fn(gradient) if add_mask_fn is not None else gradient
-                updates, opt_state = self.grad_transform.update(gradient, opt_state)
-                ffparams = optax.apply_updates(ffparams, updates)
-                if modify_ffparams is not None:
-                    ffparams = modify_ffparams(ffparams)
-
-                rescharges = update_rescharges_from_params(rescharges, ffparams)
-                ff = update_ffinfo_from_rescharges(ff, rescharges)
-                params_wo_charge = copy.deepcopy(ffparams)
-                if "NonbondedForce" in params_wo_charge:
-                    if "charges" in params_wo_charge["NonbondedForce"]:
-                        del params_wo_charge["NonbondedForce"]["charges"]
-                if "VsiteForce" in params_wo_charge:
-                    del params_wo_charge["VsiteForce"]
-
-                ff.getParameters().parameters = params_wo_charge
-                os.makedirs("xmlfiles", exist_ok=True)
-                ff.renderXML(f"xmlfiles/epoch-{i_epoch}.xml")
-                ffxml = f'xmlfiles/epoch-{i_epoch}.xml'
-
-                # checkout the effective size of each sample in the estimator
-                print('Effective sample sizes:')
+            print('Effective sample sizes:')
+            for ii in range(len(self.sampling_params)):
                 try:
-                    ieff = self.estimator.estimate_effective_sample(utarget, decompose=True)
+                    ieff = self.estimator.estimate_effective_sample(self.utarget[ii], decompose=True)
                     for k, v in ieff.items():
                         print(f'{k}: {v}')
-                    for k, v in ieff.items():
-                        if v < self.neff and k != "Total":
-                            self.estimator.remove_state(k)
+                    for i, (k, v) in enumerate(ieff.items()):
+                        if v < self.neff and k != "Total" and ii == i:
+                            self.resample[i] = True
+                            print(f"{i} -> Resample")
                 except:
+                    print(f"Warning: Error in estimating effective sample size")
                     self.estimator.states = []
                     self.estimator.samples = []
-            else:
-                nan_flag = True
-                self.estimator.states = []
-                self.estimator.samples = []
+                    self.resample = [True for i in range(len(self.sampling_params))]
 
-            if len(self.estimator.states) < 1 or nan_flag == True:
-                print("Add", f"loop-{i_epoch}")
-                # get new sample using the current state
-                self.state_init = md_sample(self.pdbfile_wovs,
-                                       ffxml,
-                                       f"loop-{i_epoch}.xtc",
-                                       self.sampling_params,
-                                       self.forcefield_params
-                                       )
-                traj = md.load(f"xtcfiles/loop-{i_epoch}.xtc", top=self.pdbfile)
-                state = OpenMMSampleState(f"loop-{i_epoch}",
-                                          ffxml,
-                                          self.pdbfile_wovs, # without virtual sites
-                                          temperature=self.T_K,
-                                          pressure=self.P_bar,
-                                          nonbondedMethod=app.PME,
-                                          nonbondedCutoff=self.rc*unit.nanometer)
-                sample = Sample(traj, f"loop-{i_epoch}")
-                self.estimator.add_state(state)
-                self.estimator.add_sample(sample)
-                self.estimator.optimize_mbar()
-                
-                self.target_pred_frame = get_target_pred_frame(f"xtcfiles/loop-{i_epoch}.xtc",
-                                                               self.pdbfile,
-                                                               self.optscheme_params)
-                plot_compare(self.target_gt, self.target_pred_frame)
-
-            self.saver.save(basename="results")
-            self.saver.plot_learningcurve()
+            if True in self.resample:
+                self._resample()
+                self.resample = [False for i in range(len(self.sampling_params))]

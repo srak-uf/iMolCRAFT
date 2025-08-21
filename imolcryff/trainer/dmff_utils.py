@@ -47,21 +47,9 @@ def parser_dmffyaml(yaml_file):
                 "anneal_Tmax": 400,
                 "anneal_totaltime": 0,
                 "nstxout": 100
-            }, 
-        "forcefield":
-            {
-                "residue_ratio": [1], 
-                "rcut_nm": 1.2
-            },
-        "opt_scheme":
-            {
-                "n_epochs": 400,
-                "algo": "adam",
-                "lr": 0.001,
             }
     }
     necessarykeys_sampling = ["init_structure", "relax_steps", "prod_steps"]
-    necessarykeys_forcefield = ["xml_list"]
     target_types = ['density_gcm3', 'La_A', 'Lb_A', 'Lc_A', 'rdf', 'adf']
 
     with open(yaml_file, 'r') as file:
@@ -70,47 +58,57 @@ def parser_dmffyaml(yaml_file):
     # Check for required keys and set defaults if not present
     if 'sampling' not in data:
         data['sampling'] = default_params['opt_sample']
-    if 'forcefield' not in data:
-        data['forcefield'] = default_params['opt_ff']
     for key in default_params['sampling']:
         if key not in data['sampling']:
             data['sampling'][key] = default_params['sampling'][key]
-    for key in default_params['forcefield']:
-        if key not in data['forcefield']:
-            data['forcefield'][key] = default_params['forcefield'][key]
 
     # Check for necessarykeys_sampling, necessarykeys_forcefield
     for key in necessarykeys_sampling:
         if key not in data['sampling']:
             raise KeyError(f"Missing necessary key in sampling: {key}")
-    for key in necessarykeys_forcefield:
-        if key not in data['forcefield']:
-            raise KeyError(f"Missing necessary key in forcefield: {key}")
         
-    # Check for residue ratio
-    if len(data['forcefield']['xml_list']) != len(data['forcefield']['residue_ratio']):
-        raise ValueError("Mismatch between XML list and residue ratio length.")
-    
     # Check for file existence
     if not os.path.isfile(data['sampling']['init_structure']):
         raise FileNotFoundError(f"Initial structure file {data['sampling']['init_structure']} not found.")
-    for xml_file in data['forcefield']['xml_list']:
-        if not os.path.isfile(xml_file):
-            raise FileNotFoundError(f"XML file {xml_file} not found.")
         
     # Check for valid ensemble
-    valid_ensembles = ["nve", "nvt", "isonpt", "anisonpt", "trinpt", "npt"]
+    valid_ensembles = ["nve", "nvt", "isonpt", "anisonpt", "trinpt"]
     if data['sampling']['ensemble'] not in valid_ensembles:
         raise ValueError(f"Invalid ensemble {data['sampling']['ensemble']}. Must be one of {valid_ensembles}.")
-    elif data['sampling']['ensemble'] == "npt":
-        data['sampling']['ensemble'] = "anisonpt"
-        
-    # Check for valid target types
-    if 'target_types' in data["opt_scheme"]:
-        for target_name in data['opt_scheme']['targets'].keys():
-            if target_name not in target_types:
-                raise ValueError(f"Invalid target type {target_name}. Must be one of {target_types}.")
-    
+
+    # check for valid target_types
+    valid_targets = ["density_gcm3", "La_A", "Lb_A", "Lc_A", "rdf", "adf"]
+    if 'targets' not in data:
+        raise KeyError("Missing necessary key in data: targets")
+    for target_name in data['targets']:
+        if target_name not in valid_targets:
+            raise ValueError(f"Invalid target type {target_name}. Must be one of {valid_targets}.")
+        if target_name in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
+            if "gt" not in data['targets'][target_name]:
+                raise KeyError(f"Missing ground truth for target {target_name}.")
+            if "weight" not in data['targets'][target_name]:
+                raise KeyError(f"Missing weight for target {target_name}.")
+        if target_name in ["rdf"]:
+            for key in data["targets"][target_name].keys():
+                if "elem1" not in data['targets'][target_name][key]:
+                    raise KeyError(f"Missing elem1 for target {target_name}: {key}.")
+                if "elem2" not in data['targets'][target_name][key]:
+                    raise KeyError(f"Missing elem2 for target {target_name}: {key}.")
+                if "rcut12_A" not in data['targets'][target_name][key]:
+                    raise KeyError(f"Missing rcut12_A for target {target_name}: {key}.")
+        if target_name in ["adf"]:
+            for key in data["targets"][target_name].keys():
+                if "elem1" not in data["targets"][target_name][key]:
+                    raise KeyError(f"Missing elem1 for target {target_name}: {key}.")
+                if "elem2" not in data["targets"][target_name][key]:
+                    raise KeyError(f"Missing elem2 for target {target_name}: {key}.")
+                if "elem3" not in data["targets"][target_name][key]:
+                    raise KeyError(f"Missing elem3 for target {target_name}: {key}.")
+                if "rcut12_A" not in data["targets"][target_name][key]:
+                    raise KeyError(f"Missing rcut12_A for target {target_name}: {key}.")
+                if "rcut23_A" not in data["targets"][target_name][key]:
+                    raise KeyError(f"Missing rcut23_A for target {target_name}: {key}.")
+
     # output parsed data as yaml, the filename is added with "_parsed"
     yaml_file = os.path.splitext(yaml_file)[0] + "_parsed.yaml"
     with open(yaml_file, 'w') as file:
@@ -118,15 +116,15 @@ def parser_dmffyaml(yaml_file):
     
     return data
 
-def get_target_gt(optscheme_params: dict):
+def get_target_gt(target_params: dict):
     """
     Get the ground truth values for the targets from the parameters obtained by parser_dmffyaml().
 
     Parameters
     ----------
-    optscheme_params : dict
-        Parameters for the optimization scheme, including target parameters.
-        keys(optscheme_params[targets]) = ['density_gcm3', 'La_A', 'Lb_A', 'Lc_A', 'rdf', 'adf']
+    target_params : dict
+        Parameters for the target parameters.
+        keys(target_params) = ['density_gcm3', 'La_A', 'Lb_A', 'Lc_A', 'rdf', 'adf']
 
     Returns
     -------
@@ -134,17 +132,17 @@ def get_target_gt(optscheme_params: dict):
         Dictionary containing the ground truth values for the targets.
     """
     target_gt = {}
-    for target_name in optscheme_params["targets"].keys():
+    for target_name in target_params.keys():
         if target_name not in ["rdf", "adf"]:
             target_gt[target_name] = {}
-            target_gt[target_name]["gt"] = float(optscheme_params["targets"][target_name]["gt"])
-            target_gt[target_name]["weight"] = float(optscheme_params["targets"][target_name]["weight"])
+            target_gt[target_name]["gt"] = float(target_params[target_name]["gt"])
+            target_gt[target_name]["weight"] = float(target_params[target_name]["weight"])
         else:
             target_gt[target_name] = {}
-            for key in optscheme_params["targets"][target_name].keys():
+            for key in target_params[target_name].keys():
                 target_gt[target_name][key] = {}
-                gt_file = optscheme_params["targets"][target_name][key]["gt"]
-                weight = optscheme_params["targets"][target_name][key]["weight"]
+                gt_file = target_params[target_name][key]["gt"]
+                weight = target_params[target_name][key]["weight"]
                 target_gt[target_name][key]["gt"] = np.loadtxt(gt_file).T[1]
                 target_gt[target_name][key]["weight"] = float(weight)
     return target_gt
@@ -422,7 +420,22 @@ def get_rescharges_from_residues(ff, ratio=None):
     else:
         return rescharges
 
-def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params, useDispersionCorrection=False):
+def md_sample(initialpdb,
+              ffxml,
+              trajectory,
+              rc,
+              T,
+              anneal_Tmax,
+              anneal_steps,
+              anneal_totalsteps,
+              dt,
+              nstxout,
+              relax_steps,
+              prod_steps,
+              ensemble,
+              useDispersionCorrection=False,
+              useHbondConstraint=True,
+              rigidWater=False):
     """
     Run MD simulation with OpenMM
 
@@ -436,8 +449,6 @@ def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params, useDisp
         Path to the output trajectory file
     sampling_params : dict
         Dictionary containing sampling parameters such as temperature, annealing steps, etc.
-    ff_params : dict
-        Dictionary containing force field parameters such as cutoff radius
     useDispersionCorrection : bool, optional
         Whether to use dispersion correction in the nonbonded force. Default is False.
 
@@ -448,15 +459,6 @@ def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params, useDisp
     """
     pdb = app.PDBFile(initialpdb)
     forcefield = app.ForceField(ffxml)
-    rc = ff_params["rcut_nm"]
-    T = sampling_params["temperature_K"]
-    anneal_Tmax = sampling_params["anneal_Tmax"]
-    anneal_steps = sampling_params["anneal_steps"]
-    anneal_totalsteps = sampling_params["anneal_totalsteps"]
-    dt = sampling_params["dt_fs"]
-    nstxout = sampling_params["nstxout"]
-    relax_steps = sampling_params["relax_steps"]
-    prod_steps = sampling_params["prod_steps"]
     
     modeller = app.Modeller(pdb.topology, pdb.getPositions())
     modeller.addExtraParticles(forcefield)
@@ -464,34 +466,45 @@ def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params, useDisp
     topology = modeller.topology
     # modellerをpdbに書き出す
     # app.PDBFile.writeFile(topology, pos, open("modeller.pdb", "w"))
-    
-    system = forcefield.createSystem(topology, 
-                                     nonbondedMethod=app.PME,
-                                     nonbondedCutoff=rc*unit.nanometer,
-                                     constraints=app.HBonds,
-                                     rigidWater=False)
+
+    if useHbondConstraint:
+        system = forcefield.createSystem(topology, 
+                                        nonbondedMethod=app.PME,
+                                        nonbondedCutoff=rc*unit.nanometer,
+                                        constraints=app.HBonds,
+                                        rigidWater=rigidWater)
+    else:
+        system = forcefield.createSystem(topology, 
+                                        nonbondedMethod=app.PME,
+                                        nonbondedCutoff=rc*unit.nanometer,
+                                        rigidWater=rigidWater)
+        
     for force in system.getForces():
         if isinstance(force, openmm.NonbondedForce):
             if useDispersionCorrection:
                 force.setUseDispersionCorrection(True)
             else:
                 force.setUseDispersionCorrection(False)
-    
-    if sampling_params["ensemble"] == "isonpt":
+
+    print(f"Using {ensemble} ensemble")
+    if ensemble == "isonpt":
+        print("Isotropic pressure control")
         system.addForce(openmm.MonteCarloBarostat(1.0*unit.bar, T*unit.kelvin))
-    elif sampling_params["ensemble"] == "anisonpt":
+    elif ensemble == "anisonpt":
+        print("Anisotropic pressure control")
         system.addForce(openmm.MonteCarloAnisotropicBarostat([1.0*unit.bar] * 3, T*unit.kelvin))
-    elif sampling_params["ensemble"] == "trinpt":
+    elif ensemble == "trinpt":
         system.addForce(openmm.MonteCarloFlexibleBarostat(1.0*unit.bar, T*unit.kelvin))
     
     integrator = openmm.LangevinIntegrator(T*unit.kelvin, 5/unit.picosecond, dt*unit.femtosecond)
     simulation = app.Simulation(topology, system, integrator)
-    
+    xtcfile = os.path.join("xtcfiles", trajectory)
     try:
-        os.remove(trajectory)
+        os.remove(xtcfile)
     except:
         pass
     simulation.context.setPositions(pos)
+    print("== Energy minimization ==")
     simulation.minimizeEnergy()
     simulation.context.setVelocitiesToTemperature(T*unit.kelvin)
 
@@ -499,28 +512,25 @@ def md_sample(initialpdb, ffxml, trajectory, sampling_params, ff_params, useDisp
 
     # relaxation run
     ## SA
-    deltaT = (T-anneal_Tmax)/anneal_steps
-    step_pertemp = int(anneal_totalsteps/anneal_steps)
-    for i in range(anneal_steps):
-        integrator.setTemperature((anneal_Tmax+deltaT*i)*unit.kelvin)
-        simulation.step(step_pertemp)
+    if anneal_totalsteps > 0:
+        print("== Start Simulated Annealing ==")
+        deltaT = (T-anneal_Tmax)/anneal_steps
+        step_pertemp = int(anneal_totalsteps/anneal_steps)
+        for i in range(anneal_steps):
+            integrator.setTemperature((anneal_Tmax+deltaT*i)*unit.kelvin)
+            simulation.step(step_pertemp)
     ## relax at desired temperature
+    print("== Start Relaxation ==")
     integrator.setTemperature(T*unit.kelvin)
     simulation.step(relax_steps)
     # production run
+    print("== Start Production ==")
     os.makedirs("xtcfiles", exist_ok=True)
-    simulation.reporters.append(app.XTCReporter(f"xtcfiles/{trajectory}",nstxout))
+    simulation.reporters.append(app.XTCReporter(xtcfile, nstxout))
     simulation.step(prod_steps)
+    return xtcfile
 
-    # u = md.load_xtc(f"xtcfiles/{trajectory}", top = initialpdb)
-    # positions = jnp.array(u.xyz)
-    state_init = {}
-    # state_init['pos'] = positions
-    # key, subkey = random.split(key)
-    return state_init #, key
-
-
-def get_target_pred_frame(xtcfile, pdbfile, optscheme_params: dict):
+def get_target_pred_frame(xtcfile, pdbfile, target_params: dict):
     """
     Get the predicted values for the targets from the parameters obtained by parser_dmffyaml().
     Parameters
@@ -529,17 +539,16 @@ def get_target_pred_frame(xtcfile, pdbfile, optscheme_params: dict):
         Path to the XTC file.
     pdbfile : str
         Path to the PDB file.
-    optscheme_params : dict 
-        Parameters for the optimization scheme, including target parameters.
-        keys(optscheme_params[targets]) = ['density_gcm3', 'La_A', 'Lb_A', 'Lc_A', 'rdf', 'adf']
-    
+    target_params : dict
+        Parameters for the target parameters.
+        keys(target_params) = ['density_gcm3', 'La_A', 'Lb_A', 'Lc_A', 'rdf', 'adf']
+
     Returns
     -------
     target_pred : dict
         Dictionary containing the predicted values for the targets.
     """
     target_pred = {}
-    target_params = optscheme_params["targets"]
     u = MDAnalysis.Universe(pdbfile, xtcfile)
 
     for target_name in target_params.keys():
@@ -570,94 +579,6 @@ def get_target_pred_frame(xtcfile, pdbfile, optscheme_params: dict):
                                                                rcut12=rcut12_A,
                                                                rcut23=rcut23_A)
     return target_pred
-
-def get_loss_autograd(ffparams: dict,
-                      ff: Hamiltonian,
-                      topology: app.Topology | DMFFTopology, 
-                      cov_map,
-                      rc: float,
-                      ensemble: str,
-                      Temperature_K: float,
-                      estimator,
-                      target_gt: dict,
-                      target_pred: dict,
-                      pressure: float = 1.0,
-                      useDispersionCorrection: bool = False
-                      ):
-    """
-    Calculate the loss function for the given parameters.
-    Parameters
-    ----------
-    ffparams : dict
-        Parameters for the force field.
-    ff : Hamiltonian
-        Hamiltonian object for the force field.
-    topology : app.Topology | DMFFTopology
-        Topology object for the system.
-    cov_map : dict
-        Covalent map for the system.
-    rc : float
-        Cutoff radius for the nonbonded interactions.
-    ensemble : str
-        Ensemble type (e.g., "nvt", "npt").
-    Temperature_K : float
-        Temperature in Kelvin.
-    estimator : object
-        Estimator object for the target state.
-    target_gt : dict
-        Ground truth values for the targets.
-    target_pred : dict
-        Predicted values for the targets.
-    pressure : float, optional
-        Pressure in bar. Default is 1.0.
-    useDispersionCorrection : bool, optional
-        Whether to use dispersion correction in the nonbonded force. Default is False.
-    Returns
-    -------
-    loss : float
-        Loss value.
-    """
-    def Loss(ffparams, target_pred):
-        ff_d = update_ffinfo_from_params(ff, ffparams)
-        ffparams_wo_charge = copy.deepcopy(ffparams)
-        del ffparams_wo_charge["NonbondedForce"]["charges"]
-        pots = ff_d.createPotential(topology,
-                                    nonbondedMethod=app.PME,
-                                    nonbondedCutoff=rc*unit.nanometer,
-                                    useDispersionCorrection=useDispersionCorrection)
-        efunc = jit(pots.getPotentialFunc())
-        if ensemble in ["isonpt", "anisonpt", "trinpt"]:
-            ens = "npt"
-        else:
-            ens = ensemble
-        target_energy_function = buildTrajEnergyFunction(efunc,
-                                                         cov_map,
-                                                         rc,
-                                                         ensemble=ens,
-                                                         useFreud=True,
-                                                         pressure=pressure)
-        target_state = TargetState(Temperature_K, target_energy_function)
-        weight, utarget = estimator.estimate_weight(target_state, parameters=ffparams_wo_charge)
-
-        loss = 0.0
-        weighted_results = {}
-        for key in target_gt.keys():
-            if key in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
-                density_pred = jnp.average(target_pred[key], weights=weight)
-                weighted_results[key] = density_pred
-                loss += target_gt[key]["weight"]*(target_gt[key]["gt"] \
-                                                  - density_pred)**2 / target_gt[key]["gt"]**2
-            elif key in ["rdf", "adf"]:
-                weighted_results[key] = {}
-                for kind in target_gt[key].keys():
-                    rdf_pred = (target_pred[key][kind] * weight.reshape((-1, 1))).sum(axis=0)
-                    weighted_results[key][kind] = rdf_pred
-                    loss += target_gt[key][kind]["weight"]*\
-                        jnp.log(jnp.power((rdf_pred - target_gt[key][kind]["gt"])/target_gt[key][kind]["gt"].max(), 2).mean())
-        return loss, (utarget, weighted_results)
-
-    (loss, (utarget, wresults)), gradient = value_and_grad(Loss, argnums=(0), has_aux=True)(ffparams, target_pred)
-    return (loss, (utarget, wresults)), gradient
 
 def plot_compare(target_gt, target_pred_frame):
     num_plots = 0
