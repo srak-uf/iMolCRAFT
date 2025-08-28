@@ -190,6 +190,8 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
         Force field parameters.
     natoms_list : jnp.ndarray
         List of number of atoms in the system.
+    nc : float, optional
+        The net charge of the system.
     target_lists : list, optional
         List of targets to make charge the target_charges value. If None, all atoms are neutralized.
         ex: [[0, 1], [2, 3]] means that the first two atoms are neutralized to target_charges[0] and the next two atoms are neutralized to target_charges[1].
@@ -580,7 +582,7 @@ def get_target_pred_frame(xtcfile, pdbfile, target_params: dict):
                                                                rcut23=rcut23_A)
     return target_pred
 
-def plot_compare(target_gt, target_pred_frame):
+def plot_compare(target_gt, target_pred_frame, label="sample"):
     num_plots = 0
     for key in target_gt.keys():
         if key in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
@@ -588,7 +590,6 @@ def plot_compare(target_gt, target_pred_frame):
         elif key in ["rdf", "adf"]:
             for kind in target_gt[key].keys():
                 num_plots += 1
-
     num_raw = np.max([math.ceil(num_plots/2),2])
     fig, ax = plt.subplots(num_raw, 2, figsize=(6.5,2.5*num_raw))
     i_plot = 0
@@ -610,9 +611,8 @@ def plot_compare(target_gt, target_pred_frame):
                 ax[i_plot//2, i_plot%2].plot(spectra, alpha=0.5)
                 ax[i_plot//2, i_plot%2].plot(target_gt[key][kind]["gt"], label="gt")
                 i_plot += 1
-
     plt.tight_layout()
-    fig.savefig('sample.png')
+    fig.savefig(f'{label}.png')
     plt.close(fig)
 
 class saver_wresults:

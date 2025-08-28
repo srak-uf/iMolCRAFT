@@ -1,4 +1,3 @@
-from sympy import ff
 from dmff import Hamiltonian, DMFFTopology
 from dmff.common.nblist import NoCutoffNeighborList
 from dmff.api.xmlio import XMLIO
@@ -15,10 +14,13 @@ from jax import value_and_grad
 from jax.tree_util import tree_map
 from ..trainer.dmff_utils import  \
     update_rescharges_from_params, update_ffinfo_from_rescharges, \
-    update_ffinfo_from_params, md_sample, get_target_pred_frame, get_target_gt
+    update_ffinfo_from_params, md_sample, get_target_pred_frame, get_target_gt, \
+    plot_compare
 from .base import BaseTrainer
 from ..calculator import DihedralCalculator, DistanceCalculator
 from openmm import unit
+from matplotlib.ticker import MaxNLocator
+import matplotlib.pyplot as plt
 
 class DistanceTrainer(BaseTrainer):
     def __init__(self,
@@ -339,12 +341,14 @@ class ThermodynamicTrainer(BaseTrainer):
         if isinstance(self.sampling_params, dict):
             self.pdb = [self.pdb]
             self.pdbfile = [self.pdbfile]
+            self.pdbfile_vsite = [self.pdbfile_vsite]
             self.potentials = [self.potentials]
             self.topology = [self.topology]
             self.sampling_params = [self.sampling_params]
         elif isinstance(self.sampling_params, list):
             self.pdbfile = []
             self.pdb = []
+            self.pdbfile_vsite = []
             self.potentials = []
             self.topology = []
             self.T_K = []
@@ -353,7 +357,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 self.pdb.append(app.PDBFile(self.pdbfile[i]))
                 self.potentials.append(self.ff.createPotential(self.pdb[i].topology,
                                                                nonbondedMethod=app.PME,
-                                                               nonbondedCutoff=self.rc*unit.nanometer))
+                                                               nonbondedCutoff=self.sampling_params[i]["rcut_nm"]*unit.nanometer))
                 self.topology.append(self.pdb[i].topology)
                 if self.num_vsites > 0:
                     modeller = Modeller(self.pdb[i].topology, self.pdb[i].positions)
@@ -362,6 +366,10 @@ class ThermodynamicTrainer(BaseTrainer):
                     self.topology[i] = modeller.topology
                 else:
                     self.topology[i] = self.pdb[i].topology
+                # self.pdbfile[i]のbasenameにvs_をつけて保存
+                vs_pdbfile = f"vs_{os.path.basename(self.pdbfile[i])}"
+                app.PDBFile.writeFile(self.topology[i], pos, open(vs_pdbfile, 'w'))
+                self.pdbfile_vsite.append(vs_pdbfile)
         else:
             raise AssertionError("Invalid sampling parameters")
 
@@ -431,14 +439,14 @@ class ThermodynamicTrainer(BaseTrainer):
                                       pressure=self.P_bar[i],
                                       nonbondedMethod=app.PME,
                                       nonbondedCutoff=self.rc_nm[i]*unit.nanometer)
-            traj = md.load(xtcfile, top=self.pdbfile[i])
+            traj = md.load(xtcfile, top=self.pdbfile_vsite[i])
             sample = Sample(traj, state_name)
             self.estimator.add_state(state)
             self.estimator.add_sample(sample)
 
             self.target_gt.append(get_target_gt(self.target_params[i]))
             self.target_pred_frame.append(get_target_pred_frame(xtcfile,
-                                                                self.pdbfile[i],
+                                                                self.pdbfile_vsite[i],
                                                                 self.target_params[i]))
         self.estimator.optimize_mbar()
         self.opt_state = self.optimizer.init(self.ffparams)
@@ -446,23 +454,27 @@ class ThermodynamicTrainer(BaseTrainer):
     def get_loss_gradients(self):
         grads = tree_map(lambda x: x*0.0, self.ffparams)
         loss = 0.0
+        self.utarget = []
+        self.wresults = []
         for i in range(len(self.sampling_params)):
-            (loss_tmp, (utarget, wresults)), grads_tmp = value_and_grad(self.loss_fn[i], argnums=0, has_aux=True)(
-                                                             self.ffparams,
-                                                             self.ff,
-                                                             self.pdb[i].topology, # wo virtual sites
-                                                             self.potentials[i].meta['cov_map'],
-                                                             self.rc_nm[i],
-                                                             self.ensemble[i],
-                                                             self.T_K[i],
-                                                             self.estimator,
-                                                             self.target_gt[i],
-                                                             self.target_pred_frame[i],
-                                                             pressure=self.P_bar[i]
-                                                             )
+            (loss_tmp, (utarget, wresults)), grads_tmp = \
+                value_and_grad(self.loss_fn[i], argnums=0, has_aux=True)(
+                                            self.ffparams,
+                                            self.ff,
+                                            self.pdb[i].topology, # wo virtual sites
+                                            self.potentials[i].meta['cov_map'],
+                                            self.rc_nm[i],
+                                            self.ensemble[i],
+                                            self.T_K[i],
+                                            self.estimator,
+                                            self.target_gt[i],
+                                            self.target_pred_frame[i],
+                                            pressure=self.P_bar[i]
+                                            )
             loss += loss_tmp
             grads = tree_map(lambda x, y: x + y, grads, grads_tmp)
             self.utarget.append(utarget)
+            self.wresults.append(wresults)
         if jnp.isnan(loss) == True:
             self.resample = [True for i in range(len(self.sampling_params))]
 
@@ -483,6 +495,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 state_name = removedstatename[idx]
             elif len(removedstateidx) > 0:
                 state_name = f"sample_{idx}"
+            print(f"Resampling {state_name}... by {self.ffxml}")
             xtcfile = md_sample(self.pdbfile[idx],
                                 self.ffxml,
                                 f"{state_name}.xtc",
@@ -496,7 +509,7 @@ class ThermodynamicTrainer(BaseTrainer):
                                 self.relax_steps[idx],
                                 self.prod_steps[idx],
                                 self.ensemble[idx])
-            traj = md.load(f"{xtcfile}", top=self.pdbfile[idx])
+            traj = md.load(f"{xtcfile}", top=self.pdbfile_vsite[idx])
             state = OpenMMSampleState(state_name,
                                     self.ffxml,
                                     self.pdbfile[idx], # without virtual sites
@@ -505,12 +518,15 @@ class ThermodynamicTrainer(BaseTrainer):
                                     nonbondedMethod=app.PME,
                                     nonbondedCutoff=self.rc_nm[idx]*unit.nanometer)
             sample = Sample(traj, state_name)
+            self.target_pred_frame[idx] = get_target_pred_frame(xtcfile,
+                                                                self.pdbfile_vsite[idx],
+                                                                self.target_params[idx])
             self.estimator.add_state(state)
             self.estimator.add_sample(sample)
         self.estimator.optimize_mbar()
 
     def after_step(self):
-        if True in self.resample:
+        if True in self.resample: # i.e., loss is nan
             self._resample()
             self.resample = [False for i in range(len(self.sampling_params))]
         else:
@@ -530,19 +546,19 @@ class ThermodynamicTrainer(BaseTrainer):
                     ffparams_wo_charge[key] = self.ffparams[key]
             self.ff.getParameters().parameters = ffparams_wo_charge
             os.makedirs("xmlfiles", exist_ok=True)
-            self.ff.renderXML(f"xmlfiles/epoch-{self._epoch}.xml")
-            self.ffxml = f'xmlfiles/epoch-{self._epoch}.xml'
+            self.ff.renderXML(f"xmlfiles/epoch-{self._epoch+1}.xml")
+            self.ffxml = f'xmlfiles/epoch-{self._epoch+1}.xml'
 
             print('Effective sample sizes:')
             for ii in range(len(self.sampling_params)):
                 try:
                     ieff = self.estimator.estimate_effective_sample(self.utarget[ii], decompose=True)
                     for k, v in ieff.items():
-                        print(f'{k}: {v}')
+                        print(f'  {k}: {v}')
                     for i, (k, v) in enumerate(ieff.items()):
-                        if v < self.neff and k != "Total" and ii == i:
+                        if v < self.neff[ii] and k != "Total" and ii == i:
                             self.resample[i] = True
-                            print(f"{i} -> Resample")
+                            print(f"  {i} -> Resample")
                 except:
                     print(f"Warning: Error in estimating effective sample size")
                     self.estimator.states = []
@@ -552,3 +568,103 @@ class ThermodynamicTrainer(BaseTrainer):
             if True in self.resample:
                 self._resample()
                 self.resample = [False for i in range(len(self.sampling_params))]
+
+    def write_checkpoint(self, checkpoint_frequency):
+        if self._epoch % checkpoint_frequency == 0:
+            with open(f"train_state.pkl", "wb") as f:
+                dump_dict = {
+                    "ffparams": self.ffparams,
+                    "opt_state": self.opt_state,
+                    "ffinfo": self.ff.ffinfo,
+                    "rescharges": self.rescharges,
+                    "pdb": self.pdb,
+                    "topology": self.topology,
+                    "T_K": self.T_K,
+                    "P_bar": self.P_bar,
+                    "anneal_steps": self.anneal_steps,
+                    "anneal_Tmax": self.anneal_Tmax,
+                    "anneal_totalsteps": self.anneal_totalsteps,
+                    "relax_steps": self.relax_steps,
+                    "rc_nm": self.rc_nm,
+                    "prod_steps": self.prod_steps,
+                    "nstxout": self.nstxout,
+                    "neff": self.neff,
+                    "dt_fs": self.dt_fs,
+                    "ensemble": self.ensemble,
+                    "target_params": self.target_params,
+                    "sampling_params": self.sampling_params,
+                    "epoch": self._epoch,
+                    "losses": self.losses,
+                    "epochs": self.epochs,
+                    "label": self.label,
+                    "optimizer_algo": self.optimizer_algo,
+                    "opt_fftypes": self.opt_fftypes,
+                    "lr": self.lr,
+                    "clip": self.clip,
+                    "target_gt": self.target_gt,
+                    "target_pred_frame": self.target_pred_frame
+                }
+                pickle.dump(dump_dict, f)
+
+            # plotter
+            for i in range(len(self.target_gt)):
+                plot_compare(self.target_gt[i], self.target_pred_frame[i], label=f"sample_{i}")
+
+            fig, ax = plt.subplots(1, 1, figsize=(3.25,2.5))
+            ax.plot(self.epochs, self.losses)
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("Loss")
+            plt.tight_layout()
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            fig.savefig(f"{self.label}_learning_curve.png")
+            plt.close(fig)
+
+    @classmethod
+    def from_checkpoint(cls,
+                        trainer_checkpoint,
+                        ffxml_list,
+                        nums_ffxml,
+                        pdbfile,
+                        initial_ffxml,
+                        loss_fn=None,
+                        opt_fftypes=None,
+                        optimizer_algo=None,
+                        lr=None,
+                        clip=None):
+
+        with open(trainer_checkpoint, "rb") as f:
+            dump_dict = pickle.load(f)
+
+        if lr is None:
+            lr = dump_dict["lr"]
+            del dump_dict["lr"]
+        if clip is None:
+            clip = dump_dict["clip"]
+            del dump_dict["clip"]
+        if optimizer_algo is None:
+            optimizer_algo = dump_dict["optimizer_algo"]
+            del dump_dict["optimizer_algo"]
+        if opt_fftypes is None:
+            opt_fftypes = dump_dict["opt_fftypes"]
+            del dump_dict["opt_fftypes"]
+
+        trainer = cls(ffxml_list=ffxml_list,
+                      nums_ffxml=nums_ffxml,
+                      pdbfile=pdbfile,
+                      loss_fn=loss_fn,
+                      sampling_params=dump_dict["sampling_params"],
+                      target_params=dump_dict["target_params"],
+                      opt_fftypes=opt_fftypes,
+                      optimizer_algo=optimizer_algo,
+                      label=dump_dict["label"],
+                      lr=lr,
+                      clip=clip)
+
+        for key, value in dump_dict.items():
+            setattr(trainer, key, value)
+
+        # order is important
+        trainer.ffxml = initial_ffxml
+        trainer.opt_state = dump_dict["opt_state"]
+
+        return trainer
