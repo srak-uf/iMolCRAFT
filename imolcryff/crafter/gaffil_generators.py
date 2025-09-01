@@ -15,7 +15,9 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
         "gaff-2.11",
     ]
 
-    def __init__(self, molecules, il_assign=None, forcefield_files=None, cache=None, **kwargs):
+    def __init__(
+        self, molecules, il_assign=None, forcefield_files=None, cache=None, **kwargs
+    ):
         super().__init__(molecules, forcefield_files=None, cache=None, **kwargs)
         for molecule in molecules:
             for mm in self._molecules.items():
@@ -23,7 +25,7 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
                     mm[1].mol2file = molecule.mol2file
 
         if il_assign == None:
-            self.il_assign =  {"FSA": {"S": "s6", "N": "n", "O": "o", "F": "f"}}
+            self.il_assign = {"FSA": {"S": "s6", "N": "n", "O": "o", "F": "f"}}
         else:
             self.il_assign = il_assign
 
@@ -34,21 +36,26 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
         self._generate_unique_atom_names(molecule)
         smiles = molecule.to_smiles()
         mol2file = self.run_antech(molecule)
-        mol2_dict = read_mol2(mol2file) 
+        mol2_dict = read_mol2(mol2file)
         for index, atominfo in enumerate(mol2_dict["@<TRIPOS>ATOM"]):
             molecule.atoms[index].gaff_type = atominfo[5]
-        
+
         frcmod_filename = self.run_parmchk(mol2file)
         from io import StringIO
         from inspect import (  # use introspection to support multiple parmed versions
             signature,
         )
+
         leaprc = StringIO(f"parm = loadamberparams {frcmod_filename}")
 
         import parmed
+
         params = parmed.amber.AmberParameterSet.from_leaprc(leaprc)
         kwargs = {}
-        if "remediate_residues" in signature(parmed.openmm.OpenMMParameterSet.from_parameterset).parameters:
+        if (
+            "remediate_residues"
+            in signature(parmed.openmm.OpenMMParameterSet.from_parameterset).parameters
+        ):
             kwargs["remediate_residues"] = False
         params = parmed.openmm.OpenMMParameterSet.from_parameterset(params, **kwargs)
         ffxml = StringIO()
@@ -68,6 +75,7 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
 
         # Create the residue template
         from lxml import etree
+
         root = etree.fromstring(ffxml_contents)
         # Create residue definitions
         residues = etree.SubElement(root, "Residues")
@@ -94,9 +102,13 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
                     atomName2=bond.atom2.name,
                 )
             elif (bond.atom1 in residue_atoms) and (bond.atom2 not in residue_atoms):
-                bond = etree.SubElement(residue, "ExternalBond", atomName=bond.atom1.name)
+                bond = etree.SubElement(
+                    residue, "ExternalBond", atomName=bond.atom1.name
+                )
             elif (bond.atom1 not in residue_atoms) and (bond.atom2 in residue_atoms):
-                bond = etree.SubElement(residue, "ExternalBond", atomName=bond.atom2.name)
+                bond = etree.SubElement(
+                    residue, "ExternalBond", atomName=bond.atom2.name
+                )
         # Render XML into string and append to parameters
         ffxml_contents = etree.tostring(root, pretty_print=True, encoding="unicode")
 
@@ -113,7 +125,7 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
             output = subprocess.getoutput(cmd)
             gaffmol2 = read_mol2(f"{mol2file}.gaff")
             chgmol2 = read_mol2(f"{mol2file}")
-            # charges 
+            # charges
             for i in range(len(gaffmol2["@<TRIPOS>ATOM"])):
                 gaffmol2["@<TRIPOS>ATOM"][i][8] = chgmol2["@<TRIPOS>ATOM"][i][8]
 
@@ -130,13 +142,19 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
             for i, bond in enumerate(molecule.bonds):
                 atom1_idx = bond.atom1_index + 1
                 atom2_idx = bond.atom2_index + 1
-                gaffmol2["@<TRIPOS>BOND"][i] = [i+1, atom1_idx, atom2_idx, bond.bond_order]
+                gaffmol2["@<TRIPOS>BOND"][i] = [
+                    i + 1,
+                    atom1_idx,
+                    atom2_idx,
+                    bond.bond_order,
+                ]
 
             write_mol2(f"{mol2file}.gaff", gaffmol2)
             return f"{mol2file}.gaff"
 
     def run_parmchk(self, mol2file):
         import shutil
+
         frcmod_filename = "molecule.frcmod"
         shutil.copy(self.gaff_dat_filename, "gaff.dat")
         cmd = f"parmchk2 -i {mol2file} -f mol2 -p gaff.dat -o {frcmod_filename} -s {self._gaff_major_version} -a Y"

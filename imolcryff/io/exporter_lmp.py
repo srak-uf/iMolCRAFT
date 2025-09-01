@@ -10,18 +10,28 @@ from openff.toolkit import Topology, Molecule
 from openff.interchange import Interchange
 from openff.interchange.interop.lammps.export import to_lammps
 from openff.interchange.interop import openmm
-from openff.interchange.interop.lammps.export.export import _write_pair_coeffs, _write_bond_coeffs, _write_angle_coeffs, _write_proper_coeffs, _write_improper_coeffs, _write_atoms, _write_bonds, _write_angles, _write_propers, _write_impropers
+from openff.interchange.interop.lammps.export.export import (
+    _write_pair_coeffs,
+    _write_bond_coeffs,
+    _write_angle_coeffs,
+    _write_proper_coeffs,
+    _write_improper_coeffs,
+    _write_atoms,
+    _write_bonds,
+    _write_angles,
+    _write_propers,
+    _write_impropers,
+)
 
-def exporter_lmp(pdb,
-                 system,
-                 filename):
+
+def exporter_lmp(pdb, system, filename):
     """
     Export a system to LAMMPS format.
-    
+
     Parameters
     ----------
     pdb : str
-        The path to the PDB file. 
+        The path to the PDB file.
         The pdb file should contain the topology information.
     system : str
         The path to the system xml file of openmm.
@@ -46,14 +56,18 @@ def exporter_lmp(pdb,
             for b in r.bonds():
                 b0_idx = atom_index.index(b[0].index)
                 b1_idx = atom_index.index(b[1].index)
-                molecules_off[-1].add_bond(b0_idx, b1_idx, bond_order=1, is_aromatic=False)
-    topology_off = Topology.from_openmm(pdb_omm.topology,
-                                        unique_molecules=molecules_off,
-                                        positions=pdb_omm.getPositions())
+                molecules_off[-1].add_bond(
+                    b0_idx, b1_idx, bond_order=1, is_aromatic=False
+                )
+    topology_off = Topology.from_openmm(
+        pdb_omm.topology,
+        unique_molecules=molecules_off,
+        positions=pdb_omm.getPositions(),
+    )
     os.environ["INTERCHANGE_EXPERIMENTAL"] = "1"
-    a = openmm.from_openmm(system=system_omm,
-                           topology=topology_off,
-                           positions=pdb_omm.getPositions())
+    a = openmm.from_openmm(
+        system=system_omm, topology=topology_off, positions=pdb_omm.getPositions()
+    )
     # to_lammps(a, f"{filename}.data")
     to_lammps_non_rectangular(a, f"{filename}.data")
 
@@ -130,9 +144,9 @@ def to_lammps_non_rectangular(interchange: Interchange, file_path: Path | str):
             lx = a
             xy = b * numpy.cos(numpy.deg2rad(gamma_deg))
             xz = c * numpy.cos(numpy.deg2rad(beta_deg))
-            ly = numpy.sqrt(b ** 2 - xy ** 2)
+            ly = numpy.sqrt(b**2 - xy**2)
             yz = (b * c * numpy.cos(numpy.deg2rad(alpha_deg)) - xy * xz) / ly
-            lz = numpy.sqrt(c ** 2 - xz ** 2 - yz ** 2)
+            lz = numpy.sqrt(c**2 - xz**2 - yz**2)
             non_rectangular_flag = True
 
         if non_rectangular_flag == False:
@@ -163,8 +177,6 @@ def to_lammps_non_rectangular(interchange: Interchange, file_path: Path | str):
                 ),
             )
             lmp_file.write("{:.10g} {:.10g} {:.10g} xy xz yz\n".format(xy, xz, yz))
-
-       
 
         lmp_file.write("\nMasses\n\n")
 

@@ -21,13 +21,14 @@ resp_params = {
     "basis": "6-31g(d)",
     # "mem": "92GB",
     # "nprocshared": 40,
-    "ioplist": ["6/33=2", "6/42=6"], 
-    "pop": "mk"
+    "ioplist": ["6/33=2", "6/42=6"],
+    "pop": "mk",
 }
 
 psi4_resp_params = ESPSettings(
     method="hf", basis="6-31G*", grid_settings=MSKGridSettings(density=6.0)
 )
+
 
 class ChargeCalculator:
     """
@@ -49,7 +50,10 @@ class ChargeCalculator:
     params : dict, optional
         The parameters for the charge calculation. If None, default parameters are used.
     """
-    def __init__(self, atoms, charge_type, netcharge, label, directory=None, params=None):
+
+    def __init__(
+        self, atoms, charge_type, netcharge, label, directory=None, params=None
+    ):
         """
         Parameters
         ----------
@@ -84,12 +88,14 @@ class ChargeCalculator:
             elif self.charge_type == "am1bcc":
                 pass
             else:
-                raise ValueError("Unknown charge type. Supported types are: resp, am1-bcc")
+                raise ValueError(
+                    "Unknown charge type. Supported types are: resp, am1-bcc"
+                )
             self.g16 = None
         else:
             resp_params.update(self.params)
             self.params = resp_params
-    
+
     def get_partialcharges(self):
         """
         Calculate the partial charges of the molecule using the specified method.
@@ -108,21 +114,22 @@ class ChargeCalculator:
             output_mol2 = os.path.join(self.directory, self.label + "_am1bcc.mol2")
             # antechamber calculation
             cmd_antech = (
-                        f"antechamber -i {temp_pdb_name} -fi gout "
-                        f"-o {output_mol2} -fo mol2 -at sybyl -c bcc -nc {self.charge} -pf y -dr no")
+                f"antechamber -i {temp_pdb_name} -fi gout "
+                f"-o {output_mol2} -fo mol2 -at sybyl -c bcc -nc {self.charge} -pf y -dr no"
+            )
             print(cmd_antech)
             output = subprocess.getoutput(cmd_antech)
             print(output)
 
         self.mol2file = output_mol2
         tripos_atom = read_mol2(self.mol2file)["@<TRIPOS>ATOM"]
-        partialcharges = [ float(atom[-1]) for atom in tripos_atom]
+        partialcharges = [float(atom[-1]) for atom in tripos_atom]
 
         return partialcharges
 
     def _get_resp(self):
         g16calculator = Gaussian(
-            label=self.label+"_resp",
+            label=self.label + "_resp",
             charge=self.charge,
             **self.params,
         )
@@ -130,7 +137,7 @@ class ChargeCalculator:
         comfile = os.path.join(self.directory, f"{self.label}_resp.com")
         logfile = os.path.join(self.directory, f"{self.label}_resp.log")
         g16calculator.write_input(self.atoms, system_changes=0)
-        # g16 calculation 
+        # g16 calculation
         cmd = f"g16 < {comfile}  > {logfile}"
         print(cmd)
         _ = subprocess.getoutput(cmd)
@@ -139,8 +146,9 @@ class ChargeCalculator:
         g16logfile = os.path.abspath(g16calculator.label + ".log")
         output_mol2 = os.path.abspath(g16calculator.label + ".mol2")
         cmd_antech = (
-                    f"antechamber -i {g16logfile} -fi gout "
-                    f"-o {output_mol2} -fo mol2 -at sybyl -c resp -nc {self.charge} -pf y -dr no")
+            f"antechamber -i {g16logfile} -fi gout "
+            f"-o {output_mol2} -fo mol2 -at sybyl -c resp -nc {self.charge} -pf y -dr no"
+        )
         print(cmd_antech)
 
         for _ in range(10):
@@ -149,11 +157,13 @@ class ChargeCalculator:
                 print(output)
                 self.mol2file = output_mol2
                 tripos_atom = read_mol2(self.mol2file)["@<TRIPOS>ATOM"]
-                partialcharges = [ float(atom[-1]) for atom in tripos_atom]
+                partialcharges = [float(atom[-1]) for atom in tripos_atom]
                 break
         if os.path.exists(output_mol2) == False:
             print(output)
-            raise ValueError("Antechamber failed to generate the mol2 file. Check the log.")
+            raise ValueError(
+                "Antechamber failed to generate the mol2 file. Check the log."
+            )
 
         return partialcharges
 
@@ -177,7 +187,10 @@ class Psi4ChargeCalculator(ChargeCalculator):
     params : dict, optional
         The parameters for the charge calculation. If None, default parameters are used.
     """
-    def __init__(self, molecule, charge_type, netcharge, label, directory=None, params=None):
+
+    def __init__(
+        self, molecule, charge_type, netcharge, label, directory=None, params=None
+    ):
         """
         Parameters
         ----------
@@ -211,11 +224,12 @@ class Psi4ChargeCalculator(ChargeCalculator):
                 raise ValueError("Unknown charge type. Supported types are: resp")
             self.g16 = None
         else:
-            self.params = ESPSettings(method=params["method"],
-                                      basis=params["basis"],
-                                      grid_settings=MSKGridSettings(density=6.0)
-                                      )
-    
+            self.params = ESPSettings(
+                method=params["method"],
+                basis=params["basis"],
+                grid_settings=MSKGridSettings(density=6.0),
+            )
+
     def get_partialcharges(self):
         """
         Calculate the partial charges of the molecule using the specified method.
@@ -227,10 +241,11 @@ class Psi4ChargeCalculator(ChargeCalculator):
 
     def _get_resp(self):
         conformer, grid, esp, electric_field = Psi4ESPGenerator.generate(
-                    self.molecule, self.molecule.conformers[0], self.params, minimize=False)
+            self.molecule, self.molecule.conformers[0], self.params, minimize=False
+        )
         qc_data_record = MoleculeESPRecord.from_molecule(
-                                self.molecule, conformer, grid, esp, None, self.params
-                            )
+            self.molecule, conformer, grid, esp, None, self.params
+        )
         resp_solver = IterativeSolver()
         resp_charge_parameter = generate_resp_charge_parameter(
             [qc_data_record], resp_solver
@@ -240,7 +255,8 @@ class Psi4ChargeCalculator(ChargeCalculator):
         )
         self.mol2file = os.path.join(self.directory, self.label + "_resp.mol2")
         resp_charges = resp_charges.flatten()
-        self.molecule.partial_charges = Quantity(resp_charges,
-                                                 toolkit.unit.elementary_charge)
+        self.molecule.partial_charges = Quantity(
+            resp_charges, toolkit.unit.elementary_charge
+        )
         write_mol2(self.mol2file, self.molecule)
         return resp_charges

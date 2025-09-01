@@ -1,5 +1,6 @@
 from openff.toolkit.topology import Molecule
 
+
 def read_mol2(filename):
     """
     Read a mol2 file and return a dictionary with the contents.
@@ -14,7 +15,7 @@ def read_mol2(filename):
     ----------
     filename : str
         The name of the mol2 file to read.
-        
+
     Returns
     -------
     dict
@@ -30,6 +31,7 @@ def read_mol2(filename):
             elif l[i].strip() != "":
                 mol2_dict[key_name].append(l[i].strip().split())
     return mol2_dict
+
 
 def write_mol2(filename, input):
     """
@@ -52,7 +54,7 @@ def write_mol2(filename, input):
         dict_flag = False
     else:
         raise ValueError("Input must be a dictionary or a molecule object.")
-    
+
     with open(filename, mode="w") as f:
         if dict_flag:
             # Handle mol2_dict writing
@@ -76,10 +78,14 @@ def write_mol2(filename, input):
                 yy = input.conformers[0].magnitude[i, 1]
                 zz = input.conformers[0].magnitude[i, 2]
                 charge = input.partial_charges[i].magnitude
-                f.write(f"{i+1} {atom.symbol} {xx} {yy} {zz} {atom.symbol}  1  {input.name} {charge}\n")
+                f.write(
+                    f"{i+1} {atom.symbol} {xx} {yy} {zz} {atom.symbol}  1  {input.name} {charge}\n"
+                )
             f.write("@<TRIPOS>BOND\n")
             for i, bond in enumerate(input.bonds):
-                f.write(f"{i+1} {bond.atom1_index+1} {bond.atom2_index+1} {bond.bond_order}\n")
+                f.write(
+                    f"{i+1} {bond.atom1_index+1} {bond.atom2_index+1} {bond.bond_order}\n"
+                )
             f.write("@<TRIPOS>SUBSTRUCTURE\n")
             f.write(f"1 {input.name} 1 TEMP              0 ****  ****    0 ROOT\n")
         else:

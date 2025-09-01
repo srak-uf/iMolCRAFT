@@ -3,15 +3,16 @@ from rdkit.Chem import rdDepictor, rdDetermineBonds
 from rdkit.Chem import AllChem
 import copy
 
+
 def atoms2rdkit(atoms, nc=0, il_assign=True):
     """
     Convert a list of atoms to an RDKit molecule.
-    
+
     Parameters
     ----------
     atoms : list
         A list of atoms, where each atom is represented as a dictionary with keys 'symbol', 'x', 'y', and 'z'.
-    
+
     Returns
     -------
     mol : rdkit.Chem.rdchem.Mol
@@ -36,16 +37,19 @@ def atoms2rdkit(atoms, nc=0, il_assign=True):
     if natoms > 1:
         try:
             mol_tmp = copy.deepcopy(mol)
-            rdDetermineBonds.DetermineBonds(mol_tmp,charge=nc)
+            rdDetermineBonds.DetermineBonds(mol_tmp, charge=nc)
             mol = mol_tmp
         except:
             from rdkit.Chem import Draw
+
             mol_tmp = copy.deepcopy(mol)
             rdDetermineBonds.DetermineConnectivity(mol_tmp, charge=nc)
             mol = copy.deepcopy(mol_tmp)
-            print("Warning: The bonds may be assigned incorrectly. Please check carefully.")
+            print(
+                "Warning: The bonds may be assigned incorrectly. Please check carefully."
+            )
             print("Warning: This may give wrong SMILES")
-            Draw.MolToImage(mol) # Necessary
+            Draw.MolToImage(mol)  # Necessary
         mol2d = copy.deepcopy(mol)
         rdDepictor.Compute2DCoords(mol2d)
     else:
@@ -60,10 +64,9 @@ def atoms2rdkit(atoms, nc=0, il_assign=True):
 
     il_dict = None
     if il_assign:
-        il_dict = _il_assign(mol,
-                            mol2d,
-                            int(nc))
+        il_dict = _il_assign(mol, mol2d, int(nc))
     return mol, mol2d, il_dict
+
 
 def _il_assign(mol, mol2d, nc):
     def assign_pf6(mol, mol2d):
@@ -92,7 +95,7 @@ def _il_assign(mol, mol2d, nc):
                     atom.SetFormalCharge(-1)
                     atoms2d[i].SetFormalCharge(-1)
                     pf6like_Pindex.append(i)
-        
+
         if len(pf6like_Findex) == 6 and len(pf6like_Pindex) == 1:
             PF6_flag = True
         if not PF6_flag:
@@ -154,10 +157,19 @@ def _il_assign(mol, mol2d, nc):
 
             for i in fsalike_Sindex:
                 for b_idx, bond in enumerate(atoms[i].GetBonds()):
-                    bonded_element = [bond.GetBeginAtom().GetSymbol(), bond.GetEndAtom().GetSymbol()]
-                    if bond.GetBondType() == Chem.rdchem.BondType.SINGLE \
-                        and "O" in bonded_element:
-                        oxygen_idx = bond.GetBeginAtomIdx() if bonded_element[0] == "O" else bond.GetEndAtomIdx()
+                    bonded_element = [
+                        bond.GetBeginAtom().GetSymbol(),
+                        bond.GetEndAtom().GetSymbol(),
+                    ]
+                    if (
+                        bond.GetBondType() == Chem.rdchem.BondType.SINGLE
+                        and "O" in bonded_element
+                    ):
+                        oxygen_idx = (
+                            bond.GetBeginAtomIdx()
+                            if bonded_element[0] == "O"
+                            else bond.GetEndAtomIdx()
+                        )
                         ## 3d rdkitmol
                         bond.SetBondType(Chem.rdchem.BondType.DOUBLE)
                         atoms[oxygen_idx].SetFormalCharge(0)
@@ -170,17 +182,17 @@ def _il_assign(mol, mol2d, nc):
             il_dict["FSA_N"] = fsalike_Nindex
             il_dict["FSA_S"] = fsalike_Sindex
             il_dict["FSA_O"] = fsalike_Oindex
-        
+
         if len(fsalike_Nindex) == 0 or len(fsalike_Sindex) == 0:
             return None
         else:
             return il_dict
-        
+
     il_dict = assign_pf6(mol, mol2d)
     if il_dict is not None:
         print("PF6-like molecule detected during rdkit conversion.")
         return il_dict
-    
+
     il_dict = assign_fsalike(mol, mol2d, nc)
     if il_dict is not None:
         print("FSA-like molecule detected during rdkit conversion.")

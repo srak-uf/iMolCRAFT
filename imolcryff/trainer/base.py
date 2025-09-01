@@ -2,15 +2,19 @@ import pickle
 from dmff import Hamiltonian
 from dmff.optimize import MultiTransform, genOptimizer
 from openmm import app
-from openmm.app import  ForceField, Modeller
+from openmm.app import ForceField, Modeller
 import jax
 import jax.numpy as jnp
 import os
 import optax
 import time
 from ..crafter.ffxml import check_vsite
-from ..trainer.dmff_utils import merge_xml, get_chgparams_from_rescharges, get_rescharges_from_residues, \
-    vsiteinfo_to_params
+from ..trainer.dmff_utils import (
+    merge_xml,
+    get_chgparams_from_rescharges,
+    get_rescharges_from_residues,
+    vsiteinfo_to_params,
+)
 
 
 class BaseExtension(object):
@@ -18,26 +22,32 @@ class BaseExtension(object):
 
 
 class BaseTrainer:
-    def __init__(self,
-                 ffxml_list,
-                 nums_ffxml,
-                 pdbfile,
-                 loss_fn,
-                 opt_fftypes,
-                 label=None,
-                 batch_size=1,
-                 optimizer_algo="adam",
-                 lr=0.0001,
-                 clip=0.1
-                 ):
-        
+    def __init__(
+        self,
+        ffxml_list,
+        nums_ffxml,
+        pdbfile,
+        loss_fn,
+        opt_fftypes,
+        label=None,
+        batch_size=1,
+        optimizer_algo="adam",
+        lr=0.0001,
+        clip=0.1,
+    ):
+
         if isinstance(ffxml_list, str):
             ffxml_list = [ffxml_list]
 
-        assert len(ffxml_list) == len(nums_ffxml), "Length of ffxml_list and nums_ffxml must be the same."
+        assert len(ffxml_list) == len(
+            nums_ffxml
+        ), "Length of ffxml_list and nums_ffxml must be the same."
 
         if label is None:
-            label = [f"{os.path.splitext(os.path.basename(ffxml))[0]}{num}" for ffxml, num in zip(ffxml_list, nums_ffxml)]
+            label = [
+                f"{os.path.splitext(os.path.basename(ffxml))[0]}{num}"
+                for ffxml, num in zip(ffxml_list, nums_ffxml)
+            ]
             self.label = "_".join(label)
         else:
             self.label = label
@@ -61,19 +71,23 @@ class BaseTrainer:
             pos = self.pdb.positions
 
         vs_pdbfile = f"vs_{os.path.basename(self.pdbfile)}"
-        app.PDBFile.writeFile(self.topology, pos, open(vs_pdbfile, 'w'))
+        app.PDBFile.writeFile(self.topology, pos, open(vs_pdbfile, "w"))
         self.pdbfile_vsite = vs_pdbfile
         self.opt_fftypes = opt_fftypes
 
         ffparams = self.ff.getParameters().parameters
-        self.rescharges, self.natoms_list = get_rescharges_from_residues(self.ff, ratio=nums_ffxml)
+        self.rescharges, self.natoms_list = get_rescharges_from_residues(
+            self.ff, ratio=nums_ffxml
+        )
         if self.num_vsites > 0:
             ffparams = vsiteinfo_to_params(self.ff, ffparams)
         self.ffparams = get_chgparams_from_rescharges(ffparams, self.rescharges)
 
         self.loss_fn = loss_fn
         if isinstance(lr, list):
-            assert len(lr) == len(opt_fftypes), "Length of lr must match length of opt_fftypes."
+            assert len(lr) == len(
+                opt_fftypes
+            ), "Length of lr must match length of opt_fftypes."
             assert len(lr) == len(clip), "Length of lr must match length of clip."
         else:
             lr = [lr] * len(opt_fftypes)
@@ -86,19 +100,27 @@ class BaseTrainer:
         for i, opt_fftype in enumerate(self.opt_fftypes):
             # multiTrans[opt_fftype] = genOptimizer(learning_rate=lr, clip=0.001, nonzero=False)
             if opt_fftype == "NonbondedForce/charges":
-                multiTrans[opt_fftype] = genOptimizer(optimizer=self.optimizer_algo,
-                                                      learning_rate=lr[i],
-                                                      clip=self.clip[i],
-                                                      nonzero=False)
+                multiTrans[opt_fftype] = genOptimizer(
+                    optimizer=self.optimizer_algo,
+                    learning_rate=lr[i],
+                    clip=self.clip[i],
+                    nonzero=False,
+                )
             else:
-                multiTrans[opt_fftype] = genOptimizer(optimizer=self.optimizer_algo,
-                                                      learning_rate=lr[i],
-                                                      clip=self.clip[i],
-                                                      nonzero=False)  # Should be True
+                multiTrans[opt_fftype] = genOptimizer(
+                    optimizer=self.optimizer_algo,
+                    learning_rate=lr[i],
+                    clip=self.clip[i],
+                    nonzero=False,
+                )  # Should be True
 
         multiTrans.finalize()
-        self.grad_transform = optax.multi_transform(multiTrans.transforms, multiTrans.labels)
-        mask = jax.tree_util.tree_map(lambda x: x.dtype != jnp.int32 and x.dtype != int, self.ffparams)
+        self.grad_transform = optax.multi_transform(
+            multiTrans.transforms, multiTrans.labels
+        )
+        mask = jax.tree_util.tree_map(
+            lambda x: x.dtype != jnp.int32 and x.dtype != int, self.ffparams
+        )
         self.optimizer = optax.masked(self.grad_transform, mask)
 
         self.losses = []
@@ -110,8 +132,8 @@ class BaseTrainer:
 
     def add_modifyfn(self, type_fn, fn):
         types_modifyfn = [
-            'after_grad',
-            'after_update',
+            "after_grad",
+            "after_update",
         ]
         if type_fn not in types_modifyfn:
             raise ValueError(f"Unknown hook type: {type_fn}")
@@ -131,7 +153,11 @@ class BaseTrainer:
         if jnp.isnan(self.loss) or jnp.isinf(self.loss):
             print("Warning: Loss is NaN or Inf. Skipping this step.")
             # self.ffparamsを0.01%ランダムにずらす
-            self.ffparams = jax.tree_util.tree_map(lambda x: x + 0.0001 * jax.random.normal(jax.random.PRNGKey(1), shape=x.shape), self.ffparams)
+            self.ffparams = jax.tree_util.tree_map(
+                lambda x: x
+                + 0.0001 * jax.random.normal(jax.random.PRNGKey(1), shape=x.shape),
+                self.ffparams,
+            )
         else:
             grads = self._do_modify("after_grad", grads)
             updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
@@ -145,7 +171,7 @@ class BaseTrainer:
         It can be overridden in subclasses to implement custom behavior.
         """
         pass
-    
+
     def after_step(self):
         """
         This method is called after each training step.
@@ -159,7 +185,7 @@ class BaseTrainer:
         It can be overridden in subclasses to implement custom behavior.
         """
         pass
-       
+
     def fit(self, steps, checkpoint_frequency=100):
         self.checkpoint_frequency = checkpoint_frequency
         start_epoch = self._epoch
@@ -182,5 +208,9 @@ class BaseTrainer:
             end_time = time.time()
             print(f"Epoch {i_epoch} completed in {end_time - start_time:.2f} seconds.")
             print("Loss: ", self.loss)
-            print("Best Loss: ", min(self.losses), "at epoch ", self.epochs[self.losses.index(min(self.losses))])
-
+            print(
+                "Best Loss: ",
+                min(self.losses),
+                "at epoch ",
+                self.epochs[self.losses.index(min(self.losses))],
+            )
