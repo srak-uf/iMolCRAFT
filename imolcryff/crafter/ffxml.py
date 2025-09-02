@@ -1,10 +1,13 @@
 import imolcryff
+from imolcryff.io.mol2 import read_mol2
 from dmff import Hamiltonian
 import openmmforcefields
-from openff.toolkit import Molecule
+from openff.toolkit import Molecule, Quantity
+from openff.units import unit
 import shutil
 import os
 import numpy as np
+from typing import List, Optional
 
 
 def get_element_fromtype(ptype, ff):
@@ -13,7 +16,9 @@ def get_element_fromtype(ptype, ff):
             return at["element"]
 
 
-def check_vsite(ffxml):
+def check_vsite(
+        ffxml: str
+        ) -> int:
     """
     Check if the force field XML file contains virtual sites.
     """
@@ -27,7 +32,7 @@ def check_vsite(ffxml):
     return num_vsites
 
 
-def delvsite_pdb(pdbfile):
+def delvsite_pdb(pdbfile: str) -> None:
     """
     Delete virtual sites from the PDB file.
     """
@@ -38,7 +43,11 @@ def delvsite_pdb(pdbfile):
         f.writelines(lines)
 
 
-def gafftemplate2xml(mmm, fftemplate_gen, ion_ffxml=None):
+def gafftemplate2xml(
+        mmm: List[Molecule],
+        fftemplate_gen: object,
+        ion_ffxml: Optional[str] = None
+        ) -> List[str]:
     """
     Generate GAFF XML files for a list of molecules.
     Parameters
@@ -56,7 +65,7 @@ def gafftemplate2xml(mmm, fftemplate_gen, ion_ffxml=None):
         List of paths to the generated XML files.
     """
 
-    def write_PF6(molecule_off, ffxml):
+    def _write_PF6(molecule_off, ffxml):
         def molecule2aseatoms(molecule):
             from ase import Atoms
             from ase.data import chemical_symbols
@@ -89,8 +98,7 @@ def gafftemplate2xml(mmm, fftemplate_gen, ion_ffxml=None):
                                 angles_idx.append((i, j, k))
             return np.array(angles), np.array(angles_idx)
 
-        path = imolcryff.__path__[0]
-        pf6xml = os.path.join(path, "..", "data/PF6_gaff.xml")
+        pf6xml = os.path.join(imolcryff.__path__[0], "..", "data/PF6_gaff.xml")
         ff = Hamiltonian(pf6xml)
         atoms = molecule2aseatoms(molecule_off)
         angles, angles_idx = get_element_angles(atoms, "F", "P", "F")
@@ -132,8 +140,19 @@ def gafftemplate2xml(mmm, fftemplate_gen, ion_ffxml=None):
 
     ffxmlfiles = []
     for i in range(len(mmm)):
+        mol2_dict = read_mol2(mmm[i].mol2file)
+        if mmm[i].partial_charges is None:
+            partial_charges = [atominfo[8] for atominfo in mol2_dict["@<TRIPOS>ATOM"]]
+            mmm[i].partial_charges = Quantity(
+                    partial_charges,
+                    unit.elementary_charge,
+                )
+        if mmm[i].conformers is None:
+            positions = [atom[2:5] for atom in mol2_dict["@<TRIPOS>ATOM"]]
+            mmm[i].add_conformer(Quantity(positions, unit.angstrom))
+
         if mmm[i] == Molecule.from_smiles("F[P-](F)(F)(F)(F)F"):
-            write_PF6(mmm[i], f"gaffxml_{i}.xml")
+            _write_PF6(mmm[i], f"gaffxml_{i}.xml")
         elif mmm[i].n_atoms > 1 or (mmm[i].total_charge == 0 and mmm[i].n_atoms == 1):
             ffxml = fftemplate_gen.generate_residue_template(mmm[i])
             with open(f"gaffxml_{i}.xml", "w") as f:

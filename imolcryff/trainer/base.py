@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import os
 import optax
 import time
+from typing import List, Callable, Optional, Any, Union, Tuple
 from ..crafter.ffxml import check_vsite
 from ..trainer.dmff_utils import (
     merge_xml,
@@ -21,20 +22,52 @@ class BaseExtension(object):
 
 
 class BaseTrainer:
+    """
+    Base class for force field parameter optimization trainers.
+
+    This class manages the setup, optimization, and checkpointing of force field
+    parameters using differentiable molecular force fields and JAX-based optimizers.
+    """
     def __init__(
         self,
-        ffxml_list,
-        nums_ffxml,
-        pdbfile,
-        loss_fn,
-        opt_fftypes,
-        label=None,
-        batch_size=1,
-        optimizer_algo="adam",
-        lr=0.0001,
-        clip=0.1,
-    ):
+        ffxml_list: Union[str, List[str]],
+        nums_ffxml: List[int],
+        pdbfile: str,
+        loss_fn: Callable[..., float],
+        opt_fftypes: List[str],
+        label: Optional[str] = None,
+        batch_size: int = 1,
+        optimizer_algo: str = "adam",
+        lr: Union[float, List[float]] = 0.0001,
+        clip: Union[float, List[float]] = 0.1,
+    ) -> None:
 
+        """
+        Initialize the BaseTrainer.
+
+        Parameters
+        ----------
+        ffxml_list : str or list of str
+            List of force field XML file paths or a single path.
+        nums_ffxml : list of int
+            Number of residues for each ffxml file.
+        pdbfile : str
+            Path to the PDB file.
+        loss_fn : callable
+            Loss function to be minimized.
+        opt_fftypes : list of str
+            List of force field parameter types to optimize.
+        label : str, optional
+            Label for the training run and output files.
+        batch_size : int, optional
+            Batch size for training (default: 1).
+        optimizer_algo : str, optional
+            Optimizer algorithm name (default: 'adam').
+        lr : float or list of float, optional
+            Learning rate(s) for optimizer (default: 0.0001).
+        clip : float or list of float, optional
+            Gradient clipping value(s) (default: 0.1).
+        """
         if isinstance(ffxml_list, str):
             ffxml_list = [ffxml_list]
 
@@ -131,7 +164,17 @@ class BaseTrainer:
         self._modifyfns["after_grad"] = lambda grads: grads
         self._modifyfns["after_update"] = lambda ffparams: ffparams
 
-    def add_modifyfn(self, type_fn, fn):
+    def add_modifyfn(self, type_fn: str, fn: Callable[[Any], Any]) -> None:
+        """
+        Register a hook function to modify gradients or parameters.
+
+        Parameters
+        ----------
+        type_fn : {"after_grad", "after_update"}
+            Type of hook to register.
+        fn : callable
+            Function to be called after gradients or parameter update.
+        """
         types_modifyfn = [
             "after_grad",
             "after_update",
@@ -140,16 +183,43 @@ class BaseTrainer:
             raise ValueError(f"Unknown hook type: {type_fn}")
         self._modifyfns[type_fn] = fn
 
-    def _do_modify(self, type_fn, *args, **kwargs):
+    def _do_modify(self, type_fn: str, *args: Any, **kwargs: Any) -> Any:
+        """
+        Call the registered hook function if available.
+
+        Parameters
+        ----------
+        type_fn : str
+            Hook type.
+        *args, **kwargs :
+            Arguments to pass to the hook function.
+
+        Returns
+        -------
+        Any
+            Result of the hook function, or None if not registered.
+        """
         if type_fn in self._modifyfns:
             return self._modifyfns[type_fn](*args, **kwargs)
         else:
             return
 
-    def get_loss_gradients(self):
+    def get_loss_gradients(self) -> Tuple[Any, Any]:
+        """
+        Compute the loss and its gradients.
+
+        Returns
+        -------
+        Any
+            Loss value and gradients. (To be implemented in subclass)
+        """
         pass
 
-    def training_step(self):
+    def training_step(self) -> None:
+        """
+        Perform a single training step: compute loss, gradients, and update parameters.
+        Handles NaN/Inf loss by perturbing parameters.
+        """
         self.loss, grads = self.get_loss_gradients()
         if jnp.isnan(self.loss) or jnp.isinf(self.loss):
             print("Warning: Loss is NaN or Inf. Skipping this step.")
@@ -166,28 +236,38 @@ class BaseTrainer:
             self.ffparams = optax.apply_updates(self.ffparams, updates)
             self.ffparams = self._do_modify("after_update", self.ffparams)
 
-    def before_step(self):
+    def before_step(self) -> None:
         """
         This method is called before each training step.
         It can be overridden in subclasses to implement custom behavior.
         """
         pass
 
-    def after_step(self):
+    def after_step(self) -> None:
         """
         This method is called after each training step.
         It can be overridden in subclasses to implement custom behavior.
         """
         pass
 
-    def write_checkpoint(self, checkpoint_frequency):
+    def write_checkpoint(self, checkpoint_frequency: int) -> None:
         """
         This method writes the current state of the trainer to a checkpoint file.
         It can be overridden in subclasses to implement custom behavior.
         """
         pass
 
-    def fit(self, steps, checkpoint_frequency=100):
+    def fit(self, steps: int, checkpoint_frequency: int = 100) -> None:
+        """
+        Run the training loop for a given number of steps.
+
+        Parameters
+        ----------
+        steps : int
+            Number of training steps (epochs).
+        checkpoint_frequency : int, optional
+            Frequency (in epochs) to write checkpoints (default: 100).
+        """
         self.checkpoint_frequency = checkpoint_frequency
         start_epoch = self._epoch
         end_epoch = start_epoch + steps + 1

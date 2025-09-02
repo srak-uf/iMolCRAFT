@@ -64,48 +64,53 @@ def atoms2rdkit(atoms, nc=0, il_assign=True):
 
     il_dict = None
     if il_assign:
-        il_dict = _il_assign(mol, mol2d, int(nc))
+        il_dict = _il_assign(mol, int(nc), mol2d)
     return mol, mol2d, il_dict
 
 
-def _il_assign(mol, mol2d, nc):
-    def assign_pf6(mol, mol2d):
+def _il_assign(mol, nc, mol2d=None):
+    def assign_pf6(mol, nc, mol2d=None):
         """
         Check if the molecule is PF6
         """
         atoms = mol.GetAtoms()
-        atoms2d = mol2d.GetAtoms()
+        if mol2d is not None:
+            atoms2d = mol2d.GetAtoms()
         pf6like_Pindex = []
         pf6like_Findex = []
         il_dict = {}
 
         PF6_flag = False
         P_flag = False
-        for atom in atoms:
-            if atom.GetSymbol() == "P" and atoms[0].GetSymbol() == "P":
-                P_flag = True
 
-        if P_flag:
-            for i, atom in enumerate(atoms):
-                if atom.GetSymbol() == "F":
-                    atom.SetFormalCharge(0)
-                    atoms2d[i].SetFormalCharge(0)
-                    pf6like_Findex.append(i)
-                elif atom.GetSymbol() == "P":
-                    atom.SetFormalCharge(-1)
-                    atoms2d[i].SetFormalCharge(-1)
-                    pf6like_Pindex.append(i)
+        if nc < 0:
+            for atom in atoms:
+                if atom.GetSymbol() == "P":
+                    P_flag = True
 
-        if len(pf6like_Findex) == 6 and len(pf6like_Pindex) == 1:
-            PF6_flag = True
-        if not PF6_flag:
-            return None
-        else:
-            il_dict["PF6_P"] = pf6like_Pindex
-            il_dict["PF6_F"] = pf6like_Findex
-            return il_dict
+            if P_flag:
+                for i, atom in enumerate(atoms):
+                    if atom.GetSymbol() == "F":
+                        atom.SetFormalCharge(0)
+                        if mol2d is not None:
+                            atoms2d[i].SetFormalCharge(0)
+                        pf6like_Findex.append(i)
+                    elif atom.GetSymbol() == "P":
+                        atom.SetFormalCharge(-1)
+                        if mol2d is not None:
+                            atoms2d[i].SetFormalCharge(-1)
+                        pf6like_Pindex.append(i)
 
-    def assign_fsalike(mol, mol2d, nc):
+            if len(pf6like_Findex) == 6 and len(pf6like_Pindex) == 1:
+                PF6_flag = True
+            if not PF6_flag:
+                return None
+            else:
+                il_dict["PF6_P"] = pf6like_Pindex
+                il_dict["PF6_F"] = pf6like_Findex
+                return il_dict
+
+    def assign_fsalike(mol, nc, mol2d):
         """
         Check if the molecule is FSA-like
         """
@@ -115,11 +120,12 @@ def _il_assign(mol, mol2d, nc):
         il_dict = {}
         if nc < 0:
             atoms = mol.GetAtoms()
-            atoms2d = mol2d.GetAtoms()
+            if mol2d is not None:
+                atoms2d = mol2d.GetAtoms()
 
             # Check FSA-like N, S, and O atoms
             for i in range(len(atoms)):
-                if atoms[i].GetTotalValence() == 3 and atoms[i].GetSymbol() == "N":
+                if len(atoms[i].GetBonds()) == 2 and atoms[i].GetSymbol() == "N":
                     for bond in atoms[i].GetBonds():
                         if bond.GetEndAtom().GetSymbol() == "S":
                             s_index = bond.GetEndAtomIdx()
@@ -146,14 +152,16 @@ def _il_assign(mol, mol2d, nc):
 
             for i in fsalike_Nindex:
                 atoms[i].SetFormalCharge(-1)
-                atoms2d[i].SetFormalCharge(-1)
+                if mol2d is not None:
+                    atoms2d[i].SetFormalCharge(-1)
                 for b_idx, bond in enumerate(atoms[i].GetBonds()):
                     if bond.GetBondType() == Chem.rdchem.BondType.DOUBLE:
                         # 3d rdkitmol
                         bond.SetBondType(Chem.rdchem.BondType.SINGLE)
                         # 2d rdkitmol
-                        bond2d = atoms2d[i].GetBonds()[b_idx]
-                        bond2d.SetBondType(Chem.rdchem.BondType.SINGLE)
+                        if mol2d is not None:
+                            bond2d = atoms2d[i].GetBonds()[b_idx]
+                            bond2d.SetBondType(Chem.rdchem.BondType.SINGLE)
 
             for i in fsalike_Sindex:
                 for b_idx, bond in enumerate(atoms[i].GetBonds()):
@@ -175,9 +183,10 @@ def _il_assign(mol, mol2d, nc):
                         atoms[oxygen_idx].SetFormalCharge(0)
 
                         # 2d rdkitmol
-                        bond2d = atoms2d[i].GetBonds()[b_idx]
-                        bond2d.SetBondType(Chem.rdchem.BondType.DOUBLE)
-                        atoms2d[oxygen_idx].SetFormalCharge(0)
+                        if mol2d is not None:
+                            bond2d = atoms2d[i].GetBonds()[b_idx]
+                            bond2d.SetBondType(Chem.rdchem.BondType.DOUBLE)
+                            atoms2d[oxygen_idx].SetFormalCharge(0)
 
             il_dict["FSA_N"] = fsalike_Nindex
             il_dict["FSA_S"] = fsalike_Sindex
@@ -188,12 +197,12 @@ def _il_assign(mol, mol2d, nc):
         else:
             return il_dict
 
-    il_dict = assign_pf6(mol, mol2d)
+    il_dict = assign_pf6(mol, nc, mol2d)
     if il_dict is not None:
         print("PF6-like molecule detected during rdkit conversion.")
         return il_dict
 
-    il_dict = assign_fsalike(mol, mol2d, nc)
+    il_dict = assign_fsalike(mol, nc, mol2d)
     if il_dict is not None:
         print("FSA-like molecule detected during rdkit conversion.")
         return il_dict

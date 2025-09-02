@@ -1,6 +1,8 @@
 from openmmforcefields.generators import GAFFTemplateGenerator
 import subprocess
 from ..io.mol2 import read_mol2, write_mol2
+from typing import List, Dict, Optional, Any
+from openff.toolkit.topology import Molecule
 
 
 class GAFFilTemplateGenerator(GAFFTemplateGenerator):
@@ -13,9 +15,26 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
     ]
 
     def __init__(
-        self, molecules, il_assign=None, forcefield_files=None, cache=None, **kwargs
-    ):
-        super().__init__(molecules, forcefield_files=None, cache=None, **kwargs)
+        self,
+        molecules: List[Molecule],
+        il_assign: Optional[Dict[str, Dict[str, str]]] = {
+            "FSA": {
+                "S": "s6",
+                "N": "n",
+                "O": "o",
+                "F": "f"
+            }
+        },
+        forcefield_files: Optional[List[str]] = None,
+        cache: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> None:
+        super().__init__(
+            molecules,
+            forcefield_files=None,
+            cache=None,
+            **kwargs
+        )
         for molecule in molecules:
             for mm in self._molecules.items():
                 if mm[1].to_smiles() == molecule.to_smiles():
@@ -26,13 +45,16 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
         else:
             self.il_assign = il_assign
 
-    def generate_residue_template(self, molecule, residue_atoms=None):
+    def generate_residue_template(self,
+                                  molecule: Any,
+                                  residue_atoms: Optional[List[Any]] = None) -> str:
         from openff.units import unit
 
         self._generate_unique_atom_names(molecule)
         smiles = molecule.to_smiles()
         mol2file = self.run_antech(molecule)
         mol2_dict = read_mol2(mol2file)
+
         for index, atominfo in enumerate(mol2_dict["@<TRIPOS>ATOM"]):
             molecule.atoms[index].gaff_type = atominfo[5]
 
@@ -110,7 +132,7 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
 
         return ffxml_contents
 
-    def run_antech(self, molecule):
+    def run_antech(self, molecule: Any) -> str:
         gaff_ver = self._gaff_major_version
         if len(molecule.atoms) == 1:
             mol2file = molecule.mol2file
@@ -121,7 +143,7 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
                 f"antechamber -i {mol2file} -fi mol2 -o {mol2file}.gaff "
                 f"-fo mol2 -at {gaff_ver} -c dc -dr no"
             )
-            output = subprocess.getoutput(cmd)
+            _ = subprocess.getoutput(cmd)
             gaffmol2 = read_mol2(f"{mol2file}.gaff")
             chgmol2 = read_mol2(f"{mol2file}")
             # charges
@@ -151,7 +173,7 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
             write_mol2(f"{mol2file}.gaff", gaffmol2)
             return f"{mol2file}.gaff"
 
-    def run_parmchk(self, mol2file):
+    def run_parmchk(self, mol2file: str) -> str:
         import shutil
 
         frcmod_filename = "molecule.frcmod"
@@ -160,5 +182,5 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
             f"parmchk2 -i {mol2file} -f mol2 -p gaff.dat -o {frcmod_filename} "
             f"-s {self._gaff_major_version} -a Y"
         )
-        output = subprocess.getoutput(cmd)
+        _ = subprocess.getoutput(cmd)
         return frcmod_filename

@@ -1,4 +1,5 @@
 from openff.toolkit.topology import Molecule
+from ase import Atoms
 
 
 def read_mol2(filename):
@@ -93,3 +94,11 @@ def write_mol2(filename, input):
             f.write(f"1 {input.name} 1 TEMP              0 ****  ****    0 ROOT\n")
         else:
             raise ValueError("Either mol2_dict or molecule must be provided.")
+
+
+def mol2_to_aseatoms(mol2file):
+    mol2_dict = read_mol2(mol2file)
+    symbols = [atom[1] for atom in mol2_dict["@<TRIPOS>ATOM"]]
+    positions = [list(map(float, atom[2:5])) for atom in mol2_dict["@<TRIPOS>ATOM"]]
+    atoms = Atoms(symbols=symbols, positions=positions)
+    return atoms

@@ -1,4 +1,5 @@
 from dmff.common.nblist import NoCutoffNeighborList
+from typing import List, Union, Optional, Callable, Any, Tuple
 from dmff.mbar import MBAREstimator, Sample, OpenMMSampleState
 import pickle
 from openmm import app
@@ -25,25 +26,31 @@ import matplotlib.pyplot as plt
 
 
 class DistanceTrainer(BaseTrainer):
+    """
+    Trainer for optimizing force field parameters using distance scan data.
+
+    This class handles the setup, optimization, and checkpointing for distance-based
+    parameter fitting tasks, using JAX and differentiable force fields.
+    """
     def __init__(
         self,
-        ffxml_list,
-        nums_ffxml,
-        pdbfile,
+        ffxml_list: Union[str, List[str]],
+        nums_ffxml: List[int],
+        pdbfile: str,
         calculator: DistanceCalculator,
-        loss_fn,
-        relax_steps=20,
-        opt_fftypes=[
+        loss_fn: Callable[..., float],
+        relax_steps: int = 20,
+        opt_fftypes: List[str] = [
             "NonbondedForce/charges",
             "NonbondedForce/sigma",
             "NonbondedForce/epsilon",
         ],
-        label=None,
-        batch_size=1,
-        optimizer_algo="adam",
-        lr=0.01,
-        clip=0.1,
-    ):
+        label: Optional[str] = None,
+        batch_size: int = 1,
+        optimizer_algo: str = "adam",
+        lr: Union[float, List[float]] = 0.01,
+        clip: Union[float, List[float]] = 0.1,
+    ) -> None:
 
         super().__init__(
             ffxml_list=ffxml_list,
@@ -61,7 +68,10 @@ class DistanceTrainer(BaseTrainer):
         self.inputs = {"positions": [], "pairs": [], "dihed_index": []}
         self.calculator = calculator
 
-    def setup(self):
+    def setup(self) -> None:
+        """
+        Set up the trainer by running force field scans and preparing input arrays.
+        """
         self.calculator.do_ffscan(self.ffxml, ini_geom="QM")
         GT_scans = []
         for i in range(len(self.calculator.qm_distancescan)):
@@ -92,7 +102,17 @@ class DistanceTrainer(BaseTrainer):
         self.inputs["pairs"] = jnp.array(jnp_pairs_list)
         self.opt_state = self.optimizer.init(self.ffparams)
 
-    def get_loss_gradients(self):
+    def get_loss_gradients(self) -> Tuple[Any, Any]:
+        """
+        Compute the loss and its gradients for the current parameters.
+
+        Returns
+        -------
+        loss : float
+            The computed loss value.
+        grads : Any
+            Gradients of the loss with respect to the parameters.
+        """
         grads = tree_map(lambda x: x * 0.0, self.ffparams)
         loss = 0.0
         for i_dihed in range(len(self.inputs["positions"])):
@@ -108,7 +128,11 @@ class DistanceTrainer(BaseTrainer):
             grads = tree_map(lambda x, y: x + y, grads, grads_tmp)
         return loss, grads
 
-    def after_step(self):
+    def after_step(self) -> None:
+        """
+        Update force field and input arrays after each optimization step.
+        Handles periodic relaxation and XML output.
+        """
         self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
         self.rescharges = update_rescharges_from_params(self.rescharges, self.ffparams)
         self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
@@ -143,7 +167,15 @@ class DistanceTrainer(BaseTrainer):
             positions_list = jnp.array(positions_list)
             self.inputs["positions"] = positions_list
 
-    def write_checkpoint(self, checkpoint_frequency):
+    def write_checkpoint(self, checkpoint_frequency: int) -> None:
+        """
+        Save the current training state to a checkpoint file.
+
+        Parameters
+        ----------
+        checkpoint_frequency : int
+            Frequency (in epochs) to write checkpoints.
+        """
         if self._epoch % checkpoint_frequency == 0:
             with open("train_state.pkl", "wb") as f:
                 dump_dict = {
@@ -168,16 +200,16 @@ class DistanceTrainer(BaseTrainer):
     @classmethod
     def from_checkpoint(
         cls,
-        trainer_checkpoint,
-        ffxml_list,
-        nums_ffxml,
-        pdbfile,
-        loss_fn=None,
-        opt_fftypes=None,
-        optimizer_algo=None,
-        lr=None,
-        clip=None,
-    ):
+        trainer_checkpoint: str,
+        ffxml_list: Union[str, List[str]],
+        nums_ffxml: List[int],
+        pdbfile: str,
+        loss_fn: Optional[Callable[..., float]] = None,
+        opt_fftypes: Optional[List[str]] = None,
+        optimizer_algo: Optional[str] = None,
+        lr: Optional[Union[float, List[float]]] = None,
+        clip: Optional[Union[float, List[float]]] = None,
+    ) -> "DistanceTrainer":
 
         with open(trainer_checkpoint, "rb") as f:
             dump_dict = pickle.load(f)
@@ -223,25 +255,55 @@ class DistanceTrainer(BaseTrainer):
 
 
 class DihedralTrainer(BaseTrainer):
-    # xml, pdbfile with topology, DihedralCalculator
+    """
+    Trainer for optimizing force field parameters using dihedral scan data.
+
+    This class handles the setup, optimization, and checkpointing for dihedral-based
+    parameter fitting tasks, using JAX and differentiable force fields.
+    """
     def __init__(
         self,
-        ffxml,
-        pdbfile,
+        ffxml: str,
+        pdbfile: str,
         calculator: DihedralCalculator,
-        loss_fn,
-        relax_steps=20,
-        opt_fftypes=[
+        loss_fn: Callable[..., float],
+        relax_steps: int = 20,
+        opt_fftypes: List[str] = [
             "PeriodicTorsionForce/proper_phase",
             "PeriodicTorsionForce/proper_k",
         ],
-        label=None,
-        batch_size=1,
-        optimizer_algo="adam",
-        lr=0.01,
-        clip=0.1,
-    ):
+        label: Optional[str] = None,
+        batch_size: int = 1,
+        optimizer_algo: str = "adam",
+        lr: Union[float, List[float]] = 0.01,
+        clip: Union[float, List[float]] = 0.1,
+    ) -> None:
+        """
+        Initialize the DihedralTrainer.
 
+        Parameters
+        ----------
+        ffxml_list : str or list of str
+            List of force field XML file paths or a single path.
+        nums_ffxml : list of int
+            Number of residues for each ffxml file.
+        pdbfile : str
+            Path to the PDB file.
+        loss_fn : callable
+            Loss function to be minimized.
+        opt_fftypes : list of str
+            List of force field parameter types to optimize.
+        label : str, optional
+            Label for the training run and output files.
+        batch_size : int, optional
+            Batch size for training (default: 1).
+        optimizer_algo : str, optional
+            Optimizer algorithm name (default: 'adam').
+        lr : float or list of float, optional
+            Learning rate(s) for optimizer (default: 0.0001).
+        clip : float or list of float, optional
+            Gradient clipping value(s) (default: 0.1).
+        """
         super().__init__(
             ffxml_list=[ffxml],
             nums_ffxml=[1],
@@ -259,7 +321,10 @@ class DihedralTrainer(BaseTrainer):
         self.inputs = {"positions": [], "pairs": [], "dihed_index": []}
         self.calculator = calculator
 
-    def setup(self):
+    def setup(self) -> None:
+        """
+        Set up the trainer by running force field scans and preparing input arrays.
+        """
         GT_scans = []
         for i in range(len(self.calculator.qm_scan)):
             GT_scans.append(self.calculator.qm_scan[i]["energy_kjmol"])
@@ -285,7 +350,17 @@ class DihedralTrainer(BaseTrainer):
         self.inputs["pairs"] = jnp.array(jnp_pairs_list)
         self.opt_state = self.optimizer.init(self.ffparams)
 
-    def get_loss_gradients(self):
+    def get_loss_gradients(self) -> Tuple[Any, Any]:
+        """
+        Compute the loss and its gradients for the current parameters.
+
+        Returns
+        -------
+        loss : float
+            The computed loss value.
+        grads : Any
+            Gradients of the loss with respect to the parameters.
+        """
         grads = tree_map(lambda x: x * 0.0, self.ffparams)
         loss = 0.0
         for i_dihed in range(len(self.inputs["positions"])):
@@ -301,7 +376,11 @@ class DihedralTrainer(BaseTrainer):
             grads = tree_map(lambda x, y: x + y, grads, grads_tmp)
         return loss, grads
 
-    def after_step(self):
+    def after_step(self) -> None:
+        """
+        Update force field and input arrays after each optimization step.
+        Handles periodic relaxation and XML output.
+        """
         self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
         self.rescharges = update_rescharges_from_params(self.rescharges, self.ffparams)
         self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
@@ -338,25 +417,58 @@ class DihedralTrainer(BaseTrainer):
 
 
 class ThermodynamicTrainer(BaseTrainer):
+    """
+    Trainer for optimizing force field parameters using thermodynamic property data.
+
+    This class handles the setup, optimization, and checkpointing for thermodynamic
+    property fitting tasks, using JAX and differentiable force fields.
+    """
     def __init__(
         self,
-        ffxml_list,
-        nums_ffxml,
-        pdbfile,
-        loss_fn,
-        sampling_params,
-        target_params,
-        opt_fftypes=[
+        ffxml_list: Union[str, List[str]],
+        nums_ffxml: List[int],
+        pdbfile: str,
+        loss_fn: Callable[..., float],
+        sampling_params: List[Any],
+        target_params: List[Any],
+        opt_fftypes: List[str] = [
             "NonbondedForce/charges",
             "NonbondedForce/sigma",
             "NonbondedForce/epsilon",
         ],
-        label=None,
-        optimizer_algo="adam",
-        lr=0.0001,
-        clip=0.1,
-    ):
+        label: Optional[str] = None,
+        optimizer_algo: str = "adam",
+        lr: Union[float, List[float]] = 0.0001,
+        clip: Union[float, List[float]] = 0.1,
+    ) -> None:
+        """
+        Initialize the ThermodynamicTrainer.
 
+        Parameters
+        ----------
+        ffxml_list : str or list of str
+            List of force field XML file paths or a single path.
+        nums_ffxml : list of int
+            Number of residues for each ffxml file.
+        pdbfile : str
+            Path to the PDB file.
+        loss_fn : callable
+            Loss function to be minimized.
+        sampling_params : list of dict
+            List of dictionaries containing sampling parameters for each replica.
+        target_params : list of dict
+            List of dictionaries containing target parameters for each replica.
+        opt_fftypes : list of str
+            List of force field parameter types to optimize.
+        label : str, optional
+            Label for the training run and output files.
+        optimizer_algo : str, optional
+            Optimizer algorithm name (default: 'adam').
+        lr : float or list of float, optional
+            Learning rate(s) for optimizer (default: 0.0001).
+        clip : float or list of float, optional
+            Gradient clipping value(s) (default: 0.1).
+        """
         # params
         self.sampling_params = sampling_params
         self.target_params = target_params
@@ -456,7 +568,10 @@ class ThermodynamicTrainer(BaseTrainer):
         if not isinstance(self.loss_fn, list):
             self.loss_fn = [self.loss_fn for _ in range(len(self.sampling_params))]
 
-    def setup(self):
+    def setup(self) -> None:
+        """
+        Set up the trainer by running MD simulations and preparing MBAR estimator.
+        """
         self.estimator = MBAREstimator()
         for i in range(len(self.sampling_params)):
             state_name = f"sample_{i}"
@@ -498,7 +613,17 @@ class ThermodynamicTrainer(BaseTrainer):
         self.estimator.optimize_mbar()
         self.opt_state = self.optimizer.init(self.ffparams)
 
-    def get_loss_gradients(self):
+    def get_loss_gradients(self) -> Tuple[Any, Any]:
+        """
+        Compute the loss and its gradients for the current parameters.
+
+        Returns
+        -------
+        loss : float
+            The computed loss value.
+        grads : Any
+            Gradients of the loss with respect to the parameters.
+        """
         grads = tree_map(lambda x: x * 0.0, self.ffparams)
         loss = 0.0
         self.utarget = []
@@ -528,7 +653,10 @@ class ThermodynamicTrainer(BaseTrainer):
 
         return loss, grads
 
-    def _resample(self):
+    def _resample(self) -> None:
+        """
+        Resample MD trajectories and update MBAR estimator if needed.
+        """
         if len(self.estimator.states) > 0:
             removedstatename = [
                 self.estimator.states[i].name
@@ -583,7 +711,12 @@ class ThermodynamicTrainer(BaseTrainer):
             self.estimator.add_sample(sample)
         self.estimator.optimize_mbar()
 
-    def after_step(self):
+    def after_step(self) -> None:
+        """
+        Update force field, input arrays, and resample if necessary after each
+        optimization step.
+        Handles periodic XML output and effective sample size checks.
+        """
         if True in self.resample:  # i.e., loss is nan
             self._resample()
             self.resample = [False for i in range(len(self.sampling_params))]
@@ -631,7 +764,15 @@ class ThermodynamicTrainer(BaseTrainer):
                 self._resample()
                 self.resample = [False for i in range(len(self.sampling_params))]
 
-    def write_checkpoint(self, checkpoint_frequency):
+    def write_checkpoint(self, checkpoint_frequency: int) -> None:
+        """
+        Save the current training state and plots to a checkpoint file.
+
+        Parameters
+        ----------
+        checkpoint_frequency : int
+            Frequency (in epochs) to write checkpoints.
+        """
         if self._epoch % checkpoint_frequency == 0:
             with open("train_state.pkl", "wb") as f:
                 dump_dict = {
@@ -686,17 +827,17 @@ class ThermodynamicTrainer(BaseTrainer):
     @classmethod
     def from_checkpoint(
         cls,
-        trainer_checkpoint,
-        ffxml_list,
-        nums_ffxml,
-        pdbfile,
-        initial_ffxml,
-        loss_fn=None,
-        opt_fftypes=None,
-        optimizer_algo=None,
-        lr=None,
-        clip=None,
-    ):
+        trainer_checkpoint: str,
+        ffxml_list: Union[str, List[str]],
+        nums_ffxml: List[int],
+        pdbfile: str,
+        initial_ffxml: str,
+        loss_fn: Optional[Callable[..., float]] = None,
+        opt_fftypes: Optional[List[str]] = None,
+        optimizer_algo: Optional[str] = None,
+        lr: Optional[Union[float, List[float]]] = None,
+        clip: Optional[Union[float, List[float]]] = None,
+    ) -> "ThermodynamicTrainer":
 
         with open(trainer_checkpoint, "rb") as f:
             dump_dict = pickle.load(f)

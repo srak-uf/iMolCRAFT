@@ -116,6 +116,28 @@ class Crafter:
         self.params_ff = data["forcefield"]
         self.structure = data["structure"]
 
+        if "cif" in self.structure.keys():
+            if not os.path.isfile(self.structure["cif"]):
+                new_cif = os.path.join(
+                    os.path.dirname(filename), self.structure["cif"]
+                )
+                if os.path.isfile(new_cif):
+                    self.structure["cif"] = new_cif
+            else:
+                raise FileNotFoundError(f"CIF file not found: {self.structure['cif']}")
+        elif "molecules" in self.structure.keys():
+            for i, molfile in enumerate(self.structure["molecules"]):
+                if not os.path.isfile(molfile):
+                    new_molfile = os.path.join(
+                        os.path.dirname(filename), self.structure["molecules"][i]
+                    )
+                    if os.path.isfile(new_molfile):
+                        self.structure["molecules"][i] = new_molfile
+                else:
+                    raise FileNotFoundError(
+                        f"Molecule file not found: {self.structure['molecules'][i]}"
+                    )
+
     def prep(self, do_opt=True, do_charge=True):
         """
         Prepare the system by reading the structure and generating the necessary
@@ -208,8 +230,10 @@ class Crafter:
             molstructures = self.structure["molecules"]
             b, a, m = pdb2packmol(
                 molstructures,
-                self.structure.get("nmols"),
-                desired_density=self.structure.get("density_kgm3", None),
+                fixed_property=self.structure.get("fixed_property", "cell"),
+                priority_property=self.structure.get("priority_property", "density"),
+                num_mols=self.structure.get("nmols", None),
+                density=self.structure.get("density_kgm3", None),
                 cell=self.structure.get("cell_A", None),
                 outfile="supercell.pdb",
             )

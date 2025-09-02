@@ -12,6 +12,7 @@ import math
 import os
 import random
 
+# -------------------------------
 # Future implementation
 # Distinguish the cis and trans isomers
 # -------------------------------
@@ -32,7 +33,8 @@ class asemol_wrapper:
         from the bond_def_file.
     """
 
-    def __init__(self, atoms: ase.Atoms, bond_def_file=None, chemical_bonds=None):
+    def __init__(self,
+                 atoms: ase.Atoms, bond_def_file=None, chemical_bonds=None):
         """
         Wrapper class for ASE Atoms object to handle molecular operations.
         Parameters
@@ -584,7 +586,13 @@ def expand_cell(atoms, length=30):
 
 
 def pdb2packmol(
-    pdbfiles, num_mols=None, cell=None, desired_density=None, outfile="packmol_tmp.xyz"
+    pdbfiles,
+    fixed_property,
+    priority_property,
+    num_mols,
+    cell=None,
+    density=None,
+    outfile="packmol_tmp.xyz"
 ):
     """
     Liquid packing using packmol.
@@ -593,12 +601,16 @@ def pdb2packmol(
     ----------
     pdbfiles : list
         List of PDB files to be packed.
-    num_mols : list, optional
-        List of number of molecules for PDB files. If None, all files are packed
-        with 1 molecule.
+    fixed_property: str
+        Property to be fixed during packing: num_mols, cell, or density.
+    priority_property: str
+        Property to be prioritized during packing: cell, or density.
+    num_mols : list
+        List of number / ratio of molecules for PDB files.
+        If num_mols is not specified as a fixed_property, it is treated as a ratio.
     cell : list, optional
         List of cell dimensions [a, b, c]. If None, a default cell size is used.
-    desired_density : float, optional
+    density : float, optional
         Desired density of the system. If None, the density is calculated based on
         the number of molecules and cell size.
     outfile : str, optional
@@ -613,31 +625,63 @@ def pdb2packmol(
     molecule_list : list
         List of molecule indices in the packed system.
     """
-    if num_mols is None:
-        num_mols = [1 for _ in pdbfiles]
-    if num_mols is not None and cell is not None and desired_density is not None:
+    valid_fixed_property = ["num_mols", "cell", "density"]
+    valid_priority_property = ["cell", "density"]
+
+    if fixed_property not in valid_fixed_property:
+        raise ValueError(
+            f"Invalid fixed_property: {fixed_property}. "
+            f"Must be one of {valid_fixed_property}."
+        )
+    if priority_property not in valid_priority_property:
+        raise ValueError(
+            f"Invalid priority_property: {priority_property}. "
+            f"Must be one of {valid_priority_property}."
+        )
+
+    if fixed_property == "num_mols" and priority_property == "cell":
+        pass
+    elif fixed_property == "num_mols" and priority_property == "density":
+        M = 0.0
+        for i, pdb in enumerate(pdbfiles):
+            atoms = read(pdb)
+            M += atoms.get_masses().sum() * num_mols[i]
+        cell = [0.0, 0.0, 0.0]
+        cell[0] = (M / (density / (units.m**3/units.kg)))**(1/3)
+        cell[1] = (M / (density / (units.m**3/units.kg)))**(1/3)
+        cell[2] = (M / (density / (units.m**3/units.kg)))**(1/3)
+    elif fixed_property == "cell" and priority_property == "density":
+        gcd_value = math.gcd(*num_mols)
+        num_mols = [n // gcd_value for n in num_mols]
         M = 0.0
         for i, pdb in enumerate(pdbfiles):
             atoms = read(pdb)
             M += atoms.get_masses().sum() * num_mols[i]
         Nset = int(
-            desired_density
+            density
             / (M / (cell[0] * cell[1] * cell[2]) * units.m**3 / units.kg)
         )
         num_mols = [n * Nset for n in num_mols]
-        print(f"num_mols: {num_mols}")
-
-    if cell is None:
-        cell = [1000, 1000, 1000]
-        if desired_density is not None:
-            M = 0.0
-            for i, pdb in enumerate(pdbfiles):
-                atoms = read(pdb)
-                M += atoms.get_masses().sum() * num_mols[i]
-            rho = M / (cell[0] * cell[1] * cell[2])
-            rho *= units.m**3 / units.kg
-            scale = (rho / desired_density) ** (1 / 3)
-            cell = [cell[0] * scale, cell[1] * scale, cell[2] * scale]
+    elif fixed_property == "density" and priority_property == "cell":
+        gcd_value = math.gcd(*num_mols)
+        num_mols = [n // gcd_value for n in num_mols]
+        M = 0.0
+        for i, pdb in enumerate(pdbfiles):
+            atoms = read(pdb)
+            M += atoms.get_masses().sum() * num_mols[i]
+        Nset = int(
+            density
+            / (M / (cell[0] * cell[1] * cell[2]) * units.m**3 / units.kg)
+        )
+        num_mols = [n * Nset for n in num_mols]
+        M = 0.0
+        for i, pdb in enumerate(pdbfiles):
+            atoms = read(pdb)
+            M += atoms.get_masses().sum() * num_mols[i]
+        cell[0] = (M / (density / (units.m**3/units.kg)))**(1/3)
+        cell[1] = (M / (density / (units.m**3/units.kg)))**(1/3)
+        cell[2] = (M / (density / (units.m**3/units.kg)))**(1/3)
+        print(cell[0])
 
     with open("pack_tmp.inp", mode="w") as f:
         f.write("seed  " + str(random.randint(1, 10000)) + "\n")
