@@ -1,5 +1,5 @@
 geoopt:
-  basis: 6-311++g(d,p)
+  basis: 6-311+g(2d,p)
   method: wb97xd
   # method: hf
   software: psi4
@@ -15,11 +15,5 @@ forcefield:
   charge_scale_neutral: 1.0
 structure:
   type: crystal
-  cif: ordered_Li(FSA)(C2)2_233K.cif
+  cif: LiBH4.cif
   repeat: [1,1,2]
-# structure:
-  # type: liquid
-  # molecules: ["a.pdb", "b.pdb", "c.pdb"]
-  # nmols: [1, 2, 1]
-  # density_kgm3: 1400
-  # cell_A: [30,30,30]

@@ -1,660 +1,879 @@
-from dmff import Hamiltonian, DMFFTopology
 from dmff.common.nblist import NoCutoffNeighborList
-from dmff.generators.classical import PeriodicTorsionGenerator
-from dmff.api.paramset import ParamSet
-from dmff.api.xmlio import XMLIO
-from dmff.api.hamiltonian import Potential
-from dmff.optimize import MultiTransform, genOptimizer
+from typing import List, Union, Optional, Callable, Any, Tuple
 from dmff.mbar import MBAREstimator, Sample, OpenMMSampleState
 import pickle
 from openmm import app
-from openmm.app import NoCutoff, Simulation, PDBFile, ForceField, Modeller
-import copy, shutil
-import numpy as np
-import jax
+from openmm.app import ForceField, Modeller
 import jax.numpy as jnp
 import os
 import mdtraj as md
-from jax import value_and_grad, jit, vmap
+from jax import value_and_grad
 from jax.tree_util import tree_map
-import optax
-from tqdm import tqdm
-from typing import NamedTuple, Callable
-from ..calculator import DihedCalculator
-from ..crafter.ffxml import check_vsite, delvsite_pdb
-from ..trainer.dmff_utils import get_loss_autograd, merge_xml, neutralize, \
-    update_rescharges_from_params, update_ffinfo_from_rescharges, \
-    get_chgparams_from_rescharges, get_rescharges_from_residues, \
-    update_ffinfo_from_params, vsiteinfo_to_params, md_sample, \
-    saver_wresults, get_target_pred_frame, get_target_gt, plot_compare
-import time
+from ..trainer.dmff_utils import (
+    update_rescharges_from_params,
+    update_ffinfo_from_rescharges,
+    update_ffinfo_from_params,
+    md_sample,
+    get_target_pred_frame,
+    get_target_gt,
+    plot_compare,
+)
+from .base import BaseTrainer
+from ..calculator import DihedralCalculator, DistanceCalculator
+from openmm import unit
+from matplotlib.ticker import MaxNLocator
+import matplotlib.pyplot as plt
 
-class DistanceTrainState(NamedTuple):
-    ffparams: dict
-    ff: Hamiltonian
-    rescharges: dict
-    opt_state: dict
-    loss: float = 0.0
 
-class _DistanceTrainer(NamedTuple):
-    init_step: Callable
-    train_step: Callable
+class DistanceTrainer(BaseTrainer):
+    """
+    Trainer for optimizing force field parameters using distance scan data.
 
-def make_distance_trainer(
-        optimizer: optax.GradientTransformation,
-) -> _DistanceTrainer:
+    This class handles the setup, optimization, and checkpointing for distance-based
+    parameter fitting tasks, using JAX and differentiable force fields.
+    """
+    def __init__(
+        self,
+        ffxml_list: Union[str, List[str]],
+        nums_ffxml: List[int],
+        pdbfile: str,
+        calculator: DistanceCalculator,
+        loss_fn: Callable[..., float],
+        relax_steps: int = 20,
+        opt_fftypes: List[str] = [
+            "NonbondedForce/charges",
+            "NonbondedForce/sigma",
+            "NonbondedForce/epsilon",
+        ],
+        label: Optional[str] = None,
+        batch_size: int = 1,
+        optimizer_algo: str = "adam",
+        lr: Union[float, List[float]] = 0.01,
+        clip: Union[float, List[float]] = 0.1,
+    ) -> None:
 
-    def init_step(ffparams, ff, rescharges):
-        opt_state = optimizer.init(ffparams)
-        return DistanceTrainState(ffparams=ffparams,
-                                  ff=ff,
-                                  rescharges=rescharges,
-                                  opt_state=opt_state)
+        super().__init__(
+            ffxml_list=ffxml_list,
+            nums_ffxml=nums_ffxml,
+            pdbfile=pdbfile,
+            loss_fn=loss_fn,
+            opt_fftypes=opt_fftypes,
+            batch_size=batch_size,
+            optimizer_algo=optimizer_algo,
+            label=label,
+            lr=lr,
+            clip=clip,
+        )
+        self.relax_steps = relax_steps
+        self.inputs = {"positions": [], "pairs": [], "dihed_index": []}
+        self.calculator = calculator
 
-    def train_step(train_state,
-                   inputs,
-                   topology,
-                   gt_scans,
-                   add_mask_fn=None,
-                   modify_ffparams=None):
+    def setup(self) -> None:
         """
-        train_state: DistanceTrainState
-        inputs: dict with keys "positions", "pairs", "dihed_index"
-        topology: OpenMM Topology object
-        gt_scans: ground truth scans (jnp.array)
-        natoms_list: list of number of atoms in each residue
-        charge_params, sigma_params, epsilon_params: dicts with target lists for parameters
-        """ 
-        def Loss(ffparams, ff, topology, positions, pairs, y_gt):
-            # ここでefuncを再定義することでchargesやvsiteの微分を可能にしている
-            ff_d = update_ffinfo_from_params(ff, ffparams)
-            ffparams_wo_charge = {}
-            for key in ffparams.keys():
-                if key == "NonbondedForce":
-                    ffparams_wo_charge[key] = {}
-                    for key2 in ffparams[key].keys():
-                        if key2 != "charges":
-                            ffparams_wo_charge[key][key2] = ffparams[key][key2]
-                elif key == "VsiteForce":
-                    pass
-                else:
-                    ffparams_wo_charge[key] = ffparams[key]
+        Set up the trainer by running force field scans and preparing input arrays.
+        """
+        self.calculator.do_ffscan(self.ffxml, ini_geom="QM")
+        GT_scans = []
+        for i in range(len(self.calculator.qm_distancescan)):
+            GT_scans.append(self.calculator.qm_distancescan[i]["energy_kjmol"])
+        self.GT_scans = jnp.array(GT_scans)
 
-            # print(f"ffparams_wo_charge: {ffparams_wo_charge}")
-            pots = ff_d.createPotential(topology) # should be pdb topology wo vsites
-            efunc = pots.getPotentialFunc()
-            # batched_efunc = jit(vmap(lambda x: efunc(x, None, pairs[0], ffparams_wo_charge)))
-            batched_efunc = vmap(lambda x: efunc(x, None, pairs[0], ffparams_wo_charge))
-            E_dmff = batched_efunc(positions)
-            E_min = jnp.min(E_dmff)
-            E_dmff = E_dmff - E_min
-            kT = 2.494 * 5/3 # 300 K = 2.494 kJ/mol
-            weights_pts = jnp.piecewise(y_gt, [y_gt<100, y_gt>=100],
-                                        [lambda x: jnp.array(1.0),
-                                         lambda x: jnp.exp(-(x-100)/kT)])
-            dE = E_dmff - y_gt
-            mse = dE**2 * weights_pts / jnp.sum(weights_pts)
-            mse = jnp.sum(mse)
-            return mse
+        positions_list = []
+        jnp_pairs_list = []
+        for i in range(len(self.calculator.qm_distancescan)):
+            self.calculator.do_ffscan(self.ffxml, ini_geom="QM")
+            # position unit is nanometer
+            positions = [
+                jnp.array(atoms.positions, dtype=jnp.float64) / 10
+                for atoms in self.calculator.ff_distancescan[i]["atoms"]
+            ]
+            if self.num_vsites > 0:
+                positions = [
+                    self.potentials.topology.addVSiteToPos(p) for p in positions
+                ]
+            positions_list.append(positions)
+            jnp_pairs = []
+            for j in range(len(self.calculator.ff_distancescan[0]["atoms"])):
+                nbList = NoCutoffNeighborList(cov_map=self.potentials.meta["cov_map"])
+                nbList.allocate(positions_list[0][j])
+                jnp_pairs.append(nbList.pairs)
+            jnp_pairs_list.append(jnp_pairs)
+        self.inputs["positions"] = jnp.array(positions_list, dtype=jnp.float64)
+        self.inputs["pairs"] = jnp.array(jnp_pairs_list)
+        self.opt_state = self.optimizer.init(self.ffparams)
 
-        ###########################
+    def get_loss_gradients(self) -> Tuple[Any, Any]:
+        """
+        Compute the loss and its gradients for the current parameters.
 
-        # initialize gradient
-        grads = tree_map(lambda x: x*0.0, train_state.ffparams)
+        Returns
+        -------
+        loss : float
+            The computed loss value.
+        grads : Any
+            Gradients of the loss with respect to the parameters.
+        """
+        grads = tree_map(lambda x: x * 0.0, self.ffparams)
         loss = 0.0
-
-        for i_dihed in range(len(inputs["positions"])):
-            ## for debug
-            # grads_tmp = tree_map(lambda x: x*0.0, train_state.ffparams)
-            # loss_tmp = 0.0
-            ###############
-            loss_tmp, grads_tmp = value_and_grad(Loss, argnums=0)(train_state.ffparams,
-                                                                  train_state.ff,
-                                                                  topology,
-                                                                  inputs["positions"][i_dihed],
-                                                                  inputs["pairs"][i_dihed],
-                                                                  gt_scans[i_dihed])
-
+        for i_dihed in range(len(self.inputs["positions"])):
+            loss_tmp, grads_tmp = value_and_grad(self.loss_fn, argnums=0)(
+                self.ffparams,
+                self.ff,
+                self.pdb.topology,
+                self.inputs["positions"][i_dihed],
+                self.inputs["pairs"][i_dihed],
+                self.GT_scans[i_dihed],
+            )
             loss += loss_tmp
             grads = tree_map(lambda x, y: x + y, grads, grads_tmp)
+        return loss, grads
 
-        if add_mask_fn is not None:
-            grads = add_mask_fn(grads)
-
-        updates, new_opt_state = optimizer.update(grads, train_state.opt_state)
-        # print(f"updates: {updates}")
-        ffparams = optax.apply_updates(train_state.ffparams, updates)
-
-        if modify_ffparams is not None:
-            ffparams = modify_ffparams(ffparams)
-
-        ff = update_ffinfo_from_params(train_state.ff, ffparams)
-        rescharges = update_rescharges_from_params(train_state.rescharges, ffparams)
-        ff = update_ffinfo_from_rescharges(ff, rescharges)
+    def after_step(self) -> None:
+        """
+        Update force field and input arrays after each optimization step.
+        Handles periodic relaxation and XML output.
+        """
+        self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
+        self.rescharges = update_rescharges_from_params(self.rescharges, self.ffparams)
+        self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
         ffparams_wo_charge = {}
-        for key in train_state.ffparams.keys():
+        for key in self.ffparams.keys():
             if key == "NonbondedForce":
                 ffparams_wo_charge[key] = {}
-                for key2 in train_state.ffparams[key].keys():
+                for key2 in self.ffparams[key].keys():
                     if key2 != "charges":
-                        ffparams_wo_charge[key][key2] = train_state.ffparams[key][key2]
+                        ffparams_wo_charge[key][key2] = self.ffparams[key][key2]
             elif key == "VsiteForce":
                 pass
             else:
-                ffparams_wo_charge[key] = train_state.ffparams[key]
+                ffparams_wo_charge[key] = self.ffparams[key]
+        self.ff.getParameters().parameters = ffparams_wo_charge
 
-        ff.getParameters().parameters = ffparams_wo_charge
+        epoch = self._epoch + 1
+        if epoch % self.relax_steps == 0:
+            self.ff.renderXML(f"loop-{epoch}.xml")
+            self.calculator.do_ffscan(f"loop-{epoch}.xml", ini_geom="QM")
+            positions_list = []
+            for i in range(len(self.calculator.ff_distancescan)):
+                positions = [
+                    jnp.array(atoms.positions, dtype=jnp.float64) / 10
+                    for atoms in self.calculator.ff_distancescan[i]["atoms"]
+                ]
+                if self.num_vsites > 0:
+                    positions = [
+                        self.potentials.topology.addVSiteToPos(p) for p in positions
+                    ]
+                positions_list.append(positions)
+            positions_list = jnp.array(positions_list)
+            self.inputs["positions"] = positions_list
 
-        return DistanceTrainState(ffparams=ffparams,
-                                  ff=ff,
-                                  rescharges=rescharges,
-                                  opt_state=new_opt_state,
-                                  loss=loss)
+    def write_checkpoint(self, checkpoint_frequency: int) -> None:
+        """
+        Save the current training state to a checkpoint file.
 
-    return _DistanceTrainer(init_step, train_step)
+        Parameters
+        ----------
+        checkpoint_frequency : int
+            Frequency (in epochs) to write checkpoints.
+        """
+        if self._epoch % checkpoint_frequency == 0:
+            with open("train_state.pkl", "wb") as f:
+                dump_dict = {
+                    "ffparams": self.ffparams,
+                    "opt_state": self.opt_state,
+                    "ffinfo": self.ff.ffinfo,
+                    "rescharges": self.rescharges,
+                    "positions": self.inputs["positions"],
+                    "pairs": self.inputs["pairs"],
+                    "calculator": self.calculator,
+                    "epoch": self._epoch,
+                    "losses": self.losses,
+                    "epochs": self.epochs,
+                    "label": self.label,
+                    "optimizer_algo": self.optimizer_algo,
+                    "opt_fftypes": self.opt_fftypes,
+                    "lr": self.lr,
+                    "clip": self.clip,
+                }
+                pickle.dump(dump_dict, f)
 
-class DistanceTrainer:
-    # xml, pdbfile with topology, DihedCalculator
-    def __init__(self,
-                 ffxml_list,
-                 nums_ffxml,
-                 pdb,
-                 calculator,
-                 optparam_types=["NonbondedForce/charges", "NonbondedForce/sigma", "NonbondedForce/epsilon"],
-                 batch_size=1,
-                 optimizer_algo="adam",
-                 lr=0.01):
-        if isinstance(ffxml_list, str):
-            ffxml_list = [ffxml_list]
-        
-        assert len(ffxml_list) == len(nums_ffxml), "Length of ffxml_list and nums_ffxml must be the same."
+    @classmethod
+    def from_checkpoint(
+        cls,
+        trainer_checkpoint: str,
+        ffxml_list: Union[str, List[str]],
+        nums_ffxml: List[int],
+        pdbfile: str,
+        loss_fn: Optional[Callable[..., float]] = None,
+        opt_fftypes: Optional[List[str]] = None,
+        optimizer_algo: Optional[str] = None,
+        lr: Optional[Union[float, List[float]]] = None,
+        clip: Optional[Union[float, List[float]]] = None,
+    ) -> "DistanceTrainer":
 
-        xmlfile = merge_xml(ffxml_list, "merge.xml")
-        self.ffxml = xmlfile
-        self.ff = Hamiltonian(self.ffxml)
-        self.num_vsites = check_vsite(self.ffxml)
-        self._epoch = 0
+        with open(trainer_checkpoint, "rb") as f:
+            dump_dict = pickle.load(f)
 
-        self.pdb = app.PDBFile(pdb)
-        self.potentials = self.ff.createPotential(self.pdb.topology)
-        self.calculator = calculator
-        if self.num_vsites > 0:
-            modeller = Modeller(self.pdb.topology, self.pdb.positions)
-            modeller.addExtraParticles(ForceField(self.ffxml))
-            pos = modeller.getPositions()
-            self.topology = modeller.topology
-        else:
-            self.topology = self.pdb.topology
-        self.optparam_types = optparam_types
+        if lr is None:
+            lr = dump_dict["lr"]
+        if clip is None:
+            clip = dump_dict["clip"]
+        if optimizer_algo is None:
+            optimizer_algo = dump_dict["optimizer_algo"]
+        if opt_fftypes is None:
+            opt_fftypes = dump_dict["opt_fftypes"]
 
-        ffparams = self.ff.getParameters().parameters
-        self.rescharges, self.natoms_list = get_rescharges_from_residues(self.ff, ratio=nums_ffxml)
-        if self.num_vsites > 0:
-            ffparams = vsiteinfo_to_params(self.ff, ffparams)
-        self.ffparams = get_chgparams_from_rescharges(ffparams, self.rescharges)
-
-        multiTrans = MultiTransform(self.ffparams)
-        for optparam_type in self.optparam_types:
-            # multiTrans[optparam_type] = genOptimizer(learning_rate=lr, clip=0.001, nonzero=False)
-            if optparam_type == "NonbondedForce/charges":
-                multiTrans[optparam_type] = genOptimizer(learning_rate=lr, nonzero=False)
-            else:
-                multiTrans[optparam_type] = genOptimizer(learning_rate=lr,
-                                                         nonzero=False) # Should be True
-        multiTrans.finalize()
-        self.grad_transform = optax.multi_transform(multiTrans.transforms, multiTrans.labels)
-        mask = jax.tree_util.tree_map(lambda x: x.dtype != jnp.int32 and x.dtype != int, self.ffparams)
-        self.optimizer = optax.masked(self.grad_transform, mask)
-
-        self.inputs = {"positions": [],
-                       "pairs": [],
-                       "dihed_index": []}
-        self.losses = []
-        self.epochs = []
-        self.all_losses = []
-        self.all_epochs = []
-
-    def setup(self, trainer_checkpoint=None):
-        shutil.copyfile(self.ffxml, "loop-0.xml")
-        self.calculator.do_ffscan(f"loop-0.xml", ini_geom="QM")
+        trainer = cls(
+            ffxml_list=ffxml_list,
+            nums_ffxml=nums_ffxml,
+            pdbfile=pdbfile,
+            calculator=dump_dict["calculator"],
+            loss_fn=loss_fn,
+            opt_fftypes=opt_fftypes,
+            optimizer_algo=optimizer_algo,
+            label=dump_dict["label"],
+            lr=lr,
+            clip=clip,
+        )
 
         GT_scans = []
-        for i in range(len(self.calculator.qm_distancescan)):
-            GT_scan = self.calculator.qm_distancescan[i]["energy_kjmol"] \
-                        - np.array(self.calculator.qm_distancescan[i]["energy_kjmol"]).min()
-            GT_scans.append(GT_scan)
-        self.GT_scans = jnp.array(GT_scans)
-        
-        if trainer_checkpoint is not None:
-            with open(trainer_checkpoint, "rb") as f:
-                dump_dict = pickle.load(f)
-            opt_state = dump_dict["opt_state"]
-            self.ffparams = dump_dict["ffparams"]
-            self.ff.ffinfo = dump_dict["ffinfo"]
-            self.rescharges = dump_dict["rescharges"]
-            self.trainer = make_distance_trainer(self.optimizer)
-            self.train_state = DistanceTrainState(ffparams=self.ffparams,
-                                                  ff=self.ff,
-                                                  rescharges=self.rescharges,
-                                                  opt_state=opt_state)
-            self.inputs["positions"] = dump_dict["positions"]
-            self.inputs["pairs"] = dump_dict["pairs"]
-            self._epoch = dump_dict["epoch"] + 1
-            self.all_losses = dump_dict["all_losses"]
-            self.all_epochs = dump_dict["all_epochs"]
-            self.losses = dump_dict["losses"]
-            self.epochs = dump_dict["epochs"]
-        else:
-            self.trainer = make_distance_trainer(self.optimizer)
-            self.train_state = self.trainer.init_step(self.ffparams, self.ff, self.rescharges)
-            positions_list = []
-            jnp_pairs_list = []
-            for i in range(len(self.calculator.qm_distancescan)):
-                self.calculator.do_ffscan(f"loop-0.xml", ini_geom="QM")
-                # position unit is nanometer
-                positions = [jnp.array(atoms.positions, dtype=jnp.float64) / 10 \
-                                for atoms in self.calculator.ff_distancescan[i]["atoms"]]
-                
-                if self.num_vsites > 0:
-                    positions = [self.potentials.topology.addVSiteToPos(p) for p in positions]
+        for i in range(len(trainer.calculator.qm_distancescan)):
+            GT_scans.append(trainer.calculator.qm_distancescan[i]["energy_kjmol"])
+        trainer.GT_scans = jnp.array(GT_scans)
 
-                positions_list.append(positions)
+        trainer.opt_state = dump_dict["opt_state"]
+        trainer.ffparams = dump_dict["ffparams"]
+        trainer.ff.ffinfo = dump_dict["ffinfo"]
+        trainer.rescharges = dump_dict["rescharges"]
+        trainer.inputs["positions"] = dump_dict["positions"]
+        trainer.inputs["pairs"] = dump_dict["pairs"]
+        trainer._epoch = dump_dict["epoch"]
+        trainer.losses = dump_dict["losses"]
+        trainer.epochs = dump_dict["epochs"]
 
-                jnp_pairs= []
-                for j in range(len(self.calculator.ff_distancescan[0]["atoms"])):
-                    nbList = NoCutoffNeighborList(cov_map=self.potentials.meta["cov_map"])
-                    nbList.allocate(positions_list[0][j])
-                    jnp_pairs.append(nbList.pairs)
-                jnp_pairs_list.append(jnp_pairs)
-            
-            self.inputs["positions"] = jnp.array(positions_list, dtype=jnp.float64) 
-            self.inputs["pairs"] = jnp.array(jnp_pairs_list)
-
-    def fit(self, steps=1000, relax_steps=20, add_mask_fn=None, ffparams_modify=None):
-        p_train_step = self.trainer.train_step
-        for epoch in range(self._epoch, steps+1):
-            start_time = time.time()
-            self.train_state = p_train_step(self.train_state,
-                                            self.inputs,
-                                            self.pdb.topology,
-                                            self.GT_scans,
-                                            add_mask_fn=add_mask_fn,
-                                            modify_ffparams=ffparams_modify,
-                                            )
-            end_time = time.time()
-            print(f"Time taken for epoch {epoch}: {end_time - start_time:.2f} seconds")
-            self.all_losses.append(self.train_state.loss)
-            self.all_epochs.append(epoch)
-            self._epoch = epoch + 1
-
-            if epoch % relax_steps==0:
-                # self.trainerをpickleで保存
-                with open(f"train_state.pkl", "wb") as f:
-                    dump_dict = {
-                        "ffparams": self.train_state.ffparams,
-                        "opt_state": self.train_state.opt_state,
-                        "ffinfo": self.train_state.ff.ffinfo,
-                        "loss": self.train_state.loss,
-                        "rescharges": self.train_state.rescharges,
-                        "positions": self.inputs["positions"],
-                        "pairs": self.inputs["pairs"],
-                        "epoch": epoch,
-                        "losses": self.losses,
-                        "epochs": self.epochs,
-                        "all_losses": self.all_losses,
-                        "all_epochs": self.all_epochs
-                    }
-                    pickle.dump(dump_dict, f)
-
-                print(f"epoch {epoch}")
-                self.losses.append(self.train_state.loss)
-                self.epochs.append(epoch)
-                print(f"loss {self.train_state.loss}, best loss {min(self.losses)} at epoch {self.epochs[np.argmin(self.losses)]}")
-                self.train_state.ff.renderXML(f"loop-{epoch+1}.xml")
-                self.calculator.do_ffscan(f"loop-{epoch+1}.xml",
-                                          ini_geom="QM")
- 
-                positions_list = []
-                for i in range(len(self.calculator.ff_distancescan)):
-                    positions = [jnp.array(atoms.positions, dtype=jnp.float64) / 10 \
-                            for atoms in self.calculator.ff_distancescan[i]["atoms"]]
-                    if self.num_vsites > 0:
-                        positions = [self.potentials.topology.addVSiteToPos(p) for p in positions]
-                    positions_list.append(positions)
-                positions_list = jnp.array(positions_list)
-                self.inputs["positions"] = positions_list
-                
-
-class DihedTrainState(NamedTuple):
-    paramset_dihed: ParamSet
-    paramset_all: ParamSet
-    opt_state: dict
-    loss: float = 0.0
-    # loss: list = []
-
-class _DihedTrainer(NamedTuple):
-    init_step: Callable
-    train_step: Callable
-
-def make_dihedtrainer(
-    potentials: Potential,
-    optimizer: optax.GradientTransformation,
-) -> _DihedTrainer:
-
-    def init_step(paramset_dihed_init, paramset_all_init):
-        opt_state = optimizer.init(paramset_dihed_init)
-        return DihedTrainState(paramset_dihed=paramset_dihed_init,
-                              paramset_all=paramset_all_init,
-                              opt_state=opt_state)
-
-    def train_step(train_state, inputs, gt_scans):
-        inputs = inputs
-        gt_scans = gt_scans
-        paramset_all = train_state.paramset_all
-
-        def add_grad(grad1:ParamSet, grad2:ParamSet):
-            for k in grad1.parameters.keys():
-                for t in grad1.parameters[k].keys():
-                    grad1.parameters[k][t] += grad2.parameters[k][t]
-            return ParamSet(grad1.parameters, grad1.mask)
-        
-        def compute_loss(paramset_dihed, positions, pairs, y_gt):
-            efunc = potentials.getPotentialFunc()
-            params_dihed = paramset_dihed.parameters
-            params_all = copy.deepcopy(paramset_all)
-            params_all['PeriodicTorsionForce']["proper_phase"] = \
-                    params_dihed["PeriodicTorsionForce"]["proper_phase"]
-            params_all['PeriodicTorsionForce']["proper_k"] = \
-                    params_dihed["PeriodicTorsionForce"]["proper_k"]
-            E_dmff = jnp.zeros((positions.shape[0],), dtype=jnp.float64)
-            for ipt in range(len(positions)):
-                E_dmff = E_dmff.at[ipt].set(efunc(positions[ipt], 
-                                                  None,
-                                                  pairs[ipt],
-                                                  params_all))
-            E_min = jnp.min(E_dmff)
-            E_dmff = E_dmff - E_min
-            kT = 2.494 * 5/3 # 300 K = 2.494 kJ/mol
-            weights_pts = jnp.piecewise(y_gt, [y_gt<25, y_gt>=25],
-                                        [lambda x: jnp.array(1.0),
-                                         lambda x: jnp.exp(-(x-25)/kT)])
-            dE = E_dmff - y_gt
-            mse = dE**2 * weights_pts / jnp.sum(weights_pts)
-            mse = jnp.sum(mse)
-            # mse = jnp.sum((E_dmff - y_gt)**2)
-            return mse
-
-        lossgrad_fn = jit(value_and_grad(compute_loss, argnums=(0)))
-        for i_dihed in range(len(inputs["positions"])):
-            loss_tmp, grads_tmp = lossgrad_fn(train_state.paramset_dihed,
-                                      inputs["positions"][i_dihed],
-                                      inputs["pairs"][i_dihed],
-                                      gt_scans[i_dihed])
-            if i_dihed == 0:
-                loss = loss_tmp
-                grads = grads_tmp
-            else:
-                loss += loss_tmp
-                grads = add_grad(grads, grads_tmp)
-
-        # train_state.loss.append(loss)
-        updates, new_opt_state = optimizer.update(grads, train_state.opt_state)
-        new_paramset_dihed = optax.apply_updates(train_state.paramset_dihed, updates)
-        return DihedTrainState(paramset_dihed=new_paramset_dihed,
-                               paramset_all=train_state.paramset_all,
-                               opt_state=new_opt_state,
-                            #    loss=train_state.loss)
-                               loss=loss)
-    
-    return _DihedTrainer(init_step, train_step)
+        return trainer
 
 
-class DihedTrainer:
-    # xml, pdbfile with topology, DihedCalculator
-    def __init__(self, ffxml, pdb, calculator, batch_size=1,
-                 optimizer=optax.adam(learning_rate=0.1)):
-        self.ffxml = ffxml
-        self.ff = Hamiltonian(ffxml)
-        self.pdb = app.PDBFile(pdb)
-        self.potentials = self.ff.createPotential(self.pdb.topology)
+class DihedralTrainer(BaseTrainer):
+    """
+    Trainer for optimizing force field parameters using dihedral scan data.
+
+    This class handles the setup, optimization, and checkpointing for dihedral-based
+    parameter fitting tasks, using JAX and differentiable force fields.
+    """
+    def __init__(
+        self,
+        ffxml: str,
+        pdbfile: str,
+        calculator: DihedralCalculator,
+        loss_fn: Callable[..., float],
+        relax_steps: int = 20,
+        opt_fftypes: List[str] = [
+            "PeriodicTorsionForce/proper_phase",
+            "PeriodicTorsionForce/proper_k",
+        ],
+        label: Optional[str] = None,
+        batch_size: int = 1,
+        optimizer_algo: str = "adam",
+        lr: Union[float, List[float]] = 0.01,
+        clip: Union[float, List[float]] = 0.1,
+    ) -> None:
+        """
+        Initialize the DihedralTrainer.
+
+        Parameters
+        ----------
+        ffxml_list : str or list of str
+            List of force field XML file paths or a single path.
+        nums_ffxml : list of int
+            Number of residues for each ffxml file.
+        pdbfile : str
+            Path to the PDB file.
+        loss_fn : callable
+            Loss function to be minimized.
+        opt_fftypes : list of str
+            List of force field parameter types to optimize.
+        label : str, optional
+            Label for the training run and output files.
+        batch_size : int, optional
+            Batch size for training (default: 1).
+        optimizer_algo : str, optional
+            Optimizer algorithm name (default: 'adam').
+        lr : float or list of float, optional
+            Learning rate(s) for optimizer (default: 0.0001).
+        clip : float or list of float, optional
+            Gradient clipping value(s) (default: 0.1).
+        """
+        super().__init__(
+            ffxml_list=[ffxml],
+            nums_ffxml=[1],
+            pdbfile=pdbfile,
+            loss_fn=loss_fn,
+            opt_fftypes=opt_fftypes,
+            batch_size=batch_size,
+            optimizer_algo=optimizer_algo,
+            label=label,
+            lr=lr,
+            clip=clip,
+        )
+
+        self.relax_steps = relax_steps
+        self.inputs = {"positions": [], "pairs": [], "dihed_index": []}
         self.calculator = calculator
-        self.optimizer = optimizer
-        self.inputs = {"positions": [],
-                       "pairs": [],
-                       "dihed_index": []}
-        self.ytrue = []
-        self.loss = []
-        self.epoch = []
 
-    def setup(self):
-        shutil.copyfile(self.ffxml, "loop-0.xml")
-        self.calculator.get_dihedral_ff(f"loop-0.xml", angles=None, ini_geom="FF")
+    def setup(self) -> None:
+        """
+        Set up the trainer by running force field scans and preparing input arrays.
+        """
+        GT_scans = []
+        for i in range(len(self.calculator.qm_scan)):
+            GT_scans.append(self.calculator.qm_scan[i]["energy_kjmol"])
+        self.GT_scans = jnp.array(GT_scans)
+
         positions_list = []
         jnp_pairs_list = []
-        GT_scans = []
-        for i in range(len(self.calculator.dihedral_list)):
-            self.calculator.get_dihedral_ff(f"loop-0.xml", i, angles=None, ini_geom="FF")
-            positions = [atoms.positions for atoms in self.calculator.ff_dihedscan[i]["atoms"]]
+        for i in range(len(self.calculator.ff_scan)):
+            self.calculator.do_ffscan(self.ffxml, i, angles="QM", ini_geom="FF")
+            positions = [
+                atoms.positions for atoms in self.calculator.ff_scan[i]["atoms"]
+            ]
             positions_list.append(positions)
-
-            jnp_pairs= []
-            for i_dihed in range(len(self.calculator.ff_dihedscan[0]["atoms"])):
+            jnp_pairs = []
+            for i_dihed in range(len(self.calculator.ff_scan[0]["atoms"])):
                 nbList = NoCutoffNeighborList(cov_map=self.potentials.meta["cov_map"])
                 nbList.allocate(positions_list[0][i_dihed])
                 jnp_pairs.append(nbList.pairs)
             jnp_pairs_list.append(jnp_pairs)
-
-            GT_scan = self.calculator.qm_dihedscan[i]["energies_kjmol"]
-            GT_scans.append(GT_scan)
-
-        self.GT_scans = GT_scans
-        self.ytrue = jnp.array(self.ytrue)
-        self.inputs["positions"] = jnp.array(positions_list, dtype=jnp.float32)/10 # nm
+        self.inputs["positions"] = (
+            jnp.array(positions_list, dtype=jnp.float32) / 10
+        )  # nm
         self.inputs["pairs"] = jnp.array(jnp_pairs_list)
+        self.opt_state = self.optimizer.init(self.ffparams)
 
-        # Parameters
-        self.paramset_dihed = ParamSet()
-        self.torsion_gen = PeriodicTorsionGenerator(self.ff.ffinfo, self.paramset_dihed)
-        paramset_all_init = self.ff.getParameters()
-        paramset_all_init.to_jax()
-        self.paramset_all = copy.deepcopy(paramset_all_init)
+    def get_loss_gradients(self) -> Tuple[Any, Any]:
+        """
+        Compute the loss and its gradients for the current parameters.
 
-    def fit(self, steps=1000, relax_steps=20):
-        trainer = make_dihedtrainer(self.potentials, self.optimizer)
-        p_train_step = jax.jit(trainer.train_step)
-        train_state = trainer.init_step(self.paramset_dihed, self.paramset_all)
-        for epoch in range(steps+1):
-            train_state = p_train_step(train_state,
-                                       self.inputs,
-                                       self.GT_scans)
-            if epoch % relax_steps==0:
-                print(f"epoch {epoch}")
-                self.loss.append(train_state.loss)
-                print(f"loss {train_state.loss}")
-                self.epoch.append(epoch)
-                io = XMLIO()
-                io.writeXML(f"loop-{epoch}.xml", self.torsion_gen.ffinfo)
-                self.torsion_gen.overwrite(train_state.paramset_dihed)
-                io2 = XMLIO()
-                io2.writeXML(f"loop-{epoch+1}.xml", self.torsion_gen.ffinfo)
-                self.calculator.get_dihedral_ff(f"loop-{epoch+1}.xml",
-                                                angles=None,
-                                                ini_geom="FF")
-                positions_list = []
-                for i in range(len(self.calculator.dihedral_list)):
-                    positions = [atoms.positions for atoms in self.calculator.ff_dihedscan[i]["atoms"]]
-                    positions_list.append(positions)
-                positions_list = jnp.array(positions_list)/10 # Angstrom to nm
-                self.inputs["positions"] = positions_list
+        Returns
+        -------
+        loss : float
+            The computed loss value.
+        grads : Any
+            Gradients of the loss with respect to the parameters.
+        """
+        grads = tree_map(lambda x: x * 0.0, self.ffparams)
+        loss = 0.0
+        for i_dihed in range(len(self.inputs["positions"])):
+            loss_tmp, grads_tmp = value_and_grad(self.loss_fn, argnums=0)(
+                self.ffparams,
+                self.ff,
+                self.pdb.topology,
+                self.inputs["positions"][i_dihed],
+                self.inputs["pairs"][i_dihed],
+                self.GT_scans[i_dihed],
+            )
+            loss += loss_tmp
+            grads = tree_map(lambda x, y: x + y, grads, grads_tmp)
+        return loss, grads
+
+    def after_step(self) -> None:
+        """
+        Update force field and input arrays after each optimization step.
+        Handles periodic relaxation and XML output.
+        """
+        self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
+        self.rescharges = update_rescharges_from_params(self.rescharges, self.ffparams)
+        self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
+        ffparams_wo_charge = {}
+        for key in self.ffparams.keys():
+            if key == "NonbondedForce":
+                ffparams_wo_charge[key] = {}
+                for key2 in self.ffparams[key].keys():
+                    if key2 != "charges":
+                        ffparams_wo_charge[key][key2] = self.ffparams[key][key2]
+            elif key == "VsiteForce":
+                pass
+            else:
+                ffparams_wo_charge[key] = self.ffparams[key]
+        self.ff.getParameters().parameters = ffparams_wo_charge
+
+        epoch = self._epoch + 1
+        if epoch % self.relax_steps == 0:
+            self.ff.renderXML(f"loop-{epoch}.xml")
+            self.calculator.do_ffscan(f"loop-{epoch}.xml", angles="QM", ini_geom="FF")
+            positions_list = []
+            for i in range(len(self.calculator.ff_scan)):
+                positions = [
+                    jnp.array(atoms.positions, dtype=jnp.float64) / 10
+                    for atoms in self.calculator.ff_scan[i]["atoms"]
+                ]
+                if self.num_vsites > 0:
+                    positions = [
+                        self.potentials.topology.addVSiteToPos(p) for p in positions
+                    ]
+                positions_list.append(positions)
+            positions_list = jnp.array(positions_list)
+            self.inputs["positions"] = positions_list
 
 
-from openmm import unit
+class ThermodynamicTrainer(BaseTrainer):
+    """
+    Trainer for optimizing force field parameters using thermodynamic property data.
 
-class ThermodynamicTrainer:
+    This class handles the setup, optimization, and checkpointing for thermodynamic
+    property fitting tasks, using JAX and differentiable force fields.
+    """
     def __init__(
-            self,
-            dmff_params,
-            label,
-            chkfile=None):
-        
-        ffxml_list = dmff_params["forcefield"]["xml_list"]
-        self.initial_xml = merge_xml(ffxml_list, "epoch-0.xml")
-        self.ff = Hamiltonian(ffxml_list)
-        self.pdbfile = dmff_params["sampling"]["init_structure"]
-        self.pdbfile_wovs = self.pdbfile
-        self.pdb = PDBFile(self.pdbfile)
-        self.pdb_wovs = PDBFile(self.pdbfile)
+        self,
+        ffxml_list: Union[str, List[str]],
+        nums_ffxml: List[int],
+        pdbfile: str,
+        loss_fn: Callable[..., float],
+        sampling_params: List[Any],
+        target_params: List[Any],
+        opt_fftypes: List[str] = [
+            "NonbondedForce/charges",
+            "NonbondedForce/sigma",
+            "NonbondedForce/epsilon",
+        ],
+        label: Optional[str] = None,
+        optimizer_algo: str = "adam",
+        lr: Union[float, List[float]] = 0.0001,
+        clip: Union[float, List[float]] = 0.1,
+    ) -> None:
+        """
+        Initialize the ThermodynamicTrainer.
 
-        # Virtual sites
-        modeller = app.Modeller(self.pdb.topology, self.pdb.getPositions())
-        modeller.addExtraParticles(app.ForceField(self.initial_xml))
-        self.pos = modeller.getPositions()
-        self.topology = modeller.topology
-        num_vsites = 0
-        for residue in self.ff.ffinfo["Residues"]:
-            if "vsites" in residue.keys():
-                num_vsites += len(residue["vsites"])
-        if num_vsites > 0:
-            basename = os.path.splitext(self.pdbfile)[0]
-            self.pdbfile = basename + "_vs.pdb"
-            app.PDBFile.writeFile(self.topology, self.pos, open(self.pdbfile, "w"))
+        Parameters
+        ----------
+        ffxml_list : str or list of str
+            List of force field XML file paths or a single path.
+        nums_ffxml : list of int
+            Number of residues for each ffxml file.
+        pdbfile : str
+            Path to the PDB file.
+        loss_fn : callable
+            Loss function to be minimized.
+        sampling_params : list of dict
+            List of dictionaries containing sampling parameters for each replica.
+        target_params : list of dict
+            List of dictionaries containing target parameters for each replica.
+        opt_fftypes : list of str
+            List of force field parameter types to optimize.
+        label : str, optional
+            Label for the training run and output files.
+        optimizer_algo : str, optional
+            Optimizer algorithm name (default: 'adam').
+        lr : float or list of float, optional
+            Learning rate(s) for optimizer (default: 0.0001).
+        clip : float or list of float, optional
+            Gradient clipping value(s) (default: 0.1).
+        """
+        # params
+        self.sampling_params = sampling_params
+        self.target_params = target_params
+
+        super().__init__(
+            ffxml_list=ffxml_list,
+            nums_ffxml=nums_ffxml,
+            pdbfile=pdbfile,
+            loss_fn=loss_fn,
+            opt_fftypes=opt_fftypes,
+            optimizer_algo=optimizer_algo,
+            label=label,
+            lr=lr,
+            clip=clip,
+        )
 
         # MD + Energy function setup
-        self.rc = float(dmff_params["forcefield"]["rcut_nm"])
-        pots = self.ff.createPotential(self.pdb.topology,
-                                       nonbondedMethod=app.PME,
-                                       nonbondedCutoff=self.rc*unit.nanometer)
-        self.cov_map = pots.meta['cov_map']
-        self.ffparams = self.ff.getParameters().parameters
-        res_ratio = dmff_params["forcefield"]["residue_ratio"]
-        self.rescharges, self.natoms_list = get_rescharges_from_residues(self.ff, ratio=res_ratio)
-        self.T_K = float(dmff_params["sampling"]["temperature_K"])
-        self.P_bar = float(dmff_params["sampling"]["pressure_bar"])
-        self.ensemble = dmff_params["sampling"]["ensemble"]
+        if isinstance(self.sampling_params, dict):
+            self.pdb = [self.pdb]
+            self.pdbfile = [self.pdbfile]
+            self.pdbfile_vsite = [self.pdbfile_vsite]
+            self.potentials = [self.potentials]
+            self.topology = [self.topology]
+            self.sampling_params = [self.sampling_params]
+        elif isinstance(self.sampling_params, list):
+            self.pdbfile = []
+            self.pdb = []
+            self.pdbfile_vsite = []
+            self.potentials = []
+            self.topology = []
+            self.T_K = []
+            for i, sampling_param in enumerate(self.sampling_params):
+                self.pdbfile.append(sampling_param["init_structure"])
+                self.pdb.append(app.PDBFile(self.pdbfile[i]))
+                self.potentials.append(
+                    self.ff.createPotential(
+                        self.pdb[i].topology,
+                        nonbondedMethod=app.PME,
+                        nonbondedCutoff=self.sampling_params[i]["rcut_nm"]
+                        * unit.nanometer,
+                    )
+                )
+                self.topology.append(self.pdb[i].topology)
+                if self.num_vsites > 0:
+                    modeller = Modeller(self.pdb[i].topology, self.pdb[i].positions)
+                    modeller.addExtraParticles(ForceField(self.ffxml))
+                    pos = modeller.getPositions()
+                    self.topology[i] = modeller.topology
+                else:
+                    self.topology[i] = self.pdb[i].topology
+                # self.pdbfile[i]のbasenameにvs_をつけて保存
+                vs_pdbfile = f"vs_{os.path.basename(self.pdbfile[i])}"
+                app.PDBFile.writeFile(self.topology[i], pos, open(vs_pdbfile, "w"))
+                self.pdbfile_vsite.append(vs_pdbfile)
+        else:
+            raise AssertionError("Invalid sampling parameters")
 
-        self.neff = dmff_params["opt_scheme"]["neff"]
+        self.T_K = []
+        self.P_bar = []
+        self.anneal_steps = []
+        self.anneal_Tmax = []
+        self.anneal_steps = []
+        self.anneal_totalsteps = []
+        self.relax_steps = []
+        self.rc_nm = []
+        self.prod_steps = []
+        self.nstxout = []
+        self.neff = []
+        self.dt_fs = []
+        self.ensemble = []
+        for i, sampling_param in enumerate(self.sampling_params):
+            self.T_K.append(float(sampling_param["temperature_K"]))
+            self.P_bar.append(float(sampling_param["pressure_bar"]))
+            self.anneal_steps.append(int(sampling_param["anneal_steps"]))
+            self.anneal_Tmax.append(float(sampling_param["anneal_Tmax"]))
+            self.anneal_totalsteps.append(int(sampling_param["anneal_totalsteps"]))
+            self.relax_steps.append(int(sampling_param["relax_steps"]))
+            self.rc_nm.append(float(sampling_param["rcut_nm"]))
+            self.prod_steps.append(float(sampling_param["prod_steps"]))
+            self.nstxout.append(int(sampling_param["nstxout"]))
+            self.neff.append(int(sampling_param["neff"]))
+            self.dt_fs.append(float(sampling_param["dt_fs"]))
+            self.ensemble.append(sampling_param["ensemble"])
 
-        # params
-        self.sampling_params = dmff_params["sampling"]
-        self.forcefield_params = dmff_params["forcefield"]
-        self.optscheme_params = dmff_params["opt_scheme"]
+        # target
+        if isinstance(self.target_params, dict):
+            self.target_params = [self.target_params]
+        assert len(self.target_params) == len(
+            self.sampling_params
+        ), "Options scheme parameters and sampling parameters must have the same length"
+        self.target_gt = []
+        self.target_pred_frame = []
+        self.utarget = []
+        self.resample = [False for i in range(len(self.sampling_params))]
 
-    def setup(self):
-        state_name = "loop-0"
-        self.state_init = md_sample(self.pdbfile,
-                               self.initial_xml,
-                               f"{state_name}.xtc",
-                               self.sampling_params,
-                               self.forcefield_params)
-        self.saver = saver_wresults(self.optscheme_params)
+        # loss function
+        if not isinstance(self.loss_fn, list):
+            self.loss_fn = [self.loss_fn for _ in range(len(self.sampling_params))]
+
+    def setup(self) -> None:
+        """
+        Set up the trainer by running MD simulations and preparing MBAR estimator.
+        """
         self.estimator = MBAREstimator()
-        state = OpenMMSampleState(state_name,
-                                  self.initial_xml,
-                                  self.pdbfile_wovs, # without virtual sites
-                                  temperature=self.T_K,
-                                  pressure=self.P_bar,
-                                  nonbondedMethod=app.PME,
-                                  nonbondedCutoff=self.rc*unit.nanometer)
-        traj = md.load(f'xtcfiles/{state_name}.xtc', top=self.pdbfile)
-        sample = Sample(traj, state_name)
-        self.estimator.add_state(state)
-        self.estimator.add_sample(sample)
+        for i in range(len(self.sampling_params)):
+            state_name = f"sample_{i}"
+            xtcfile = md_sample(
+                self.pdbfile[i],
+                self.ffxml,
+                f"{state_name}.xtc",
+                self.rc_nm[i],
+                self.T_K[i],
+                self.anneal_Tmax[i],
+                self.anneal_steps[i],
+                self.anneal_totalsteps[i],
+                self.dt_fs[i],
+                self.nstxout[i],
+                self.relax_steps[i],
+                self.prod_steps[i],
+                self.ensemble[i],
+            )
+            state = OpenMMSampleState(
+                state_name,
+                self.ffxml,
+                self.pdbfile[i],  # without virtual sites
+                temperature=self.T_K[i],
+                pressure=self.P_bar[i],
+                nonbondedMethod=app.PME,
+                nonbondedCutoff=self.rc_nm[i] * unit.nanometer,
+            )
+            traj = md.load(xtcfile, top=self.pdbfile_vsite[i])
+            sample = Sample(traj, state_name)
+            self.estimator.add_state(state)
+            self.estimator.add_sample(sample)
+
+            self.target_gt.append(get_target_gt(self.target_params[i]))
+            self.target_pred_frame.append(
+                get_target_pred_frame(
+                    xtcfile, self.pdbfile_vsite[i], self.target_params[i]
+                )
+            )
+        self.estimator.optimize_mbar()
+        self.opt_state = self.optimizer.init(self.ffparams)
+
+    def get_loss_gradients(self) -> Tuple[Any, Any]:
+        """
+        Compute the loss and its gradients for the current parameters.
+
+        Returns
+        -------
+        loss : float
+            The computed loss value.
+        grads : Any
+            Gradients of the loss with respect to the parameters.
+        """
+        grads = tree_map(lambda x: x * 0.0, self.ffparams)
+        loss = 0.0
+        self.utarget = []
+        self.wresults = []
+        for i in range(len(self.sampling_params)):
+            (loss_tmp, (utarget, wresults)), grads_tmp = value_and_grad(
+                self.loss_fn[i], argnums=0, has_aux=True
+            )(
+                self.ffparams,
+                self.ff,
+                self.pdb[i].topology,  # wo virtual sites
+                self.potentials[i].meta["cov_map"],
+                self.rc_nm[i],
+                self.ensemble[i],
+                self.T_K[i],
+                self.estimator,
+                self.target_gt[i],
+                self.target_pred_frame[i],
+                pressure=self.P_bar[i],
+            )
+            loss += loss_tmp
+            grads = tree_map(lambda x, y: x + y, grads, grads_tmp)
+            self.utarget.append(utarget)
+            self.wresults.append(wresults)
+        if jnp.isnan(loss) is True:
+            self.resample = [True for i in range(len(self.sampling_params))]
+
+        return loss, grads
+
+    def _resample(self) -> None:
+        """
+        Resample MD trajectories and update MBAR estimator if needed.
+        """
+        if len(self.estimator.states) > 0:
+            removedstatename = [
+                self.estimator.states[i].name
+                for i, flag in enumerate(self.resample)
+                if flag
+            ]
+            removedstateidx = [i for i, flag in enumerate(self.resample) if flag]
+        else:
+            removedstatename = [
+                self.estimator.states[i].name for i in self.sampling_params
+            ]
+            removedstateidx = [i for i in self.sampling_params]
+
+        for idx in removedstateidx:
+            if len(removedstatename) > 0:
+                self.estimator.remove_state(removedstatename[idx])
+                # self.estimator.remove_sample(removedstatename[idx])
+                state_name = removedstatename[idx]
+            elif len(removedstateidx) > 0:
+                state_name = f"sample_{idx}"
+            print(f"Resampling {state_name}... by {self.ffxml}")
+            xtcfile = md_sample(
+                self.pdbfile[idx],
+                self.ffxml,
+                f"{state_name}.xtc",
+                self.rc_nm[idx],
+                self.T_K[idx],
+                self.anneal_Tmax[idx],
+                self.anneal_steps[idx],
+                self.anneal_totalsteps[idx],
+                self.dt_fs[idx],
+                self.nstxout[idx],
+                self.relax_steps[idx],
+                self.prod_steps[idx],
+                self.ensemble[idx],
+            )
+            traj = md.load(f"{xtcfile}", top=self.pdbfile_vsite[idx])
+            state = OpenMMSampleState(
+                state_name,
+                self.ffxml,
+                self.pdbfile[idx],  # without virtual sites
+                temperature=self.T_K[idx],
+                pressure=self.P_bar[idx],
+                nonbondedMethod=app.PME,
+                nonbondedCutoff=self.rc_nm[idx] * unit.nanometer,
+            )
+            sample = Sample(traj, state_name)
+            self.target_pred_frame[idx] = get_target_pred_frame(
+                xtcfile, self.pdbfile_vsite[idx], self.target_params[idx]
+            )
+            self.estimator.add_state(state)
+            self.estimator.add_sample(sample)
         self.estimator.optimize_mbar()
 
-        self.target_gt = get_target_gt(self.optscheme_params)
-        self.target_pred_frame = get_target_pred_frame("xtcfiles/loop-0.xtc",
-                                                      self.pdbfile,
-                                                      self.optscheme_params)
+    def after_step(self) -> None:
+        """
+        Update force field, input arrays, and resample if necessary after each
+        optimization step.
+        Handles periodic XML output and effective sample size checks.
+        """
+        if True in self.resample:  # i.e., loss is nan
+            self._resample()
+            self.resample = [False for i in range(len(self.sampling_params))]
+        else:
+            self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
+            self.rescharges = update_rescharges_from_params(
+                self.rescharges, self.ffparams
+            )
+            self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
+            ffparams_wo_charge = {}
+            for key in self.ffparams.keys():
+                if key == "NonbondedForce":
+                    ffparams_wo_charge[key] = {}
+                    for key2 in self.ffparams[key].keys():
+                        if key2 != "charges":
+                            ffparams_wo_charge[key][key2] = self.ffparams[key][key2]
+                elif key == "VsiteForce":
+                    pass
+                else:
+                    ffparams_wo_charge[key] = self.ffparams[key]
+            self.ff.getParameters().parameters = ffparams_wo_charge
+            os.makedirs("xmlfiles", exist_ok=True)
+            self.ff.renderXML(f"xmlfiles/epoch-{self._epoch+1}.xml")
+            self.ffxml = f"xmlfiles/epoch-{self._epoch+1}.xml"
 
-    def fit(self, steps=500, add_mask_fn=None, modify_ffparams=None):
-        for i_epoch in range(1, steps+1):
-            (loss, (utarget, wresults)), gradient = get_loss_autograd(
-                                                    ffparams,
-                                                    ff,
-                                                    self.pdb_wovs.topology, # wo virtual sites
-                                                    self.cov_map,
-                                                    self.rc,
-                                                    self.ensemble,
-                                                    self.T_K,
-                                                    self.estimator,
-                                                    self.target_gt,
-                                                    self.target_pred_frame,
-                                                    pressure=self.P_bar
-                                                    )
-
-            if jnp.isnan(loss) == False:
-                nan_flag = False
-                print("Loss:", loss)
-                self.saver.append(i_epoch-1, float(loss), wresults)
-                if os.path.isfile(f"xmlfiles/epoch-{i_epoch-1}.xml") == False:
-                    for i in range(i_epoch, 0, -1): # "xmlfiles/epoch-*.xmlのうち、引数が最新のものをコピー
-                        if os.path.isfile(f"xmlfiles/epoch-{i-2}.xml"):
-                            shutil.copy(f"xmlfiles/epoch-{i-2}.xml", f"xmlfiles/epoch-{i_epoch-1}.xml")
-                            break
-                
-                gradient = add_mask_fn(gradient) if add_mask_fn is not None else gradient
-                updates, opt_state = self.grad_transform.update(gradient, opt_state)
-                ffparams = optax.apply_updates(ffparams, updates)
-                if modify_ffparams is not None:
-                    ffparams = modify_ffparams(ffparams)
-
-                rescharges = update_rescharges_from_params(rescharges, ffparams)
-                ff = update_ffinfo_from_rescharges(ff, rescharges)
-                params_wo_charge = copy.deepcopy(ffparams)
-                if "NonbondedForce" in params_wo_charge:
-                    if "charges" in params_wo_charge["NonbondedForce"]:
-                        del params_wo_charge["NonbondedForce"]["charges"]
-                if "VsiteForce" in params_wo_charge:
-                    del params_wo_charge["VsiteForce"]
-
-                ff.getParameters().parameters = params_wo_charge
-                os.makedirs("xmlfiles", exist_ok=True)
-                ff.renderXML(f"xmlfiles/epoch-{i_epoch}.xml")
-                ffxml = f'xmlfiles/epoch-{i_epoch}.xml'
-
-                # checkout the effective size of each sample in the estimator
-                print('Effective sample sizes:')
+            print("Effective sample sizes:")
+            for ii in range(len(self.sampling_params)):
                 try:
-                    ieff = self.estimator.estimate_effective_sample(utarget, decompose=True)
+                    ieff = self.estimator.estimate_effective_sample(
+                        self.utarget[ii], decompose=True
+                    )
                     for k, v in ieff.items():
-                        print(f'{k}: {v}')
-                    for k, v in ieff.items():
-                        if v < self.neff and k != "Total":
-                            self.estimator.remove_state(k)
-                except:
+                        print(f"  {k}: {v}")
+                    for i, (k, v) in enumerate(ieff.items()):
+                        if v < self.neff[ii] and k != "Total" and ii == i:
+                            self.resample[i] = True
+                            print(f"  {i} -> Resample")
+                except Exception:
+                    print("Warning: Error in estimating effective sample size")
                     self.estimator.states = []
                     self.estimator.samples = []
-            else:
-                nan_flag = True
-                self.estimator.states = []
-                self.estimator.samples = []
+                    self.resample = [True for i in range(len(self.sampling_params))]
 
-            if len(self.estimator.states) < 1 or nan_flag == True:
-                print("Add", f"loop-{i_epoch}")
-                # get new sample using the current state
-                self.state_init = md_sample(self.pdbfile_wovs,
-                                       ffxml,
-                                       f"loop-{i_epoch}.xtc",
-                                       self.sampling_params,
-                                       self.forcefield_params
-                                       )
-                traj = md.load(f"xtcfiles/loop-{i_epoch}.xtc", top=self.pdbfile)
-                state = OpenMMSampleState(f"loop-{i_epoch}",
-                                          ffxml,
-                                          self.pdbfile_wovs, # without virtual sites
-                                          temperature=self.T_K,
-                                          pressure=self.P_bar,
-                                          nonbondedMethod=app.PME,
-                                          nonbondedCutoff=self.rc*unit.nanometer)
-                sample = Sample(traj, f"loop-{i_epoch}")
-                self.estimator.add_state(state)
-                self.estimator.add_sample(sample)
-                self.estimator.optimize_mbar()
-                
-                self.target_pred_frame = get_target_pred_frame(f"xtcfiles/loop-{i_epoch}.xtc",
-                                                               self.pdbfile,
-                                                               self.optscheme_params)
-                plot_compare(self.target_gt, self.target_pred_frame)
+            if True in self.resample:
+                self._resample()
+                self.resample = [False for i in range(len(self.sampling_params))]
 
-            self.saver.save(basename="results")
-            self.saver.plot_learningcurve()
+    def write_checkpoint(self, checkpoint_frequency: int) -> None:
+        """
+        Save the current training state and plots to a checkpoint file.
+
+        Parameters
+        ----------
+        checkpoint_frequency : int
+            Frequency (in epochs) to write checkpoints.
+        """
+        if self._epoch % checkpoint_frequency == 0:
+            with open("train_state.pkl", "wb") as f:
+                dump_dict = {
+                    "ffparams": self.ffparams,
+                    "opt_state": self.opt_state,
+                    "ffinfo": self.ff.ffinfo,
+                    "rescharges": self.rescharges,
+                    "pdb": self.pdb,
+                    "topology": self.topology,
+                    "T_K": self.T_K,
+                    "P_bar": self.P_bar,
+                    "anneal_steps": self.anneal_steps,
+                    "anneal_Tmax": self.anneal_Tmax,
+                    "anneal_totalsteps": self.anneal_totalsteps,
+                    "relax_steps": self.relax_steps,
+                    "rc_nm": self.rc_nm,
+                    "prod_steps": self.prod_steps,
+                    "nstxout": self.nstxout,
+                    "neff": self.neff,
+                    "dt_fs": self.dt_fs,
+                    "ensemble": self.ensemble,
+                    "target_params": self.target_params,
+                    "sampling_params": self.sampling_params,
+                    "epoch": self._epoch,
+                    "losses": self.losses,
+                    "epochs": self.epochs,
+                    "label": self.label,
+                    "optimizer_algo": self.optimizer_algo,
+                    "opt_fftypes": self.opt_fftypes,
+                    "lr": self.lr,
+                    "clip": self.clip,
+                    "target_gt": self.target_gt,
+                    "target_pred_frame": self.target_pred_frame,
+                }
+                pickle.dump(dump_dict, f)
+
+            # plotter
+            for i in range(len(self.target_gt)):
+                plot_compare(
+                    self.target_gt[i], self.target_pred_frame[i], label=f"sample_{i}"
+                )
+
+            fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
+            ax.plot(self.epochs, self.losses)
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("Loss")
+            plt.tight_layout()
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            fig.savefig(f"{self.label}_learning_curve.png")
+            plt.close(fig)
+
+    @classmethod
+    def from_checkpoint(
+        cls,
+        trainer_checkpoint: str,
+        ffxml_list: Union[str, List[str]],
+        nums_ffxml: List[int],
+        pdbfile: str,
+        initial_ffxml: str,
+        loss_fn: Optional[Callable[..., float]] = None,
+        opt_fftypes: Optional[List[str]] = None,
+        optimizer_algo: Optional[str] = None,
+        lr: Optional[Union[float, List[float]]] = None,
+        clip: Optional[Union[float, List[float]]] = None,
+    ) -> "ThermodynamicTrainer":
+
+        with open(trainer_checkpoint, "rb") as f:
+            dump_dict = pickle.load(f)
+
+        if lr is None:
+            lr = dump_dict["lr"]
+            del dump_dict["lr"]
+        if clip is None:
+            clip = dump_dict["clip"]
+            del dump_dict["clip"]
+        if optimizer_algo is None:
+            optimizer_algo = dump_dict["optimizer_algo"]
+            del dump_dict["optimizer_algo"]
+        if opt_fftypes is None:
+            opt_fftypes = dump_dict["opt_fftypes"]
+            del dump_dict["opt_fftypes"]
+
+        trainer = cls(
+            ffxml_list=ffxml_list,
+            nums_ffxml=nums_ffxml,
+            pdbfile=pdbfile,
+            loss_fn=loss_fn,
+            sampling_params=dump_dict["sampling_params"],
+            target_params=dump_dict["target_params"],
+            opt_fftypes=opt_fftypes,
+            optimizer_algo=optimizer_algo,
+            label=dump_dict["label"],
+            lr=lr,
+            clip=clip,
+        )
+
+        for key, value in dump_dict.items():
+            setattr(trainer, key, value)
+
+        # order is important
+        trainer.ffxml = initial_ffxml
+        trainer.opt_state = dump_dict["opt_state"]
+
+        return trainer
