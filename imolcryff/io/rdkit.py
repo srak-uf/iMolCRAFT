@@ -1,6 +1,5 @@
 from rdkit import Chem
 from rdkit.Chem import rdDepictor, rdDetermineBonds
-from rdkit.Chem import AllChem
 import copy
 
 
@@ -11,7 +10,8 @@ def atoms2rdkit(atoms, nc=0, il_assign=True):
     Parameters
     ----------
     atoms : list
-        A list of atoms, where each atom is represented as a dictionary with keys 'symbol', 'x', 'y', and 'z'.
+        A list of atoms, where each atom is represented as a dictionary with keys
+        'symbol', 'x', 'y', and 'z'.
 
     Returns
     -------
@@ -39,14 +39,14 @@ def atoms2rdkit(atoms, nc=0, il_assign=True):
             mol_tmp = copy.deepcopy(mol)
             rdDetermineBonds.DetermineBonds(mol_tmp, charge=nc)
             mol = mol_tmp
-        except:
+        except Exception:
             from rdkit.Chem import Draw
 
             mol_tmp = copy.deepcopy(mol)
             rdDetermineBonds.DetermineConnectivity(mol_tmp, charge=nc)
             mol = copy.deepcopy(mol_tmp)
             print(
-                "Warning: The bonds may be assigned incorrectly. Please check carefully."
+                "Warning: The bonds may be assigned incorrectly. Please check."
             )
             print("Warning: This may give wrong SMILES")
             Draw.MolToImage(mol)  # Necessary
@@ -149,9 +149,9 @@ def _il_assign(mol, mol2d, nc):
                 atoms2d[i].SetFormalCharge(-1)
                 for b_idx, bond in enumerate(atoms[i].GetBonds()):
                     if bond.GetBondType() == Chem.rdchem.BondType.DOUBLE:
-                        ## 3d rdkitmol
+                        # 3d rdkitmol
                         bond.SetBondType(Chem.rdchem.BondType.SINGLE)
-                        ## 2d rdkitmol
+                        # 2d rdkitmol
                         bond2d = atoms2d[i].GetBonds()[b_idx]
                         bond2d.SetBondType(Chem.rdchem.BondType.SINGLE)
 
@@ -170,11 +170,11 @@ def _il_assign(mol, mol2d, nc):
                             if bonded_element[0] == "O"
                             else bond.GetEndAtomIdx()
                         )
-                        ## 3d rdkitmol
+                        # 3d rdkitmol
                         bond.SetBondType(Chem.rdchem.BondType.DOUBLE)
                         atoms[oxygen_idx].SetFormalCharge(0)
 
-                        ## 2d rdkitmol
+                        # 2d rdkitmol
                         bond2d = atoms2d[i].GetBonds()[b_idx]
                         bond2d.SetBondType(Chem.rdchem.BondType.DOUBLE)
                         atoms2d[oxygen_idx].SetFormalCharge(0)

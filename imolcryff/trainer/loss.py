@@ -2,7 +2,7 @@
 import jax.numpy as jnp
 from jax.scipy.special import kl_div
 from ase import units
-from jax import value_and_grad, jit, vmap
+from jax import jit, vmap
 from .dmff_utils import update_ffinfo_from_params
 from openmm import app
 import openmm.unit as unit
@@ -24,9 +24,9 @@ def mse_energy(
     :param e_qm: Array of energies from quantum mechanics.
     :param weight_scheme: Optional weighting scheme for the energies.
     :param zeropoint: Optional zero-point energy correction.
-                        If "auto", the zero-point energy is determined automatically.
-                        If "qmmin", the zero-point energy is set to the minimum QM energy.
-                        if None, the zero-point energy is not corrected.
+                      If "auto", the zero-point energy is determined automatically.
+                      If "qmmin", the zero-point energy is set to the minimum QM energy.
+                      if None, the zero-point energy is not corrected.
     """
     implemented_weight_schemes = ["uniform", "boltzmann", "nonboltzmann"]
     if weight_scheme not in implemented_weight_schemes:

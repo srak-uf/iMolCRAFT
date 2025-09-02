@@ -1,6 +1,7 @@
 from ..io.mol2 import read_mol2, write_mol2
-import os, subprocess
-from ase.io import read, write
+import os
+import subprocess
+from ase.io import write
 from ase.calculators.gaussian import Gaussian
 import tempfile
 from openff import toolkit
@@ -40,15 +41,18 @@ class ChargeCalculator:
     atoms : ase.Atoms
         The atoms object to calculate the charge for.
     charge_type : str
-        The type of charge calculation to perform. Supported types are: resp, am1-bcc
+        The type of charge calculation to perform. Supported types are: resp,
+        am1-bcc
     netcharge : int
         The net charge of the molecule.
     label : str
         The label for the output files.
     directory : str, optional
-        The directory to save the output files. If None, the current working directory is used.
+        The directory to save the output files. If None, the current working
+        directory is used.
     params : dict, optional
-        The parameters for the charge calculation. If None, default parameters are used.
+        The parameters for the charge calculation. If None, default parameters
+        are used.
     """
 
     def __init__(
@@ -60,15 +64,18 @@ class ChargeCalculator:
         atoms : ase.Atoms
             The atoms object to calculate the charge for.
         charge_type : str
-            The type of charge calculation to perform. Supported types are: resp, am1-bcc
+            The type of charge calculation to perform. Supported types are: resp,
+            am1-bcc
         netcharge : int
             The net charge of the molecule.
         label : str
             The label for the output files.
         directory : str, optional
-            The directory to save the output files. If None, the current working directory is used.
+            The directory to save the output files. If None, the current working
+            directory is used.
         params : dict, optional
-            The parameters for the charge calculation. If None, default parameters are used.
+            The parameters for the charge calculation. If None, default parameters
+            are used.
         """
         self.atoms = atoms.copy()
         self.atoms.pbc = False
@@ -115,7 +122,8 @@ class ChargeCalculator:
             # antechamber calculation
             cmd_antech = (
                 f"antechamber -i {temp_pdb_name} -fi gout "
-                f"-o {output_mol2} -fo mol2 -at sybyl -c bcc -nc {self.charge} -pf y -dr no"
+                f"-o {output_mol2} -fo mol2 -at sybyl "
+                f"-c bcc -nc {self.charge} -pf y -dr no"
             )
             print(cmd_antech)
             output = subprocess.getoutput(cmd_antech)
@@ -147,7 +155,8 @@ class ChargeCalculator:
         output_mol2 = os.path.abspath(g16calculator.label + ".mol2")
         cmd_antech = (
             f"antechamber -i {g16logfile} -fi gout "
-            f"-o {output_mol2} -fo mol2 -at sybyl -c resp -nc {self.charge} -pf y -dr no"
+            f"-o {output_mol2} -fo mol2 -at sybyl -c resp "
+            f"-nc {self.charge} -pf y -dr no"
         )
         print(cmd_antech)
 
@@ -159,7 +168,7 @@ class ChargeCalculator:
                 tripos_atom = read_mol2(self.mol2file)["@<TRIPOS>ATOM"]
                 partialcharges = [float(atom[-1]) for atom in tripos_atom]
                 break
-        if os.path.exists(output_mol2) == False:
+        if os.path.exists(output_mol2) is False:
             print(output)
             raise ValueError(
                 "Antechamber failed to generate the mol2 file. Check the log."
@@ -183,9 +192,11 @@ class Psi4ChargeCalculator(ChargeCalculator):
     label : str
         The label for the output files.
     directory : str, optional
-        The directory to save the output files. If None, the current working directory is used.
+        The directory to save the output files. If None, the current working
+        directory is used.
     params : dict, optional
-        The parameters for the charge calculation. If None, default parameters are used.
+        The parameters for the charge calculation. If None, default parameters
+        are used.
     """
 
     def __init__(
@@ -203,9 +214,11 @@ class Psi4ChargeCalculator(ChargeCalculator):
         label : str
             The label for the output files.
         directory : str, optional
-            The directory to save the output files. If None, the current working directory is used.
+            The directory to save the output files. If None, the current working
+            directory is used.
         params : dict, optional
-            The parameters for the charge calculation. If None, default parameters are used.
+            The parameters for the charge calculation. If None, default parameters
+            are used.
         """
         self.molecule = molecule
         self.charge_type = charge_type

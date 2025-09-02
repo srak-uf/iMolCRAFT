@@ -12,9 +12,9 @@ import math
 import os
 import random
 
-##### Future implementation #####
+# Future implementation
 # Distinguish the cis and trans isomers
-#################################
+# -------------------------------
 
 
 class asemol_wrapper:
@@ -28,7 +28,8 @@ class asemol_wrapper:
     bond_def_file : str, optional
         Path to the bond definition file. If None, a default file is used.
     chemical_bonds : pd.DataFrame, optional
-        DataFrame containing the chemical bond definitions. If None, it is read from the bond_def_file.
+        DataFrame containing the chemical bond definitions. If None, it is read
+        from the bond_def_file.
     """
 
     def __init__(self, atoms: ase.Atoms, bond_def_file=None, chemical_bonds=None):
@@ -41,7 +42,8 @@ class asemol_wrapper:
         bond_def_file : str, optional
             Path to the bond definition file. If None, a default file is used.
         chemical_bonds : pd.DataFrame, optional
-            DataFrame containing the chemical bond definitions. If None, it is read from the bond_def_file.
+            DataFrame containing the chemical bond definitions. If None, it is read from
+            the bond_def_file.
         """
         self.atoms = atoms
         self.filename = bond_def_file
@@ -67,13 +69,15 @@ class asemol_wrapper:
 
     def get_bonds(self) -> list:
         """
-        Returns a list of bonds (pairs of atom indices) based on the distance matrix and the chemical bond definitions.
-        The bonds are determined by checking if the distance between atoms is less than or equal to the defined bond length.
+        Returns a list of bonds (pairs of atom indices) based on the distance matrix and
+        the chemical bond definitions. The bonds are determined by checking if the
+        distance between atoms is less than or equal to the defined bond length.
 
         Returns
         -------
         bonds : list
-            List of tuples, where each tuple contains the indices of the two atoms that are bonded.
+            List of tuples, where each tuple contains the indices of the two atoms
+            that are bonded.
         """
         atoms = self.atoms
         geo_matrx = get_distances(atoms.positions, cell=atoms.cell, pbc=True)[1]
@@ -96,7 +100,8 @@ class asemol_wrapper:
         Returns
         -------
         compounds : list
-            List of molecules, where each molecule is represented as a list of atom indices.
+            List of molecules, where each molecule is represented as a list of
+            atom indices.
         """
         atoms = self.atoms
         compounds = []
@@ -197,18 +202,19 @@ class asemol_wrapper:
                     asemols[i].arrays["residuenumbers"] = np.array(
                         [res_number + i + 1 for _ in range(len(mol_i_rorder))]
                     )
-                except:
+                except Exception:
                     pass
 
-        if out_nX == True:
+        if out_nX is True:
             return asemols, molecule_list, asenX
         else:
             return asemols, molecule_list
 
     def unwrap_molecules(self) -> ase.Atoms:
         """
-        Unwraps the positions of atoms in a molecule to their original positions in the unit cell.
-        This is useful for visualizing the molecule in its original orientation.
+        Unwraps the positions of atoms in a molecule to their original positions in the
+        unit cell. This is useful for visualizing the molecule in its original
+        orientation.
 
         Returns
         -------
@@ -260,7 +266,8 @@ def ase_atoms_to_nx(atoms: ase.Atoms, chemical_bonds=None):
     atoms : ase.Atoms
         The atoms object to be converted.
     chemical_bonds : pd.DataFrame, optional
-        DataFrame containing the chemical bond definitions. If None, it is read from the bond_def_file.
+        DataFrame containing the chemical bond definitions. If None, it is read from
+        the bond_def_file.
 
     Returns
     -------
@@ -280,7 +287,8 @@ def ase_atoms_to_nx(atoms: ase.Atoms, chemical_bonds=None):
 
 def is_same_molecule(mol1: ase.Atoms, mol2: ase.Atoms, chemical_bonds):
     """
-    Check if two molecules (ASE Atoms objects) are the same based on their chemical bonds.
+    Check if two molecules (ASE Atoms objects) are the same based on their
+    chemical bonds.
 
     Parameters
     ----------
@@ -305,8 +313,10 @@ def is_same_molecule(mol1: ase.Atoms, mol2: ase.Atoms, chemical_bonds):
 
 def reorder_atoms(atoms1, atoms2, chemical_bonds):
     """
-    Reorder the atoms in atoms2 to match the order of atoms in atoms1 based on their chemical bonds.
-    This is useful for comparing two molecules with the same structure but different atom order.
+    Reorder the atoms in atoms2 to match the order of atoms in atoms1 based on their
+    chemical bonds.
+    This is useful for comparing two molecules with the same structure but
+    different atom order.
 
     Parameters
     ----------
@@ -445,7 +455,10 @@ def aseatoms2pdb(filename, atoms):
         The atoms object to be written to the PDB file.
     """
     # ATOM      1    1 MOL     1       2.155   3.338  13.788  1.00  0.00           S
-    # pdb_atom_format = '{:6s}{:5d} {:^4s}{:1s}{:3s}{:1s} {:4d}{:1s}{:3s}{:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}{:10s}{:>2s}'
+    # pdb_atom_format = (
+    #     '{:6s}{:5d} {:^4s}{:1s}{:3s}{:1s} {:4d}{:1s}{:3s}'
+    #     '{:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}{:10s}{:>2s}'
+    # )
     pdb_atom_format = "{:6s}{:5d} {:^4s}{:1s}{:3s} {:1s}{:4d}{:1s}   {:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}          {:>2s}{:2s}"
     atomname = 0
     with open(f"{filename}", "w") as f:
@@ -463,7 +476,7 @@ def aseatoms2pdb(filename, atoms):
         f.write("MODEL     1\n")
         if "residuenumbers" not in atoms.arrays.keys():
             atoms.arrays["residuenumbers"] = np.array([1 for _ in range(len(atoms))])
-            atoms.arrays["residuenames"] = np.array([f"M1" for _ in range(len(atoms))])
+            atoms.arrays["residuenames"] = np.array(["M1" for _ in range(len(atoms))])
 
         for i, atom in enumerate(atoms):
             if (
@@ -581,11 +594,13 @@ def pdb2packmol(
     pdbfiles : list
         List of PDB files to be packed.
     num_mols : list, optional
-        List of number of molecules for each PDB file. If None, all files are packed with 1 molecule.
+        List of number of molecules for PDB files. If None, all files are packed
+        with 1 molecule.
     cell : list, optional
         List of cell dimensions [a, b, c]. If None, a default cell size is used.
     desired_density : float, optional
-        Desired density of the packed system. If None, the density is calculated based on the number of molecules and cell size.
+        Desired density of the system. If None, the density is calculated based on
+        the number of molecules and cell size.
     outfile : str, optional
         Output file name for the packed system. Default is "packmol_tmp.xyz".
 
@@ -598,9 +613,9 @@ def pdb2packmol(
     molecule_list : list
         List of molecule indices in the packed system.
     """
-    if num_mols == None:
+    if num_mols is None:
         num_mols = [1 for _ in pdbfiles]
-    if num_mols != None and cell != None and desired_density != None:
+    if num_mols is not None and cell is not None and desired_density is not None:
         M = 0.0
         for i, pdb in enumerate(pdbfiles):
             atoms = read(pdb)
@@ -612,9 +627,9 @@ def pdb2packmol(
         num_mols = [n * Nset for n in num_mols]
         print(f"num_mols: {num_mols}")
 
-    if cell == None:
+    if cell is None:
         cell = [1000, 1000, 1000]
-        if desired_density != None:
+        if desired_density is not None:
             M = 0.0
             for i, pdb in enumerate(pdbfiles):
                 atoms = read(pdb)

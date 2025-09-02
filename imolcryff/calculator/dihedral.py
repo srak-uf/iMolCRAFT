@@ -14,7 +14,10 @@ import numpy as np
 from ase.io import read, write
 from ase.calculators.gaussian import Gaussian
 from ase import units
-import copy, os, tempfile, subprocess
+import copy
+import os
+import tempfile
+import subprocess
 import cclib
 import networkx as nx
 
@@ -270,7 +273,7 @@ def load_g16scan(g16logfile):
         angle = np.array(angle)
         energy = np.array(energy)
         energy = (energy - energy.min()) / (units.kJ * units.mol**-1)
-    except:
+    except Exception:
         import traceback
 
         traceback.print_exc()
@@ -390,7 +393,7 @@ def scan_ff_dihedral(
         ), "Both atoms_list and geoopt_atoms are None. Please provide one of them."
     elif geoopt_atoms is not None:
         # Set dihedral angle
-        ## change the dihedral angle from -180 to 180
+        # # change the dihedral angle from -180 to 180
         angle_geoopt = geoopt_atoms.get_dihedral(d1, d2, d3, d4)
         angle_geoopt = ((angle_geoopt + 180) % 360) - 180
         min_idx = np.argmin(np.abs(angle_geoopt - angles))
@@ -450,7 +453,7 @@ def scan_ff_dihedral(
             if num_vsites > 0:
                 modeller = Modeller(pdb_omm.topology, pdb_omm.positions)
                 modeller.addExtraParticles(ForceField(ffxml))
-                pos = modeller.getPositions()
+                # pos = modeller.getPositions()
                 topology = modeller.topology
             else:
                 topology = pdb_omm.topology
@@ -568,7 +571,7 @@ def rotate_dihedral(atoms, dihed_list, desired_angle, chemical_bonds=None):
     aw = asemol_wrapper(atoms, chemical_bonds=chemical_bonds)
     try:
         [atoms], _, [G] = aw.get_ase_molecules(out_nX=True)
-    except:
+    except Exception:
         print(atoms)
         write("error.pdb", atoms)
         assert False, "Failed to get ASE molecules. Please check the input."

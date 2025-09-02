@@ -1,7 +1,6 @@
-from ase.io import read, write
+from ase.io import write
 from ase.calculators.calculator import Calculator, all_changes
 import cclib
-from ase.units import Hartree
 from ase.calculators.singlepoint import SinglePointCalculator
 import os
 import psutil

@@ -1,14 +1,12 @@
 from pathlib import Path
-from typing import IO
 from ase.geometry import cell_to_cellpar
 import numpy
 import os
 from openmm import XmlSerializer
 from openmm.app import PDBFile
-from openff.toolkit.topology.molecule import Atom, unit
+from openff.toolkit.topology.molecule import unit
 from openff.toolkit import Topology, Molecule
 from openff.interchange import Interchange
-from openff.interchange.interop.lammps.export import to_lammps
 from openff.interchange.interop import openmm
 from openff.interchange.interop.lammps.export.export import (
     _write_pair_coeffs,
@@ -149,7 +147,7 @@ def to_lammps_non_rectangular(interchange: Interchange, file_path: Path | str):
             lz = numpy.sqrt(c**2 - xz**2 - yz**2)
             non_rectangular_flag = True
 
-        if non_rectangular_flag == False:
+        if non_rectangular_flag is False:
             lmp_file.write(
                 "{:.10g} {:.10g} xlo xhi\n"
                 "{:.10g} {:.10g} ylo yhi\n"

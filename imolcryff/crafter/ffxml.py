@@ -17,7 +17,6 @@ def check_vsite(ffxml):
     """
     Check if the force field XML file contains virtual sites.
     """
-    from openmm.app import ForceField
     from dmff import Hamiltonian
 
     num_vsites = 0
@@ -143,7 +142,7 @@ def gafftemplate2xml(mmm, fftemplate_gen, ion_ffxml=None):
             ion_ffxml = os.path.join(
                 os.path.dirname(openmmforcefields.__file__), "ffxml", ion_ffxml
             )
-            ion_ffxml_base = os.path.basename(ion_ffxml)
+            # ion_ffxml_base = os.path.basename(ion_ffxml)
             shutil.copy(ion_ffxml, f"./gaffxml_{i}.xml")
             ff = Hamiltonian(f"./gaffxml_{i}.xml")
             symbol = mmm[i].atoms[0].symbol
@@ -156,7 +155,7 @@ def gafftemplate2xml(mmm, fftemplate_gen, ion_ffxml=None):
                             mmm[i].partial_charges[0].magnitude
                         )
                         target_ptype = ptype
-                        target_elem = elem
+                        # target_elem = elem
 
             for ii, at in enumerate(ff.ffinfo["AtomTypes"]):
                 if at["class"] == target_ptype:

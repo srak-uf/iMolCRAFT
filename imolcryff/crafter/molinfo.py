@@ -1,17 +1,19 @@
 from rdkit import Chem
-from rdkit.Chem import rdDetermineBonds, rdDepictor
 from ase.io import read, write
 from ase import Atoms
 from ase.calculators.gaussian import Gaussian
-from ase.optimize import BFGS, LBFGS, LBFGSLineSearch
-from ase.calculators.psi4 import Psi4
-import os, copy, pickle, yaml, tempfile, shutil
+import os
+import copy
+import pickle
+import yaml
+import tempfile
+import shutil
 import numpy as np
 from openff.toolkit.topology import Molecule
 from openff.toolkit import Quantity
 from openff import toolkit
-from openmm.app import *
-from openmm import *
+from openmm.app import PDBFile, ForceField, PME
+from openmm import XmlSerializer
 from .asemol import (
     asemol_wrapper,
     cast_molecules,
@@ -47,10 +49,10 @@ MOLINFO_KEYS = {
 
 class Crafter:
     """
-    Crafter is a class designed to handle molecular information and perform various operations
-    such as geometry optimization, charge calculation, dihedral angle analysis, and force field
-    generation. It integrates multiple tools and libraries like ASE, OpenFF, Psi4, and RDKit
-    to streamline molecular modeling workflows.
+    Crafter is a class designed to handle molecular information and perform various
+    operations such as geometry optimization, charge calculation, dihedral angle
+    analysis, and force field generation. It integrates multiple tools and libraries
+    like ASE, OpenFF, Psi4, and RDKit to streamline molecular modeling workflows.
 
     Parameters
     ----------
@@ -101,7 +103,7 @@ class Crafter:
         - geoopt: Parameters for geometry optimization.
         - charge: Parameters for charge calculation.
         - forcefield: Parameters for force field generation.
-        - structure: Information about the molecular structure (e.g., crystal or liquid).
+        - structure: Information about the molecular structure (crystal or liquid).
 
         Parameters
         ----------
@@ -146,9 +148,9 @@ class Crafter:
             self._assign_totalcharge()
         self.get_rdkitmol()
         self.get_molecule_off()
-        if do_opt == True:
+        if do_opt is True:
             self.get_optstructure(**self.params_geoopt)
-        if do_charge == True:
+        if do_charge is True:
             self.get_partial_charges(params_ff=self.params_ff, **self.params_charge)
             self.get_molecule_off()
 
@@ -185,7 +187,7 @@ class Crafter:
         )
 
         # create structure
-        ## crystal structure
+        # # crystal structure
         if self.structure["type"] == "crystal":
             system_atoms = merge_asemols(self.molatoms)
             system_atoms = system_atoms.repeat(self.structure.get("repeat", [1, 1, 1]))
@@ -201,7 +203,7 @@ class Crafter:
                     a1 = atomlist_openmm[bond[0]]
                     a2 = atomlist_openmm[bond[1]]
                     pdb.topology.addBond(a1, a2)
-        ## liquid structure
+        # liquid structure
         elif self.structure["type"] == "liquid":
             molstructures = self.structure["molecules"]
             b, a, m = pdb2packmol(
@@ -271,7 +273,7 @@ class Crafter:
             self._assign_totalcharge()
         else:
             print(f"Warning: MOL_{i} has no charge information")
-            print(f"Please define the total charge manually")
+            print("Please define the total charge manually")
 
     def append_fromAtomsList(
         self, atomslist: list, key: str, Nmols: int = None, networkX: list = []
@@ -377,8 +379,8 @@ class Crafter:
         do_calc: bool
             If True, perform geometry optimization. Default is True.
         rmsd: float
-            If the RMSD between the current and previous molecules is less than this value,
-            skip the geometry optimization. Default is 0.2 A^2.
+            If the RMSD between the current and previous molecules is less than this
+            value, skip the geometry optimization. Default is 0.2 A^2.
         kwargs: dict
             Additional parameters for geometry optimization.
         """
@@ -424,14 +426,14 @@ class Crafter:
                     self._assign_totalcharge()
                 nc = self.mol_info[key]["netcharge"]
 
-                if g16_flag == True:
+                if g16_flag is True:
                     calc_geoopt = Gaussian(
                         label=f"{key}_{i}", charge=nc, **geoopt_params_g16
                     )
                     calc_geoopt.directory = self.mol_info[key]["directory"]
                     atoms_tmp.calc = calc_geoopt
                     trajectory.append(atoms_tmp.calc.label + ".log")
-                elif psi4_flag == True:
+                elif psi4_flag is True:
                     calc_geoopt = Psi4GeoOptimizer(
                         atoms=atoms_tmp,
                         method=geoopt_params_psi4["method"],
@@ -460,7 +462,8 @@ class Crafter:
                         )
                         shutil.copy(trajectory[j], trajectory[i])
                         print(
-                            f"Skip geometry optimization of {key}_{i}: RMSD = {rmsd_ji} A < {rmsd}"
+                            f"Skip geometry optimization of {key}_{i}: "
+                            f"RMSD = {rmsd_ji} A < {rmsd}"
                         )
                         rmsd_skip = False
                     else:
@@ -469,7 +472,7 @@ class Crafter:
                         _ = self.mol_info[key]["aseatoms_geoopt"][
                             i
                         ].get_potential_energy()
-                        if psi4_flag == True:
+                        if psi4_flag is True:
                             self.mol_info[key]["aseatoms_geoopt"][i].positions = (
                                 self.mol_info[key]["aseatoms_geoopt"][
                                     i
@@ -553,7 +556,7 @@ class Crafter:
             assert False, "charge_type should be resp or am1bcc"
 
         for key in keys:
-            if self.mol_info[key]["aseatoms_stable"] != None:
+            if self.mol_info[key]["aseatoms_stable"] is not None:
                 atoms = self.mol_info[key]["aseatoms_stable"]
             else:
                 atoms = self.mol_info[key]["aseatoms_list"][0]
@@ -561,7 +564,7 @@ class Crafter:
             netcharge = self.mol_info[key]["netcharge"]
             label = key
 
-            if psi4_flag == False:
+            if psi4_flag is False:
                 self.mol_info[key]["ChargeCalc"] = ChargeCalculator(
                     atoms,
                     charge_type,
@@ -570,8 +573,8 @@ class Crafter:
                     directory=self.mol_info[key]["directory"],
                     params=kwargs,
                 )
-            elif psi4_flag == True:
-                if self.mol_info[key]["molecule_OFF"] == None:
+            elif psi4_flag is True:
+                if self.mol_info[key]["molecule_OFF"] is None:
                     self.get_molecule_off(keys=[key])
                 molecule = self.mol_info[key]["molecule_OFF"]
                 molecule.conformers[0].magnitude[:] = atoms.positions
@@ -664,7 +667,10 @@ class Crafter:
 
             if not np.isclose(charge_deficit, 0.0):
                 print(
-                    f"Net charge of {key} is {net_charge} and total charge is {total_charge}"
+                    (
+                        f"Net charge of {key} is {net_charge} and "
+                        f"total charge is {total_charge}"
+                    )
                 )
                 charges = charges - charge_deficit / len(charges)
                 total_charge = np.sum(charges)

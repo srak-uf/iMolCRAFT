@@ -22,14 +22,14 @@ def read_mol2(filename):
         A dictionary containing the contents of the mol2 file.
     """
     with open(filename) as f:
-        l = f.readlines()
+        lines = f.readlines()
         mol2_dict = {}
-        for i in range(len(l)):
-            if l[i].startswith("@<TRIPOS>"):
-                key_name = l[i].strip()
+        for i in range(len(lines)):
+            if lines[i].startswith("@<TRIPOS>"):
+                key_name = lines[i].strip()
                 mol2_dict[key_name] = []
-            elif l[i].strip() != "":
-                mol2_dict[key_name].append(l[i].strip().split())
+            elif lines[i].strip() != "":
+                mol2_dict[key_name].append(lines[i].strip().split())
     return mol2_dict
 
 
@@ -43,7 +43,8 @@ def write_mol2(filename, input):
         The name of the file to write to.
     input : dict or openff.toolkit.topology.Molecule
         The input data to write. If a dictionary, it should contain the keys
-        "@<TRIPOS>MOLECULE", "@<TRIPOS>ATOM", "@<TRIPOS>BOND", and "@<TRIPOS>SUBSTRUCTURE".
+        "@<TRIPOS>MOLECULE", "@<TRIPOS>ATOM", "@<TRIPOS>BOND", and
+        "@<TRIPOS>SUBSTRUCTURE".
         If a molecule object, it will be written in the mol2 format.
     """
     if isinstance(input, dict):
@@ -79,12 +80,14 @@ def write_mol2(filename, input):
                 zz = input.conformers[0].magnitude[i, 2]
                 charge = input.partial_charges[i].magnitude
                 f.write(
-                    f"{i+1} {atom.symbol} {xx} {yy} {zz} {atom.symbol}  1  {input.name} {charge}\n"
+                    f"{i+1} {atom.symbol} {xx} {yy} {zz} {atom.symbol}  1  "
+                    f"{input.name} {charge}\n"
                 )
             f.write("@<TRIPOS>BOND\n")
             for i, bond in enumerate(input.bonds):
                 f.write(
-                    f"{i+1} {bond.atom1_index+1} {bond.atom2_index+1} {bond.bond_order}\n"
+                    f"{i+1} {bond.atom1_index+1} "
+                    f"{bond.atom2_index+1} {bond.bond_order}\n"
                 )
             f.write("@<TRIPOS>SUBSTRUCTURE\n")
             f.write(f"1 {input.name} 1 TEMP              0 ****  ****    0 ROOT\n")

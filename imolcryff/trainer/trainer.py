@@ -1,12 +1,8 @@
-from dmff import Hamiltonian, DMFFTopology
 from dmff.common.nblist import NoCutoffNeighborList
-from dmff.api.xmlio import XMLIO
-from dmff.api.hamiltonian import Potential
-from dmff.optimize import MultiTransform, genOptimizer
 from dmff.mbar import MBAREstimator, Sample, OpenMMSampleState
 import pickle
 from openmm import app
-from openmm.app import NoCutoff, Simulation, PDBFile, ForceField, Modeller
+from openmm.app import ForceField, Modeller
 import jax.numpy as jnp
 import os
 import mdtraj as md
@@ -149,7 +145,7 @@ class DistanceTrainer(BaseTrainer):
 
     def write_checkpoint(self, checkpoint_frequency):
         if self._epoch % checkpoint_frequency == 0:
-            with open(f"train_state.pkl", "wb") as f:
+            with open("train_state.pkl", "wb") as f:
                 dump_dict = {
                     "ffparams": self.ffparams,
                     "opt_state": self.opt_state,
@@ -527,7 +523,7 @@ class ThermodynamicTrainer(BaseTrainer):
             grads = tree_map(lambda x, y: x + y, grads, grads_tmp)
             self.utarget.append(utarget)
             self.wresults.append(wresults)
-        if jnp.isnan(loss) == True:
+        if jnp.isnan(loss) is True:
             self.resample = [True for i in range(len(self.sampling_params))]
 
         return loss, grads
@@ -625,8 +621,8 @@ class ThermodynamicTrainer(BaseTrainer):
                         if v < self.neff[ii] and k != "Total" and ii == i:
                             self.resample[i] = True
                             print(f"  {i} -> Resample")
-                except:
-                    print(f"Warning: Error in estimating effective sample size")
+                except Exception:
+                    print("Warning: Error in estimating effective sample size")
                     self.estimator.states = []
                     self.estimator.samples = []
                     self.resample = [True for i in range(len(self.sampling_params))]
@@ -637,7 +633,7 @@ class ThermodynamicTrainer(BaseTrainer):
 
     def write_checkpoint(self, checkpoint_frequency):
         if self._epoch % checkpoint_frequency == 0:
-            with open(f"train_state.pkl", "wb") as f:
+            with open("train_state.pkl", "wb") as f:
                 dump_dict = {
                     "ffparams": self.ffparams,
                     "opt_state": self.opt_state,

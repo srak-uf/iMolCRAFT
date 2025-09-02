@@ -126,7 +126,10 @@ def calc_adf_frame(xtcfile, pdbfile, elem1, elem2, elem3, rcut12=3.0, rcut23=3.0
     dists_1_2 = md.compute_distances(t, pairs_1_2, periodic=True)
     dists_2_3 = md.compute_distances(t, pairs_2_3, periodic=True)
     # 泥臭いコード
-    # pairs_1_2_cut = [[p for i, p in enumerate(pairs_1_2) if dists_1_2[itrj][i] < rcut12] for itrj in range(len(t))]
+    # pairs_1_2_cut = [
+    #     [p for i, p in enumerate(pairs_1_2) if dists_1_2[itrj][i] < rcut12]
+    #     for itrj in range(len(t))
+    # ]
     pairs_1_2_cut = []
     for itrj in range(len(t)):
         pairs_1_2_cut.append(np.array(pairs_1_2)[dists_1_2[itrj] < rcut12])
@@ -156,7 +159,6 @@ def calc_adf_frame(xtcfile, pdbfile, elem1, elem2, elem3, rcut12=3.0, rcut23=3.0
     prob_123 = np.array(
         [np.histogram(ang, bins=bins, density=True)[0] for ang in angles_list]
     )
-    deg_123 = bins[:-1]
 
     return prob_123
 
@@ -268,7 +270,8 @@ def calc_cellpar_frame(u: MDAnalysis.Universe, target="all"):
         'all' (default), 'La_A', 'Lb_A', 'Lc_A', 'alpha_deg', 'beta_deg', 'gamma_deg'.
         'all' returns all cell parameters.
         'La_A', 'Lb_A', 'Lc_A' return the lengths of the cell vectors.
-        'alpha_deg', 'beta_deg', 'gamma_deg' return the angles between the cell vectors in degrees.
+        'alpha_deg', 'beta_deg', 'gamma_deg' return the angles between the cell vectors
+        in degrees.
 
     Returns
     -------
@@ -294,7 +297,8 @@ def calc_cellpar_frame(u: MDAnalysis.Universe, target="all"):
         idx = 5
     else:
         raise ValueError(
-            "target must be 'all', 'La_A', 'Lb_A', 'Lc_A', 'alpha_deg', 'bet_deg' or 'gamma_deg'"
+            ("target must be 'all', 'La_A', 'Lb_A', 'Lc_A', 'alpha_deg', "
+             "'beta_deg' or 'gamma_deg'")
         )
     cellpar = []
     for ts in u.trajectory:

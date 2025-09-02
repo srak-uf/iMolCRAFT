@@ -1,32 +1,30 @@
 #!/usr/bin/env python
-from dmff import Hamiltonian
-import os, sys, copy
-import yaml, pickle
+import os
+import sys
+import yaml
+import pickle
 import numpy as np
-import mdtraj as md
 import openmm
 from openmm import app
 import openmm.unit as unit
 
 import jax.numpy as jnp
-from jax import value_and_grad, jit
 import dmff
 from dmff.operators.templatetype import TemplateATypeOperator
 from dmff.operators.templatevsite import TemplateVSiteOperator
-from dmff import Hamiltonian, DMFFTopology
-from dmff.mbar import TargetState, buildTrajEnergyFunction
+from dmff import Hamiltonian
 
-sys.path.append(os.path.abspath("."))
+import MDAnalysis
+
+import matplotlib.pyplot as plt
+import math
+
 from ..analyzer.analyzer import (
     calc_density_frame,
     calc_cellpar_frame,
     calc_rdf_frame,
     calc_adf_frame,
 )
-import MDAnalysis
-
-import matplotlib.pyplot as plt
-import math
 
 
 def parser_dmffyaml(yaml_file):
@@ -55,7 +53,6 @@ def parser_dmffyaml(yaml_file):
         }
     }
     necessarykeys_sampling = ["init_structure", "relax_steps", "prod_steps"]
-    target_types = ["density_gcm3", "La_A", "Lb_A", "Lc_A", "rdf", "adf"]
 
     with open(yaml_file, "r") as file:
         data = yaml.safe_load(file)
@@ -82,7 +79,8 @@ def parser_dmffyaml(yaml_file):
     valid_ensembles = ["nve", "nvt", "isonpt", "anisonpt", "trinpt"]
     if data["sampling"]["ensemble"] not in valid_ensembles:
         raise ValueError(
-            f"Invalid ensemble {data['sampling']['ensemble']}. Must be one of {valid_ensembles}."
+            f"Invalid ensemble {data['sampling']['ensemble']}. Must be one of "
+            f"{valid_ensembles}."
         )
 
     # check for valid target_types
@@ -130,7 +128,8 @@ def parser_dmffyaml(yaml_file):
 
 def get_target_gt(target_params: dict):
     """
-    Get the ground truth values for the targets from the parameters obtained by parser_dmffyaml().
+    Get the ground truth values for the targets from the parameters obtained by
+    parser_dmffyaml().
 
     Parameters
     ----------
@@ -181,13 +180,13 @@ def merge_xml(ffxml_list, outxml):
             if (
                 f["name"] == "UseAttributeFromResidue"
                 and f["attrib"]["name"] == "charge"
-                and attribfromres_flag == False
+                and attribfromres_flag is False
             ):
                 attribfromres_flag = True
             elif (
                 f["name"] == "UseAttributeFromResidue"
                 and f["attrib"]["name"] == "charge"
-                and attribfromres_flag == True
+                and attribfromres_flag is True
             ):
                 del_idx.append(i)
 
@@ -202,9 +201,6 @@ def merge_xml(ffxml_list, outxml):
     return os.path.join("xmlfiles", outxml)
 
 
-import jax.numpy as jnp
-
-
 def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=None):
     """
     Neutralize the system by adjusting the charges.
@@ -217,11 +213,16 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
     nc : float, optional
         The net charge of the system.
     target_lists : list, optional
-        List of targets to make charge the target_charges value. If None, all atoms are neutralized.
-        ex: [[0, 1], [2, 3]] means that the first two atoms are neutralized to target_charges[0] and the next two atoms are neutralized to target_charges[1].
+        List of targets to make charge the target_charges value. If None, all atoms are
+        neutralized. ex: [[0, 1], [2, 3]] means that the first two atoms are neutralized
+        to target_charges[0] and the next two atoms are neutralized to
+        target_charges[1]. For example: [[0, 1], [2, 3]] means that the first two atoms
+        are neutralized to target_charges[0] and the next two atoms are neutralized to
+        target_charges[1].
     target_charges : list, optional
-        List of target charges for the atoms. If None, the charges are neutralized to zero.
-        ex: [0.0, 2.0] means that the first two atoms are neutralized to 0.0 and the next two atoms are neutralized to 2.0.
+        List of target charges for the atoms. If None, the charges are neutralized to
+        zero. ex: [0.0, 2.0] means that the first two atoms are neutralized to 0.0 and
+        the next two atoms are neutralized to 2.0.
     Returns
     -------
     ffparams : dict
@@ -533,7 +534,8 @@ def md_sample(
     trajectory : str
         Path to the output trajectory file
     sampling_params : dict
-        Dictionary containing sampling parameters such as temperature, annealing steps, etc.
+        Dictionary containing sampling parameters such as temperature,
+        annealing steps, etc.
     useDispersionCorrection : bool, optional
         Whether to use dispersion correction in the nonbonded force. Default is False.
 
@@ -596,7 +598,7 @@ def md_sample(
     xtcfile = os.path.join("xtcfiles", trajectory)
     try:
         os.remove(xtcfile)
-    except:
+    except Exception:
         pass
     simulation.context.setPositions(pos)
     print("== Energy minimization ==")
@@ -616,7 +618,7 @@ def md_sample(
     )
 
     # relaxation run
-    ## SA
+    # SA
     if anneal_totalsteps > 0:
         print("== Start Simulated Annealing ==")
         deltaT = (T - anneal_Tmax) / anneal_steps
@@ -624,7 +626,7 @@ def md_sample(
         for i in range(anneal_steps):
             integrator.setTemperature((anneal_Tmax + deltaT * i) * unit.kelvin)
             simulation.step(step_pertemp)
-    ## relax at desired temperature
+    # relax at desired temperature
     print("== Start Relaxation ==")
     integrator.setTemperature(T * unit.kelvin)
     simulation.step(relax_steps)
@@ -638,7 +640,8 @@ def md_sample(
 
 def get_target_pred_frame(xtcfile, pdbfile, target_params: dict):
     """
-    Get the predicted values for the targets from the parameters obtained by parser_dmffyaml().
+    Get the predicted values for the targets from the parameters obtained by
+    parser_dmffyaml().
     Parameters
     ----------
     xtcfile : str
@@ -740,7 +743,7 @@ class saver_wresults:
                     self.results_dict[key][k] = []
 
     def append(self, i_epoch, loss, wresults):
-        if jnp.isnan(loss) == False:
+        if jnp.isnan(loss) is False:
             self.results_dict["loss"].append(float(loss))
             self.results_dict["epoch"].append(i_epoch)
             for key in self.target_gt.keys():
@@ -759,8 +762,10 @@ class saver_wresults:
             for k, v in self.results_dict.items()
             if isinstance(v, (int, float, list))
         }
-        # # 深さが2以上の要素を抽出
-        # deep_dict = {k: v for k, v in self.results_dict.items() if isinstance(v, dict)}
+        # 深さが2以上の要素を抽出
+        # deep_dict = {
+        #     k: v for k, v in self.results_dict.items() if isinstance(v, dict)
+        # }
         with open(basename + ".yml", "w") as file:
             yaml.dump(shallow_dict, file)
         with open(basename + ".pkl", "wb") as f:

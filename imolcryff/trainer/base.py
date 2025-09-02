@@ -1,4 +1,3 @@
-import pickle
 from dmff import Hamiltonian
 from dmff.optimize import MultiTransform, genOptimizer
 from openmm import app
@@ -98,7 +97,9 @@ class BaseTrainer:
         multiTrans = MultiTransform(self.ffparams)
         self.optimizer_algo = optimizer_algo
         for i, opt_fftype in enumerate(self.opt_fftypes):
-            # multiTrans[opt_fftype] = genOptimizer(learning_rate=lr, clip=0.001, nonzero=False)
+            # multiTrans[opt_fftype] = genOptimizer(
+            #     learning_rate=lr, clip=0.001, nonzero=False
+            # )
             if opt_fftype == "NonbondedForce/charges":
                 multiTrans[opt_fftype] = genOptimizer(
                     optimizer=self.optimizer_algo,

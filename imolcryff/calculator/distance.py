@@ -1,21 +1,20 @@
-from rdkit import Chem
 from openmm import HarmonicBondForce, LangevinMiddleIntegrator
 from openmm.unit import (
     kelvin,
     picosecond,
     picoseconds,
-    degree,
     kilojoules_per_mole,
     angstrom,
 )
 from openmm.app import NoCutoff, Simulation, PDBFile, ForceField, Modeller
 from openmm.openmm import XmlSerializer
 import numpy as np
-from ase.io import read, write
+from ase.io import read
 from ase.calculators.gaussian import Gaussian
 from ase import units
-import copy, os, tempfile, subprocess
-import cclib
+import os
+import tempfile
+import subprocess
 import networkx as nx
 
 
@@ -59,7 +58,8 @@ class DistanceCalculator:
     ff_calculators: list
         List of force field calculators for each distance.
     qm_distancescan: list
-        List of dictionaries containing the results of the quantum mechanical distance scans.
+        List of dictionaries containing the results of the quantum mechanical
+        distance scans.
     ff_distancescan: list
         List of dictionaries containing the results of the force field distance scans.
     """
@@ -152,7 +152,8 @@ class DistanceCalculator:
         Parameters
         ----------
         dist_idx: int, optional
-           List of indices of the distances to calculate. If None, calculate all self.scan_idx.
+           List of indices of the distances to calculate. If None, calculate all
+           self.scan_idx.
         do_calc: bool, optional
             Whether to perform the calculation or just return the calculator.
         """
@@ -268,7 +269,8 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
     atoms_list: list of ase.Atoms, optional
         List of ASE Atoms objects for each distance. If None, use the initial geometry.
     bonds: list of list of int, optional
-        List of bonds to consider during the scan. If None, use the bonds from the ASE Atoms object.
+        List of bonds to consider during the scan.
+        If None, use the bonds from the ASE Atoms object.
 
     Returns
     -------
@@ -341,7 +343,7 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
                 output.write(XmlSerializer.serialize(system))
             restraint = HarmonicBondForce()
             map_idx_wovsite2vsite = [
-                i for i, atom in enumerate(topology.atoms()) if atom.element != None
+                i for i, atom in enumerate(topology.atoms()) if atom.element is not None
             ]
             d1_wv = map_idx_wovsite2vsite[d1]
             d2_wv = map_idx_wovsite2vsite[d2]

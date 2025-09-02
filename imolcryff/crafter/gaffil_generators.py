@@ -1,8 +1,5 @@
 from openmmforcefields.generators import GAFFTemplateGenerator
-from openff.toolkit import Molecule
-from collections import OrderedDict
 import subprocess
-import os
 from ..io.mol2 import read_mol2, write_mol2
 
 
@@ -24,14 +21,13 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
                 if mm[1].to_smiles() == molecule.to_smiles():
                     mm[1].mol2file = molecule.mol2file
 
-        if il_assign == None:
+        if il_assign is None:
             self.il_assign = {"FSA": {"S": "s6", "N": "n", "O": "o", "F": "f"}}
         else:
             self.il_assign = il_assign
 
     def generate_residue_template(self, molecule, residue_atoms=None):
-        import numpy as np
-        from openff.units import unit, Quantity
+        from openff.units import unit
 
         self._generate_unique_atom_names(molecule)
         smiles = molecule.to_smiles()
@@ -121,7 +117,10 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
             return f"{mol2file}"
         else:
             mol2file = molecule.mol2file
-            cmd = f"antechamber -i {mol2file} -fi mol2 -o {mol2file}.gaff -fo mol2 -at {gaff_ver} -c dc -dr no"
+            cmd = (
+                f"antechamber -i {mol2file} -fi mol2 -o {mol2file}.gaff "
+                f"-fo mol2 -at {gaff_ver} -c dc -dr no"
+            )
             output = subprocess.getoutput(cmd)
             gaffmol2 = read_mol2(f"{mol2file}.gaff")
             chgmol2 = read_mol2(f"{mol2file}")
@@ -131,11 +130,11 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
 
             # Modify atom types
             for i, atom in enumerate(molecule.atoms):
-                if "FSA_S" in atom.metadata and atom.metadata["FSA_S"] == True:
+                if "FSA_S" in atom.metadata and atom.metadata["FSA_S"] is True:
                     gaffmol2["@<TRIPOS>ATOM"][i][5] = self.il_assign["FSA"]["S"]
-                elif "FSA_N" in atom.metadata and atom.metadata["FSA_N"] == True:
+                elif "FSA_N" in atom.metadata and atom.metadata["FSA_N"] is True:
                     gaffmol2["@<TRIPOS>ATOM"][i][5] = self.il_assign["FSA"]["N"]
-                elif "FSA_O" in atom.metadata and atom.metadata["FSA_O"] == True:
+                elif "FSA_O" in atom.metadata and atom.metadata["FSA_O"] is True:
                     gaffmol2["@<TRIPOS>ATOM"][i][5] = self.il_assign["FSA"]["O"]
 
             # Modify bond types
@@ -157,6 +156,9 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
 
         frcmod_filename = "molecule.frcmod"
         shutil.copy(self.gaff_dat_filename, "gaff.dat")
-        cmd = f"parmchk2 -i {mol2file} -f mol2 -p gaff.dat -o {frcmod_filename} -s {self._gaff_major_version} -a Y"
+        cmd = (
+            f"parmchk2 -i {mol2file} -f mol2 -p gaff.dat -o {frcmod_filename} "
+            f"-s {self._gaff_major_version} -a Y"
+        )
         output = subprocess.getoutput(cmd)
         return frcmod_filename
