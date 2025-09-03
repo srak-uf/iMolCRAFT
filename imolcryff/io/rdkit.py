@@ -1,17 +1,16 @@
 from rdkit import Chem
 from rdkit.Chem import rdDepictor, rdDetermineBonds
+from ase import Atoms
 import copy
 
 
-def atoms2rdkit(atoms, nc=0, il_assign=True):
+def atoms2rdkit(atoms: Atoms, nc: int = 0, il_assign: bool = True):
     """
     Convert a list of atoms to an RDKit molecule.
 
     Parameters
     ----------
-    atoms : list
-        A list of atoms, where each atom is represented as a dictionary with keys
-        'symbol', 'x', 'y', and 'z'.
+    atoms : ase.Atoms
 
     Returns
     -------

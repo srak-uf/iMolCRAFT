@@ -24,9 +24,11 @@ import networkx as nx
 
 class DihedralCalculator:
     """
-    Class for dihedral angle calculations using quantum mechanical methods and force fields.
-    This class allows for the calculation of dihedral angles and their corresponding energies
-    using both quantum mechanical methods (Gaussian) and force fields.
+    Class for dihedral angle calculations using quantum mechanical methods and
+    force fields.
+    This class allows for the calculation of dihedral angles and their
+    corresponding energies using both quantum mechanical methods (Gaussian)
+    and force fields.
 
     Parameters
     ----------
@@ -64,7 +66,8 @@ class DihedralCalculator:
     ff_calculators: list
         List of force field calculators for each dihedral angle.
     qm_dihedscan: list
-        List of dictionaries containing the results of the quantum mechanical dihedral scans.
+        List of dictionaries containing the results of the quantum mechanical
+        dihedral scans.
     ff_dihedscan: list
         List of dictionaries containing the results of the force field dihedral scans.
     """
@@ -254,6 +257,25 @@ def load_g16scan(g16logfile):
         List of ASE Atoms objects for each dihedral angle.
     """
     try:
+        # "Gaussian 16: Apple_M1-G16RevC.02 7-Dec-2021 "
+        # -> "Gaussian 16: Apple_M1-G16RevC.02 7-Dec-2021" for cclib
+        with open("test/test_dihed_0.log") as f:
+            lines = f.readlines()
+            for i, line in enumerate(lines):
+                if (
+                    line.replace('\n', '') == " *********************************************"
+                    and len(lines[i+1].split()) == 5
+                ):
+                    s = lines[i+1]
+                    parts = s.split()
+                    parts[2] = parts[2] + '_' + parts[3]
+                    del parts[3]
+                    lines[i+1] = ' '.join(parts)+"\n"
+                    break
+
+        with open("test/test_dihed_0.log", mode="w") as f:
+            f.writelines(lines)
+
         dihed_cclib = cclib.io.ccread(g16logfile)
         energy = dihed_cclib.scanenergies
         angle = dihed_cclib.scanparm[0]
@@ -299,7 +321,8 @@ def get_rotatable_dihedral(rdmol):
     dihedral_list: list of list of int
         List of dihedral angles, each defined by a list of four atom indices.
     dihedral_elem_list: list of list of str
-        List of elements involved in the dihedral angles, each defined by a list of four element symbols.
+        List of elements involved in the dihedral angles, each defined by a list of
+        four element symbols.
     """
     id_mol = copy.deepcopy(rdmol)
     # https://sourceforge.net/p/rdkit/mailman/message/34360982/
@@ -465,7 +488,7 @@ def scan_ff_dihedral(
 
             restraint = PeriodicTorsionForce()
             map_idx_wovsite2vsite = [
-                i for i, atom in enumerate(topology.atoms()) if atom.element != None
+                i for i, atom in enumerate(topology.atoms()) if atom.element is not None
             ]
             d1_wv = map_idx_wovsite2vsite[d1]
             d2_wv = map_idx_wovsite2vsite[d2]
@@ -556,7 +579,7 @@ def rotate_dihedral(atoms, dihed_list, desired_angle, chemical_bonds=None):
     atoms_rotated: ase.Atoms
         The rotated molecule.
     """
-    from ..crafter.asemol import aseatoms2pdb, asemol_wrapper
+    from ..crafter.asemol import asemol_wrapper
 
     d1 = dihed_list[0]
     d2 = dihed_list[1]

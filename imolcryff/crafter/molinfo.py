@@ -255,6 +255,28 @@ class Crafter:
         with open("system.xml", "w") as output:
             output.write(XmlSerializer.serialize(system))
 
+    def get_ffxml(self):
+        self.get_molecule_off()
+        molecules = []
+        for key in self.mol_info.keys():
+            molecule = self.mol_info[key]["molecule_OFF"]
+            molecule.mol2file = self.mol_info[key]["ChargeCalc"].mol2file
+            molecules.append(molecule)
+        if self.params_ff["fftype"].split("-")[0] == "gaff":
+            fftemplate_gen = GAFFilTemplateGenerator(
+                molecules=molecules,
+                forcefield=self.params_ff["fftype"],
+                il_assign=self.params_ff.get("fsa_assign", None),
+            )
+        else:
+            assert False, "Unknown forcefield type. Please check the forcefield type."
+        # output xml files
+        _ = gafftemplate2xml(
+            molecules,
+            fftemplate_gen,
+            ion_ffxml=self.params_ff.get("iontype", "amber/ions/ionsff99_tip3p.xml"),
+        )
+
     def _initialize_molinfo(self, key: str):
         """
         Initialize mol_info[key] with predefined keys.
@@ -339,6 +361,11 @@ class Crafter:
             keys = self.mol_info.keys()
 
         for key in keys:
+            if self.mol_info[key]["netcharge"] is None:
+                self._assign_totalcharge()
+                break
+
+        for key in keys:
             nc = self.mol_info[key]["netcharge"]
             if il_assign:
                 mol, mol2d, il_dict = atoms2rdkit(
@@ -363,7 +390,7 @@ class Crafter:
             keys = self.mol_info.keys()
         for key in keys:
             if self.mol_info[key]["rdkit"] is None:
-                self.get_rdkitmol(key)
+                self.get_rdkitmol([key])
             mol = self.mol_info[key]["rdkit"]["mol"]
             self.mol_info[key]["SMILES"] = Chem.MolToSmiles(mol)
 
@@ -379,8 +406,8 @@ class Crafter:
             keys = self.mol_info.keys()
 
         for key in keys:
-            if self.mol_info[key]["rdkit"] is None:
-                self.get_rdkitmol(key)
+            if "mol" not in self.mol_info[key]["rdkit"]:
+                self.get_rdkitmol([key])
 
             mol = self.mol_info[key]["rdkit"]["mol"]
             output_dir = f"{key}"
@@ -603,7 +630,7 @@ class Crafter:
                 molecule = self.mol_info[key]["molecule_OFF"]
                 molecule.conformers[0].magnitude[:] = atoms.positions
                 self.mol_info[key]["ChargeCalc"] = Psi4ChargeCalculator(
-                    molecule,
+                    atoms,
                     charge_type,
                     netcharge,
                     label,

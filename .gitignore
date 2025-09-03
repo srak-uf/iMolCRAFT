@@ -21,8 +21,18 @@ ANTECHAMBER_*
 ANTECHAMBER.FRCMOD
 ATOMTYPE.INF
 molecule.frcmod
+fort.7
+ANTECHAMBER.ESP
+esout
+gaff.dat
+punch
+qout
 
 ### psi4 ###
+MOL_*psi4.*
+MOL*.*
+timer.dat
+psi4_*
 psi*.*.clean
 examples/opt/dihedral/dmc/dmc1_best.xml
 examples/opt/dihedral/dmc/dmc1_best1_best.xml
@@ -120,3 +130,10 @@ examples/opt/distance_vsite/loop-201.xml
 .vscode/settings.json
 examples/opt/distance/distance_scan/fort.7
 examples/opt/distance_vsite/hoge.pdb
+tests/test_crafter/CH4_cell_density.pdb
+tests/test_crafter/CH4_density_cell.pdb
+tests/test_crafter/CH4_num_mols_cell.pdb
+tests/test_crafter/CH4_num_mols_density.pdb
+tests/test_crafter/CH4.pdb
+tests/test_crafter/gaff.dat
+tests/test_crafter/pack_tmp.inp

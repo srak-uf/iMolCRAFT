@@ -57,10 +57,10 @@ class DistanceCalculator:
         List of quantum mechanical calculators for each distance.
     ff_calculators: list
         List of force field calculators for each distance.
-    qm_distancescan: list
+    qm_scan: list
         List of dictionaries containing the results of the quantum mechanical
         distance scans.
-    ff_distancescan: list
+    ff_scan: list
         List of dictionaries containing the results of the force field distance scans.
     """
 
@@ -136,12 +136,12 @@ class DistanceCalculator:
 
         self.qm_calculators = [None for _ in range(len(self.scan_idx))]
         self.ff_calculators = [None for _ in range(len(self.scan_idx))]
-        self.qm_distancescan = [
-            {"distances_A": [], "energy_kjmol": [], "atoms": []}
+        self.qm_scan = [
+            {"distance_A": [], "energy_kjmol": [], "atoms": []}
             for _ in range(len(self.scan_idx))
         ]
-        self.ff_distancescan = [
-            {"distances_A": [], "energy_kjmol": [], "atoms": []}
+        self.ff_scan = [
+            {"distance_A": [], "energy_kjmol": [], "atoms": []}
             for _ in range(len(self.scan_idx))
         ]
 
@@ -162,7 +162,6 @@ class DistanceCalculator:
 
         for di in dist_idx:
             for distance in self.scan_ranges[di]:
-                self.qm_distancescan[di]["distances_A"].append(distance)
                 label = f"{self.label}_dist_{di}__{distance:.2f}"
                 d0 = self.scan_idx[di][0] + 1  # +1 for 0-indexing
                 d1 = self.scan_idx[di][1] + 1
@@ -173,8 +172,8 @@ class DistanceCalculator:
                 g16 = Gaussian(label=label, charge=int(self.nc), **params)
                 g16.directory = os.path.abspath(self.directory)
 
-                if len(self.qm_distancescan[di]["atoms"]) > 0:
-                    atoms = self.qm_distancescan[di]["atoms"][-1].copy()
+                if len(self.qm_scan[di]["atoms"]) > 0:
+                    atoms = self.qm_scan[di]["atoms"][-1].copy()
                 else:
                     atoms = self.atoms.copy()
 
@@ -198,12 +197,12 @@ class DistanceCalculator:
                     print(output)
 
                     atoms = read(logfile)
-                    self.qm_distancescan[di]["distances_A"].append(distance)
-                    self.qm_distancescan[di]["atoms"].append(atoms)
+                    self.qm_scan[di]["distance_A"].append(distance)
+                    self.qm_scan[di]["atoms"].append(atoms)
                     energy = read(logfile).get_potential_energy() / (
                         units.kJ / units.mol
                     )
-                    self.qm_distancescan[di]["energy_kjmol"].append(energy)
+                    self.qm_scan[di]["energy_kjmol"].append(energy)
 
     def do_ffscan(self, ffxml, dist_idx=None, ini_geom="QM"):
         """
@@ -232,21 +231,21 @@ class DistanceCalculator:
             d2 = self.scan_idx[di][1]
             if ini_geom == "QM":
                 (
-                    self.ff_distancescan[di]["distances_A"],
-                    self.ff_distancescan[di]["energy_kjmol"],
-                    self.ff_distancescan[di]["atoms"],
+                    self.ff_scan[di]["distance_A"],
+                    self.ff_scan[di]["energy_kjmol"],
+                    self.ff_scan[di]["atoms"],
                 ) = scan_ff_distance(
                     ffxml,
-                    self.qm_distancescan[di]["distances_A"],
+                    self.qm_scan[di]["distance_A"],
                     self.scan_idx[di],
                     atoms=self.atoms,
-                    atoms_list=self.qm_distancescan[di]["atoms"],
+                    atoms_list=self.qm_scan[di]["atoms"],
                 )
             else:
                 (
-                    self.ff_distancescan[di]["distances_A"],
-                    self.ff_distancescan[di]["energy_kjmol"],
-                    self.ff_distancescan[di]["atoms"],
+                    self.ff_scan[di]["distance_A"],
+                    self.ff_scan[di]["energy_kjmol"],
+                    self.ff_scan[di]["atoms"],
                 ) = scan_ff_distance(
                     ffxml, self.scan_ranges[di], self.scan_idx[di], atoms=self.atoms
                 )

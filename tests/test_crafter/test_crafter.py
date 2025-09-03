@@ -105,3 +105,34 @@ class TestCrafter_liquid:
         self.crafter.structure["cell_A"] = [10.0, 10.0, 10.0]
         self.crafter.prep(do_opt=False, do_charge=True)
         self.crafter.build()
+
+
+class TestCrafter_function():
+    @pytest.fixture
+    def init_crafter(self):
+        self.crafter = Crafter()
+        self.atoms = Atoms("CH3CH3",
+                           positions=[[-2.79452060, 1.06849313, 0.00000000],
+                                      [-2.43786617, 0.05968313, 0.00000000],
+                                      [-2.43784776, 1.57289132, -0.87365150],
+                                      [-3.86452060, 1.06850632, 0.00000000],
+                                      [-2.28117838, 1.79444941, 1.25740497],
+                                      [-2.63623472, 2.80382250, 1.25642745],
+                                      [-2.63944749, 1.29118098, 2.13105486],
+                                      [-1.21118019, 1.79274272, 1.25838372]])
+
+    def test_append_fromAtomsList(self, init_crafter):
+        self.crafter.append_fromAtomsList([self.atoms], "ethane")
+        assert "ethane" in self.crafter.mol_info
+        assert self.crafter.mol_info["ethane"]["atoms"] == self.atoms
+
+    def test_get_partial_charges(self, init_crafter):
+        self.crafter.append_fromAtomsList([self.atoms], "ethane")
+        self.crafter.get_partial_charges()
+        assert len(self.crafter.mol_info["ethane"]["partial_charges"]) == 8
+        assert np.isclose(
+            np.sum(self.crafter.mol_info["ethane"]["partial_charges"]), 0.0)
+
+    def test_get_ffxml(self, init_crafter):
+        self.crafter.append_fromAtomsList([self.atoms], "ethane")
+        self.crafter.get_ffxml()

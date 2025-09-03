@@ -3,9 +3,12 @@ import os
 import subprocess
 from ase.io import write
 from ase.calculators.gaussian import Gaussian
+from imolcryff.io.rdkit import atoms2rdkit
+from rdkit import Chem
 import tempfile
 from openff import toolkit
 from openff.toolkit import Quantity
+from openff.toolkit.topology import Molecule
 from openff.recharge.esp import ESPSettings
 from openff.recharge.grids import MSKGridSettings
 from openff.recharge.esp.psi4 import Psi4ESPGenerator
@@ -16,6 +19,7 @@ from openff.recharge.charges.library import (
     LibraryChargeCollection,
     LibraryChargeGenerator,
 )
+
 
 resp_params = {
     "method": "hf",
@@ -200,13 +204,13 @@ class Psi4ChargeCalculator(ChargeCalculator):
     """
 
     def __init__(
-        self, molecule, charge_type, netcharge, label, directory=None, params=None
+        self, atoms, charge_type, netcharge, label, directory=None, params=None
     ):
         """
         Parameters
         ----------
-        molecule : openff.toolkit.topology.Molecule
-            The molecule object to calculate the charge for.
+        atoms : ase.Atoms
+            The atoms object to calculate the charge for.
         charge_type : str
             The type of charge calculation to perform. Supported types are: resp
         netcharge : int
@@ -220,7 +224,14 @@ class Psi4ChargeCalculator(ChargeCalculator):
             The parameters for the charge calculation. If None, default parameters
             are used.
         """
-        self.molecule = molecule
+        mol, _, _ = atoms2rdkit(atoms, nc=netcharge, il_assign=True)
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+        output_file = os.path.join(directory, f"{label}.sdf")
+        writer = Chem.SDWriter(output_file)
+        writer.write(mol)
+        writer.close()
+        self.molecule = Molecule.from_file(output_file, allow_undefined_stereo=True)
         self.charge_type = charge_type
         self.params = params
         self.charge = netcharge
