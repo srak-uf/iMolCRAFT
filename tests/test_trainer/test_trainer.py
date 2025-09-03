@@ -1,9 +1,11 @@
 from imolcryff.trainer import DistanceTrainer, DihedralTrainer, ThermodynamicTrainer
 from imolcryff.calculator import DistanceCalculator, DihedralCalculator
-from imolcryff.trainer.loss import loss_energy
+from imolcryff.trainer.loss import loss_energy, loss_thermodynamicperturbation
 from imolcryff.crafter.asemol import aseatoms2pdb, asemol_wrapper, merge_asemols
+from imolcryff.crafter import Crafter
 from functools import partial
 from ase import Atoms
+from ase.io import write
 from openmm.app import PDBFile
 import tempfile
 import os
@@ -173,3 +175,84 @@ class TestDihedralTrainer:
         trainer.setup()
         trainer.fit(steps=15, checkpoint_frequency=5)
         assert trainer.losses[-1] < trainer.losses[0], "Training did not reduce loss"
+
+
+@pytest.mark.tp
+class TestThermodynamicTrainer:
+    @pytest.fixture
+    def setup(self):
+        atoms = Atoms("NCCCCNHHHH",
+                      positions=[
+                          [7.465626200000001, 6.932280800000000, 3.863675340000000],
+                          [8.141680800000000, 7.499489400000000, 3.125223730000001],
+                          [8.961653999999999, 8.221501200000001, 2.180166530000001],
+                          [9.919498800000000, 9.179346000000001, 2.846733470000001],
+                          [10.641510600000000, 9.999319200000000, 1.901676270000001],
+                          [11.208719200000001, 10.675373799999999, 1.163224660000000],
+                          [9.413715630000000, 9.759253299999999, 3.452771510000000],
+                          [10.556731660000001, 8.665000270000000, 3.383053430000000],
+                          [8.381746700000001, 8.727284370000000, 1.574128489999999],
+                          [9.475999730000000, 7.584268339999999, 1.643846570000000]
+                      ],
+                      cell=[40, 40, 40],
+                      pbc=True)
+        write("sn.cif", atoms)
+        cr = Crafter()
+        cr.params_geoopt = {}
+        cr.params_geoopt['basis'] = '6-31g'
+        cr.params_geoopt['method'] = 'hf'
+        cr.params_geoopt['software'] = 'psi4'
+        cr.params_charge = {}
+        cr.params_charge['type'] = 'resp'
+        cr.params_charge['basis'] = '6-31g'
+        cr.params_charge['method'] = 'hf'
+        cr.params_charge['software'] = 'psi4'
+        cr.params_ff = {}
+        cr.params_ff['fftype'] = 'gaff-2.11'
+        cr.structure = {}
+        cr.structure['type'] = 'crystal'
+        cr.structure['repeat'] = [1, 1, 1]
+        cr.structure['cif'] = "sn.cif"
+        cr.prep()
+        cr.build()
+
+        self.ffxml = os.path.join(
+                    os.path.dirname(__file__),
+                    "..",
+                    "data",
+                    "vsite_average2.xml"
+                )
+
+    def test_setup(self, setup):
+        lossfn = partial(
+            loss_thermodynamicperturbation, losstype_distribfn="wrightfactor"
+        )
+        self.trainer = ThermodynamicTrainer(
+                            ffxml_list=[self.ffxml],
+                            nums_ffxml=[1],
+                            pdbfile="supercell_bonds.pdb",
+                            loss_fn=lossfn,
+                            sampling_params={'init_structure': 'supercell_bonds.pdb',
+                                             'ensemble': 'nvt',
+                                             'dt_fs': 1.0,
+                                             'rcut_nm': 1.2,
+                                             'temperature_K': 233.15,
+                                             'pressure_bar': 1.0,
+                                             'anneal_steps': 1,
+                                             'anneal_Tmax': 400.0,
+                                             'anneal_totalsteps': 0,
+                                             'relax_steps': 100,
+                                             'prod_steps': 100,
+                                             'nstxout': 20,
+                                             'neff': 2,
+                                             'anneal_totaltime': 0},
+                            target_params={'density_gcm3': {'weight': 1.0, 'gt': 0.4},
+                                           'La_A': {'weight': 1.0, 'gt': 41},
+                                           'Lb_A': {'weight': 1.0, 'gt': 41},
+                                           'Lc_A': {'weight': 1.0, 'gt': 41}},
+                            opt_fftypes=["NonbondedForce/charges", 'VsiteForce/weight'],
+                            label="test_tp",
+                        )
+        self.trainer.setup()
+        self.trainer.fit(10, 2)
+        assert len(self.trainer.losses) > 1
