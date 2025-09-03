@@ -74,18 +74,18 @@ class DistanceTrainer(BaseTrainer):
         """
         self.calculator.do_ffscan(self.ffxml, ini_geom="QM")
         GT_scans = []
-        for i in range(len(self.calculator.qm_distancescan)):
-            GT_scans.append(self.calculator.qm_distancescan[i]["energy_kjmol"])
+        for i in range(len(self.calculator.qm_scan)):
+            GT_scans.append(self.calculator.qm_scan[i]["energy_kjmol"])
         self.GT_scans = jnp.array(GT_scans)
 
         positions_list = []
         jnp_pairs_list = []
-        for i in range(len(self.calculator.qm_distancescan)):
+        for i in range(len(self.calculator.qm_scan)):
             self.calculator.do_ffscan(self.ffxml, ini_geom="QM")
             # position unit is nanometer
             positions = [
                 jnp.array(atoms.positions, dtype=jnp.float64) / 10
-                for atoms in self.calculator.ff_distancescan[i]["atoms"]
+                for atoms in self.calculator.ff_scan[i]["atoms"]
             ]
             if self.num_vsites > 0:
                 positions = [
@@ -93,9 +93,9 @@ class DistanceTrainer(BaseTrainer):
                 ]
             positions_list.append(positions)
             jnp_pairs = []
-            for j in range(len(self.calculator.ff_distancescan[0]["atoms"])):
+            for j in range(len(self.calculator.ff_scan[i]["atoms"])):
                 nbList = NoCutoffNeighborList(cov_map=self.potentials.meta["cov_map"])
-                nbList.allocate(positions_list[0][j])
+                nbList.allocate(positions_list[i][j])
                 jnp_pairs.append(nbList.pairs)
             jnp_pairs_list.append(jnp_pairs)
         self.inputs["positions"] = jnp.array(positions_list, dtype=jnp.float64)
@@ -154,10 +154,10 @@ class DistanceTrainer(BaseTrainer):
             self.ff.renderXML(f"loop-{epoch}.xml")
             self.calculator.do_ffscan(f"loop-{epoch}.xml", ini_geom="QM")
             positions_list = []
-            for i in range(len(self.calculator.ff_distancescan)):
+            for i in range(len(self.calculator.ff_scan)):
                 positions = [
                     jnp.array(atoms.positions, dtype=jnp.float64) / 10
-                    for atoms in self.calculator.ff_distancescan[i]["atoms"]
+                    for atoms in self.calculator.ff_scan[i]["atoms"]
                 ]
                 if self.num_vsites > 0:
                     positions = [
@@ -237,8 +237,8 @@ class DistanceTrainer(BaseTrainer):
         )
 
         GT_scans = []
-        for i in range(len(trainer.calculator.qm_distancescan)):
-            GT_scans.append(trainer.calculator.qm_distancescan[i]["energy_kjmol"])
+        for i in range(len(trainer.calculator.qm_scan)):
+            GT_scans.append(trainer.calculator.qm_scan[i]["energy_kjmol"])
         trainer.GT_scans = jnp.array(GT_scans)
 
         trainer.opt_state = dump_dict["opt_state"]

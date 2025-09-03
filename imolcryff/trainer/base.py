@@ -17,10 +17,6 @@ from ..trainer.dmff_utils import (
 )
 
 
-class BaseExtension(object):
-    pass
-
-
 class BaseTrainer:
     """
     Base class for force field parameter optimization trainers.

@@ -21,7 +21,6 @@ class TestDihedralCalculator:
                                       [-1.21118019, 1.79274272, 1.25838372]])
         self.mol, _, _ = atoms2rdkit(self.atoms)
         self.dc = DihedralCalculator(self.atoms,
-                                     self.mol,
                                      label="test",
                                      directory="test",
                                      qmparams={

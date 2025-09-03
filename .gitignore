@@ -15,6 +15,10 @@ __pycache__/
 docs/build/
 
 imolcryff.egg-info/
+train_state.pkl
+loop*xml
+test_*com
+test_*log
 
 ### Antechamber ###
 ANTECHAMBER_*
@@ -137,3 +141,7 @@ tests/test_crafter/CH4_num_mols_density.pdb
 tests/test_crafter/CH4.pdb
 tests/test_crafter/gaff.dat
 tests/test_crafter/pack_tmp.inp
+classes.png
+imolcryff/calculator/xmlfiles/ethane1.xml
+imolcryff/calculator/ethane1_best.xml
+imolcryff/calculator/hoge.pdb

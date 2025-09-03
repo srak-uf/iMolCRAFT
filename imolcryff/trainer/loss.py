@@ -20,13 +20,23 @@ def mse_energy(
 ):
     """
     Calculate the mean squared error between two energy arrays.
-    :param e_ff: Array of energies from the force field.
-    :param e_qm: Array of energies from quantum mechanics.
-    :param weight_scheme: Optional weighting scheme for the energies.
-    :param zeropoint: Optional zero-point energy correction.
-                      If "auto", the zero-point energy is determined automatically.
-                      If "qmmin", the zero-point energy is set to the minimum QM energy.
-                      if None, the zero-point energy is not corrected.
+
+    Parameters
+    ----------
+    e_ff : np.ndarray
+        Array of energies from the force field.
+    e_qm : np.ndarray
+        Array of energies from quantum mechanics.
+    weight_scheme : str
+        Optional weighting scheme for the energies.
+        Options are "uniform", "boltzmann", and "nonboltzmann".
+        Default is "uniform".
+    zeropoint : str
+        Optional zero-point energy correction.
+        Options are "auto", "qmmin", and None.
+        If "auto", the zero-point energy is determined automatically.
+        If "qmmin", the zero-point energy is set to the minimum QM energy.
+        if None, the zero-point energy is not corrected.
     """
     implemented_weight_schemes = ["uniform", "boltzmann", "nonboltzmann"]
     if weight_scheme not in implemented_weight_schemes:
@@ -74,7 +84,18 @@ def jsdivergence(g_ff, g_gt):
     return js_div
 
 
-def loss_energy(ffparams, ff, topology, positions, pairs, y_gt):
+def loss_energy(
+    ffparams,
+    ff,
+    topology,
+    positions,
+    pairs,
+    y_gt,
+    weight_scheme="uniform",
+    norm_var=True,
+    zeropoint="auto",
+    temperature=500,
+):
     ff_d = update_ffinfo_from_params(ff, ffparams)
     ffparams_wo_charge = {}
     for key in ffparams.keys():
@@ -92,7 +113,14 @@ def loss_energy(ffparams, ff, topology, positions, pairs, y_gt):
     efunc = pots.getPotentialFunc()
     batched_efunc = vmap(lambda x: efunc(x, None, pairs[0], ffparams_wo_charge))
     e_ff = batched_efunc(positions)
-    loss = mse_energy(e_ff, y_gt, weight_scheme="uniform", norm_var=True)
+    loss = mse_energy(
+        e_ff,
+        y_gt,
+        weight_scheme=weight_scheme,
+        norm_var=norm_var,
+        zeropoint=zeropoint,
+        temperature=temperature,
+    )
     return loss
 
 

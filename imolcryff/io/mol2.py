@@ -68,7 +68,7 @@ def write_mol2(filename, input):
         elif offmol_flag:
             # Handle molecule writing
             f.write("@<TRIPOS>MOLECULE\n")
-            f.write(f"{input.name}\n")
+            f.write("MOL\n")
             f.write(f"{len(input.atoms)} {len(input.bonds)} 0 0 0\n")
             f.write("SMALL\n")
             f.write("CHARGES\n")
@@ -82,7 +82,7 @@ def write_mol2(filename, input):
                 charge = input.partial_charges[i].magnitude
                 f.write(
                     f"{i+1} {atom.symbol} {xx} {yy} {zz} {atom.symbol}  1  "
-                    f"{input.name} {charge}\n"
+                    f"MOL {charge}\n"
                 )
             f.write("@<TRIPOS>BOND\n")
             for i, bond in enumerate(input.bonds):
@@ -91,7 +91,7 @@ def write_mol2(filename, input):
                     f"{bond.atom2_index+1} {bond.bond_order}\n"
                 )
             f.write("@<TRIPOS>SUBSTRUCTURE\n")
-            f.write(f"1 {input.name} 1 TEMP              0 ****  ****    0 ROOT\n")
+            f.write("1 MOL 1 TEMP              0 ****  ****    0 ROOT\n")
         else:
             raise ValueError("Either mol2_dict or molecule must be provided.")
 

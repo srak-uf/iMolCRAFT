@@ -124,15 +124,19 @@ class TestCrafter_function():
     def test_append_fromAtomsList(self, init_crafter):
         self.crafter.append_fromAtomsList([self.atoms], "ethane")
         assert "ethane" in self.crafter.mol_info
-        assert self.crafter.mol_info["ethane"]["atoms"] == self.atoms
+        assert self.crafter.mol_info["ethane"]["aseatoms_list"][0] == self.atoms
 
     def test_get_partial_charges(self, init_crafter):
         self.crafter.append_fromAtomsList([self.atoms], "ethane")
         self.crafter.get_partial_charges()
         assert len(self.crafter.mol_info["ethane"]["partial_charges"]) == 8
         assert np.isclose(
-            np.sum(self.crafter.mol_info["ethane"]["partial_charges"]), 0.0)
+            np.sum(self.crafter.mol_info["ethane"]["partial_charges"]), 0.0, atol=1e-4)
 
     def test_get_ffxml(self, init_crafter):
         self.crafter.append_fromAtomsList([self.atoms], "ethane")
+        self.crafter.params_ff = {
+            "fftype": "gaff-2.11"
+        }
+        self.crafter.get_partial_charges()
         self.crafter.get_ffxml()

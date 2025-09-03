@@ -671,7 +671,6 @@ class Crafter:
             if self.mol_info[key]["DihedCalc"] is None:
                 self.mol_info[key]["DihedCalc"] = DihedralCalculator(
                     atoms=atoms,
-                    rdkitmol=self.mol_info[key]["rdkit"]["mol"],
                     label=key,
                     directory=self.mol_info[key]["directory"],
                 )

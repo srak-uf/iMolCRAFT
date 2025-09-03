@@ -8,6 +8,7 @@ from openmm.unit import (
     kilojoules_per_mole,
     angstrom,
 )
+from imolcryff.io.rdkit import atoms2rdkit
 from openmm.app import NoCutoff, Simulation, PDBFile, ForceField, Modeller
 from openmm.openmm import XmlSerializer
 import numpy as np
@@ -47,8 +48,6 @@ class DihedralCalculator:
     ----------
     atoms: ase.Atoms
         ASE Atoms object of the molecule.
-    rdmol: rdkit.Chem.rdchem.Mol
-        RDKit molecule object.
     nc: int
         Net charge of the molecule.
     label: str
@@ -72,14 +71,18 @@ class DihedralCalculator:
         List of dictionaries containing the results of the force field dihedral scans.
     """
 
-    def __init__(self, atoms, rdkitmol, label, directory=None, qmparams=None):
+    def __init__(
+            self,
+            atoms,
+            label,
+            directory=None,
+            qmparams=None
+        ):
         """
         Parameters
         ----------
         atoms: ase.Atoms
             ASE Atoms object of the molecule.
-        rdkitmol: rdkit.Chem.rdchem.Mol
-            RDKit molecule object.
         label: str
             Label for the calculation.
         directory: str
@@ -90,7 +93,7 @@ class DihedralCalculator:
         self.atoms = atoms.copy()
         self.atoms.pbc = False
         self.atoms.cell = None
-        self.rdmol = rdkitmol
+        self.rdmol, _, _ = atoms2rdkit(atoms)
         self.nc = sum([atom.GetFormalCharge() for atom in self.rdmol.GetAtoms()])
         self.label = label
         if qmparams is None:
