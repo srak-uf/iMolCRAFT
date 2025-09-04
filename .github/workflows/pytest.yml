@@ -1,0 +1,41 @@
+name: Pytest
+
+on:
+  pull_request:
+    branches:
+        - dev
+        - main
+    types: [opened, reopened, synchronize]
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Python
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: imc
+          environment-file: env.yml
+          auto-activate-base: false
+      
+      - name: Install iMolCRAFT
+        shell: bash -el {0}
+        run: |
+          conda install -c conda-forge pytest
+          pip install git+https://github.com/srak-uf/DMFF
+          pip install git+https://github.com/srak-uf/openff-recharge
+          pip install .
+      
+      - name: Run tests
+        shell: bash -el {0}
+        run: |
+          pytest tests/test_calculator/test_*
+          pytest tests/test_crafter/test_*
+          pytest tests/test_trainer/test_*
+
+        
