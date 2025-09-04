@@ -56,7 +56,7 @@ class asemol_wrapper:
         if chemical_bonds is None:
             if bond_def_file is None:
                 path = imolcryff.__path__[0]
-                self.bond_def_file = os.path.join(path, "..", "data/bond_def.ini")
+                self.bond_def_file = os.path.join(path, "data", "bond_def.ini")
 
             self.chemical_bonds = pd.DataFrame(
                 np.zeros((len(chemical_symbols), len(chemical_symbols))),
