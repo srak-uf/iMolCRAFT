@@ -2,8 +2,8 @@
 ```
 git clone git@github.com:srak-uf/iMolCRAFT.git
 cd iMolCRAFT
-conda env create -f imolcry_dev.yml # this script can be used in linux
-conda activate imc_dev
+conda env create -f env.yml # this script can be used in linux
+conda activate imc
 git clone https://github.com/srak-uf/DMFF
 cd DMFF
 pip install -e . 
@@ -13,12 +13,12 @@ git clone https://github.com/srak-uf/openff-recharge
 cd openff-recharge
 pip install -e .
 cd ..
-pip uninstall dataclasses -y
 
 # Installation of iMolCryFF
 pip install -e .
 
 # make document (Optional)
+# conda install -c conda-forge sphinx myst-parser sphinx_rtd_theme
 # cd docs
 # make html
 ```
