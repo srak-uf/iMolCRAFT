@@ -34,8 +34,8 @@ jobs:
       - name: Run tests
         shell: bash -el {0}
         run: |
-          pytest tests/test_calculator/test_*
-          pytest tests/test_crafter/test_*
-          pytest tests/test_trainer/test_*
+          pytest tests/test_calculator/test_* -m "not g16"
+          pytest tests/test_crafter/test_* -m "not g16"
+          pytest tests/test_trainer/test_* -m "not g16"
 
         

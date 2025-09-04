@@ -6,6 +6,7 @@ import pytest
 import os
 
 
+@pytest.mark.g16
 class TestChargeCalculator:
     @pytest.fixture
     def setup(self):

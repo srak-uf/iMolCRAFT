@@ -6,6 +6,7 @@ import tempfile
 import pytest
 
 
+@pytest.mark.g16
 class TestDistanceCalculator:
     @pytest.fixture
     def setup(self):

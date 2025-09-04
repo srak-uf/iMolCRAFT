@@ -7,6 +7,7 @@ import os
 import pytest
 
 
+@pytest.mark.g16
 class TestDihedralCalculator:
     @pytest.fixture
     def setup(self):

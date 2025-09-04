@@ -12,6 +12,7 @@ import os
 import pytest
 
 
+@pytest.mark.g16
 @pytest.mark.distance
 class TestDistanceTrainer:
     @pytest.fixture
@@ -110,6 +111,7 @@ class TestDistanceTrainer:
         trainer.fit(steps=2, checkpoint_frequency=1)
 
 
+@pytest.mark.g16
 @pytest.mark.dihedral
 class TestDihedralTrainer:
     @pytest.fixture
