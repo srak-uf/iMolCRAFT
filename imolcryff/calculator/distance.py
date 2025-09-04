@@ -362,7 +362,7 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
             state = simulation.context.getState(getPositions=True, getEnergy=True)
             crd = simulation.context.getState(getPositions=True).getPositions()
             PDBFile.writeFile(topology, crd, open(temppdb, "w"))
-            PDBFile.writeFile(topology, crd, open("hoge.pdb", "w"))
+            # PDBFile.writeFile(topology, crd, open("hoge.pdb", "w"))
 
             pos_prev = []
             for p in state.getPositions():

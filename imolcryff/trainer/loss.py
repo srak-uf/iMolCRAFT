@@ -31,12 +31,22 @@ def mse_energy(
         Optional weighting scheme for the energies.
         Options are "uniform", "boltzmann", and "nonboltzmann".
         Default is "uniform".
+    norm_var : bool
+        Optional normalization by variance of e_qm. Default is True.
     zeropoint : str
         Optional zero-point energy correction.
         Options are "auto", "qmmin", and None.
         If "auto", the zero-point energy is determined automatically.
         If "qmmin", the zero-point energy is set to the minimum QM energy.
         if None, the zero-point energy is not corrected.
+        Default is "auto".
+    temperature : float
+        Temperature in Kelvin for the Boltzmann weighting scheme. Default is 500 K.
+
+    Returns
+    -------
+    float
+        The mean squared error between the two energy arrays.
     """
     implemented_weight_schemes = ["uniform", "boltzmann", "nonboltzmann"]
     if weight_scheme not in implemented_weight_schemes:

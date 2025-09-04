@@ -1,7 +1,9 @@
 from imolcryff.calculator import ChargeCalculator, Psi4ChargeCalculator
 from ase import Atoms
+import tempfile
 import numpy as np
 import pytest
+import os
 
 
 class TestChargeCalculator:
@@ -17,12 +19,20 @@ class TestChargeCalculator:
                                  [-2.63623472, 2.80382250, 1.25642745],
                                  [-2.63944749, 1.29118098, 2.13105486],
                                  [-1.21118019, 1.79274272, 1.25838372]])
-        self.calculator = ChargeCalculator(atoms,
-                                           "resp",
-                                           0,
-                                           label="test",
-                                           directory="test"
-                                           )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.calculator = ChargeCalculator(atoms,
+                                               "resp",
+                                               0,
+                                               label="test",
+                                               directory=tmpdir
+                                               )
+            yield
+        
+        if os.path.exists("fort.7"):
+            os.remove("fort.7")
+
+        if os.path.exists("timer.dat"):
+            os.remove("timer.dat")
 
     def test_calculate_charge(self, setup):
         self.calculator.get_partialcharges()
@@ -44,12 +54,14 @@ class TestPsi4ChargeCalculator:
                                  [-2.63623472, 2.80382250, 1.25642745],
                                  [-2.63944749, 1.29118098, 2.13105486],
                                  [-1.21118019, 1.79274272, 1.25838372]])
-        self.calculator = Psi4ChargeCalculator(atoms,
-                                               "resp",
-                                               0,
-                                               label="test",
-                                               directory="test"
-                                               )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.calculator = Psi4ChargeCalculator(atoms,
+                                                   "resp",
+                                                   0,
+                                                   label="test",
+                                                   directory=tmpdir
+                                                   )
+            yield
 
     def test_calculate_charge(self, setup):
         self.calculator.get_partialcharges()

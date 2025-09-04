@@ -1,6 +1,8 @@
 from imolcryff.calculator import Psi4GeoOptimizer
 from ase import Atoms
 import numpy as np
+import os
+import tempfile
 import pytest
 
 
@@ -17,10 +19,16 @@ class TestPsi4GeoOptimizer:
                                  [-2.63623472, 2.80382250, 1.25642745],
                                  [-2.63944749, 1.29118098, 2.13105486],
                                  [-1.21118019, 1.79274272, 1.25838372]])
-        self.calculator = Psi4GeoOptimizer(atoms,
-                                           method="hf",
-                                           basis_set="6-31g",
-                                           charge=0)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.calculator = Psi4GeoOptimizer(atoms,
+                                               method="hf",
+                                               basis_set="6-31g",
+                                               charge=0,
+                                               directory=tmpdir)
+            yield
+
+        if os.path.exists("fort.7"):
+            os.remove("fort.7")
 
     def test_calculate(self, setup):
         atoms_prev = self.calculator.atoms.copy()

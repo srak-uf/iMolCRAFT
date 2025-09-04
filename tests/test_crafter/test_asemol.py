@@ -8,6 +8,7 @@ import os
 import pytest
 import numpy as np
 import ase
+import tempfile
 
 
 @pytest.mark.parametrize(
@@ -48,15 +49,19 @@ def test_pdb2packmol(fixed_property, priority_property):
                       (-1.041, 2.244, -0.874),
                       (-2.467, 1.740, 0.000)])
     ase.io.write("CH4.pdb", atoms)
-    pdb2packmol(
-        ["CH4.pdb"],
-        fixed_property=fixed_property,
-        priority_property=priority_property,
-        num_mols=[6],
-        cell=[10, 10, 10],
-        density=500,
-        outfile=f"CH4_{fixed_property}_{priority_property}.pdb"
-    )
+    # outfileをtempfileで拡張子.xyzにする
+    with tempfile.NamedTemporaryFile(suffix=".xyz", delete=False) as tmpfile:
+        outfile = tmpfile.name
+        pdb2packmol(
+            ["CH4.pdb"],
+            fixed_property=fixed_property,
+            priority_property=priority_property,
+            num_mols=[6],
+            cell=[10, 10, 10],
+            density=500,
+            outfile=outfile
+        )
+    os.remove("CH4.pdb")
 
 
 class TestAsemol_Wrapper:

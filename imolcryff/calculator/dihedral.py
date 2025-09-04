@@ -262,7 +262,7 @@ def load_g16scan(g16logfile):
     try:
         # "Gaussian 16: Apple_M1-G16RevC.02 7-Dec-2021 "
         # -> "Gaussian 16: Apple_M1-G16RevC.02 7-Dec-2021" for cclib
-        with open("test/test_dihed_0.log") as f:
+        with open(g16logfile) as f:
             lines = f.readlines()
             for i, line in enumerate(lines):
                 if (
@@ -276,7 +276,7 @@ def load_g16scan(g16logfile):
                     lines[i+1] = ' '.join(parts)+"\n"
                     break
 
-        with open("test/test_dihed_0.log", mode="w") as f:
+        with open(g16logfile, mode="w") as f:
             f.writelines(lines)
 
         dihed_cclib = cclib.io.ccread(g16logfile)

@@ -2,6 +2,7 @@ from imolcryff.calculator import DistanceCalculator
 from ase import Atoms
 import numpy as np
 import os
+import tempfile
 import pytest
 
 
@@ -18,24 +19,25 @@ class TestDistanceCalculator:
                                       [-2.63623472, 2.80382250, 1.25642745],
                                       [-2.63944749, 1.29118098, 2.13105486],
                                       [-1.21118019, 1.79274272, 1.25838372]])
-        self.dc = DistanceCalculator(self.atoms,
-                                     0,
-                                     label="test",
-                                     scan_idx=[[0, 1]],
-                                     scan_ranges=[[1.06, 1.07, 1.08, 1.09]],
-                                     directory="test",
-                                     qmparams={
-                                         "method": "hf",
-                                         "basis": "6-31g",
-                                         "opt": "modredundant"
-                                     })
-        # cr = Crafter()
-        # cr.append_fromAtomsList([atoms], "ethane")
-        # cr.get_partial_charges()
-        # cr.params_ff = {
-        #     "fftype": "gaff-2.11",
-        # }
-        # cr.get_ffxml()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.dc = DistanceCalculator(self.atoms,
+                                         0,
+                                         label="test",
+                                         scan_idx=[[0, 1]],
+                                         scan_ranges=[[1.06, 1.07, 1.08, 1.09]],
+                                         directory=tmpdir,
+                                         qmparams={
+                                             "method": "hf",
+                                             "basis": "6-31g",
+                                             "opt": "modredundant"
+                                         })
+            yield
+
+        if os.path.exists("fort.7"):
+            os.remove("fort.7")
+
+        if os.path.exists("timer.dat"):
+            os.remove("timer.dat")
 
     def test_calculate_distance_ff(self, setup):
         ffxml = os.path.join(
@@ -55,7 +57,7 @@ class TestDistanceCalculator:
         maxdistance = self.dc.ff_scan[0]["distance_A"][maxidx]
         assert (
             np.isclose(np.abs(maxdistance), 1.06)
-)
+        )
 
     @pytest.mark.qm
     def test_calculate_distance_qm(self, setup):

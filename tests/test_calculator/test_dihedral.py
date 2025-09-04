@@ -1,6 +1,7 @@
 from imolcryff.calculator import DihedralCalculator
 from imolcryff.io.rdkit import atoms2rdkit
 from ase import Atoms
+import tempfile
 import numpy as np
 import os
 import pytest
@@ -20,21 +21,22 @@ class TestDihedralCalculator:
                                       [-2.63944749, 1.29118098, 2.13105486],
                                       [-1.21118019, 1.79274272, 1.25838372]])
         self.mol, _, _ = atoms2rdkit(self.atoms)
-        self.dc = DihedralCalculator(self.atoms,
-                                     label="test",
-                                     directory="test",
-                                     qmparams={
-                                         "method": "hf",
-                                         "basis": "6-31g",
-                                         "opt": "modredundant"
-                                     })
-        # cr = Crafter()
-        # cr.append_fromAtomsList([atoms], "ethane")
-        # cr.get_partial_charges()
-        # cr.params_ff = {
-        #     "fftype": "gaff-2.11",
-        # }
-        # cr.get_ffxml()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.dc = DihedralCalculator(self.atoms,
+                                         label="test",
+                                         directory=tmpdir,
+                                         qmparams={
+                                            "method": "hf",
+                                            "basis": "6-31g",
+                                            "opt": "modredundant"
+                                         })
+            yield
+
+        if os.path.exists("fort.7"):
+            os.remove("fort.7")
+
+        if os.path.exists("timer.dat"):
+            os.remove("timer.dat")
 
     def test_calculate_dihedral_ff(self, setup):
         ffxml = os.path.join(
@@ -50,6 +52,7 @@ class TestDihedralCalculator:
         self.dc.do_qmscan()
         assert len(self.dc.qm_scan) == 1
         minidx = np.argmin(self.dc.qm_scan[0]["energy_kjmol"])
+        print(self.dc.qm_scan[0])
         minangle = self.dc.qm_scan[0]["angle_deg"][minidx]
         assert (
             np.isclose(np.abs(minangle), 60, atol=1.0)

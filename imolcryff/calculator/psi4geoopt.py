@@ -11,7 +11,14 @@ class Psi4GeoOptimizer(Calculator):
     implemented_properties = ["energy"]
 
     def __init__(
-        self, atoms, method, basis_set, charge=0, multiplicity=1, label="psi4_geoopt"
+        self,
+        atoms,
+        method,
+        basis_set,
+        charge=0,
+        multiplicity=1,
+        label="psi4_geoopt",
+        directory=None,
     ):
         Calculator.__init__(self, atoms=atoms)
         self.results = {}
@@ -25,16 +32,21 @@ class Psi4GeoOptimizer(Calculator):
             self.memory -= 1
         self.threads = 2 ** (multiprocessing.cpu_count().bit_length() - 1)  # 2^n
         self.label = label
+        self.directory = directory
+        if self.directory is not None:
+            os.makedirs(self.directory, exist_ok=True)
 
     def calculate(self, atoms=None, properties=["energy"], system_changes=all_changes):
-        self.generate_input(f"{self.label}.psi4in")
-        print(f"psi4 {self.label}.psi4in  {self.label}.psi4out")
-        os_value = os.system(f"psi4 {self.label}.psi4in  {self.label}.psi4out")
+        inputfile = os.path.join(self.directory, f"{self.label}.psi4in")
+        outputfile = os.path.join(self.directory, f"{self.label}.psi4out")
+        self.generate_input(inputfile)
+        print(f"psi4 {inputfile}  {outputfile}")
+        os_value = os.system(f"psi4 {inputfile}  {outputfile}")
         if os_value != 0:
             raise RuntimeError(f"Psi4 optimization failed with exit code {os_value}")
 
-        _clean_psi4output(f"{self.label}.psi4out")
-        parser = cclib.ccopen(f"{self.label}.psi4out")
+        _clean_psi4output(outputfile)
+        parser = cclib.ccopen(outputfile)
         data = parser.parse()
         atomcoords = data.converged_geometries[-1]
         numbers = data.atomnos

@@ -2,7 +2,6 @@
 import os
 import sys
 import yaml
-import pickle
 import numpy as np
 import openmm
 from openmm import app
@@ -12,7 +11,6 @@ import jax.numpy as jnp
 import dmff
 from dmff.operators.templatetype import TemplateATypeOperator
 from dmff.operators.templatevsite import TemplateVSiteOperator
-from dmff import Hamiltonian
 
 import MDAnalysis
 
@@ -71,9 +69,19 @@ def parser_dmffyaml(yaml_file):
 
     # Check for file existence
     if not os.path.isfile(data["sampling"]["init_structure"]):
-        raise FileNotFoundError(
-            f"Initial structure file {data['sampling']['init_structure']} not found."
-        )
+        if os.path.isfile(
+            os.path.join(os.path.dirname(yaml_file), data["sampling"]["init_structure"])
+        ):
+            data["sampling"]["init_structure"] = os.path.join(
+                os.path.dirname(yaml_file), data["sampling"]["init_structure"]
+            )
+        else:
+            raise FileNotFoundError(
+                (
+                    f"Initial structure file {data['sampling']['init_structure']} "
+                    "not found."
+                )
+            )
 
     # Check for valid ensemble
     valid_ensembles = ["nve", "nvt", "isonpt", "anisonpt", "trinpt"]
@@ -161,46 +169,6 @@ def get_target_gt(target_params: dict):
     return target_gt
 
 
-def merge_xml(ffxml_list, outxml):
-    """
-    Merge multiple XML files into one.
-    Parameters
-    ----------
-    ffxml_list : list
-        List of XML files to be merged.
-    outxml : str
-        Name of the output XML file.
-    """
-    ff = Hamiltonian(*ffxml_list)
-    del_idx = []
-    attribfromres_flag = False
-    # ffinfo_nb = ff.ffinfo["Forces"]["NonbondedForce"]["node"]
-    for i, f in enumerate(ff.ffinfo["Forces"]["NonbondedForce"]["node"]):
-        if "name" in f and "attrib" in f:
-            if (
-                f["name"] == "UseAttributeFromResidue"
-                and f["attrib"]["name"] == "charge"
-                and attribfromres_flag is False
-            ):
-                attribfromres_flag = True
-            elif (
-                f["name"] == "UseAttributeFromResidue"
-                and f["attrib"]["name"] == "charge"
-                and attribfromres_flag is True
-            ):
-                del_idx.append(i)
-
-    n_del = 0
-    for i in del_idx:
-        ff.ffinfo["Forces"]["NonbondedForce"]["node"].pop(i - n_del)
-        n_del += 1
-
-    os.makedirs("xmlfiles", exist_ok=True)
-    ff.renderXML(os.path.join("xmlfiles", outxml))
-
-    return os.path.join("xmlfiles", outxml)
-
-
 def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=None):
     """
     Neutralize the system by adjusting the charges.
@@ -216,22 +184,28 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
         List of targets to make charge the target_charges value. If None, all atoms are
         neutralized. ex: [[0, 1], [2, 3]] means that the first two atoms are neutralized
         to target_charges[0] and the next two atoms are neutralized to
-        target_charges[1]. For example: [[0, 1], [2, 3]] means that the first two atoms
-        are neutralized to target_charges[0] and the next two atoms are neutralized to
-        target_charges[1].
+        target_charges[1]. For example: [[0, 1], [2, 3]] means that the total charge of
+        first two atoms based on natoms_list are neutralized to target_charges[0]. The
+        next two atoms are neutralized to target_charges[1].
     target_charges : list, optional
         List of target charges for the atoms. If None, the charges are neutralized to
         zero. ex: [0.0, 2.0] means that the first two atoms are neutralized to 0.0 and
         the next two atoms are neutralized to 2.0.
+
     Returns
     -------
     ffparams : dict
         Updated force field parameters with neutralized charges.
     """
+
+    assert len(ffparams["NonbondedForce"]["charges"]) == len(natoms_list), (
+        "len(ffparams['NonbondedForce']['charges']) != len(natoms_list)"
+    )
+
     if target_lists is not None and target_charges is not None:
-        assert len(target_lists) == len(
-            target_charges
-        ), "len(target_lists) != len(target_charges)"
+        assert len(target_lists) == len(target_charges), (
+            "len(target_lists) != len(target_charges)"
+        )
         for i, target_list in enumerate(target_lists):
             net_q = jnp.dot(
                 ffparams["NonbondedForce"]["charges"][jnp.array(target_list)],
@@ -261,6 +235,10 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
                 [i for i in range(len(natoms_list)) if i not in target_all]
             )
 
+            assert nottarget_list.sum() > 0, (
+                "All atoms are constrained. Cannot neutralize."
+            )
+
             # Update charges for non-targeted atoms
             net_q = jnp.dot(ffparams["NonbondedForce"]["charges"], natoms_list)
             ffparams["NonbondedForce"]["charges"] = (
@@ -280,7 +258,7 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
     return ffparams
 
 
-def get_charges_types(topdata: app.Topology, ff, gen_dmfftop=False):
+def _get_charges_types(topdata: app.Topology, ff, gen_dmfftop=False):
     """
     Get the charges and types of the atoms in the topology data.
     Parameters
@@ -728,54 +706,3 @@ def plot_compare(target_gt, target_pred_frame, label="sample"):
     plt.tight_layout()
     fig.savefig(f"{label}.png")
     plt.close(fig)
-
-
-class saver_wresults:
-    def __init__(self, target_gt):
-        self.results_dict = {"epoch": [], "loss": []}
-        self.target_gt = target_gt
-        for key in target_gt.keys():
-            if key in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
-                self.results_dict[key] = []
-            elif key in ["rdf", "adf"]:
-                self.results_dict[key] = {}
-                for k in target_gt[key].keys():
-                    self.results_dict[key][k] = []
-
-    def append(self, i_epoch, loss, wresults):
-        if jnp.isnan(loss) is False:
-            self.results_dict["loss"].append(float(loss))
-            self.results_dict["epoch"].append(i_epoch)
-            for key in self.target_gt.keys():
-                if key in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
-                    self.results_dict[key].append(float(wresults[key]))
-                elif key in ["rdf", "adf"]:
-                    for k in self.target_gt[key].keys():
-                        self.results_dict[key][k].append(
-                            np.array(wresults[key][k]).tolist()
-                        )
-
-    def save(self, basename="results"):
-        # self.results_dictから深さが1の要素を抽出
-        shallow_dict = {
-            k: v
-            for k, v in self.results_dict.items()
-            if isinstance(v, (int, float, list))
-        }
-        # 深さが2以上の要素を抽出
-        # deep_dict = {
-        #     k: v for k, v in self.results_dict.items() if isinstance(v, dict)
-        # }
-        with open(basename + ".yml", "w") as file:
-            yaml.dump(shallow_dict, file)
-        with open(basename + ".pkl", "wb") as f:
-            pickle.dump(self.results_dict, f)
-
-    def plot_learningcurve(self, filename="learning_curve.png"):
-        fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
-        ax.plot(self.results_dict["epoch"], self.results_dict["loss"])
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel("Loss")
-        plt.tight_layout()
-        fig.savefig(filename)
-        plt.close(fig)

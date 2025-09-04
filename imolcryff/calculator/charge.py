@@ -177,6 +177,11 @@ class ChargeCalculator:
             raise ValueError(
                 "Antechamber failed to generate the mol2 file. Check the log."
             )
+        else:
+            # esout, punch, qout file is removed
+            for f in ["esout", "punch", "qout"]:
+                if os.path.exists(f):
+                    os.remove(f)
 
         return partialcharges
 

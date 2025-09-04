@@ -48,7 +48,7 @@ class TestDistanceTrainer:
                 label="test",
                 scan_idx=[[0, 1]],
                 scan_ranges=[[1.06, 1.07, 1.08]],
-                directory="test",
+                directory=td,
                 qmparams={
                     "method": "hf",
                     "basis": "6-31g",

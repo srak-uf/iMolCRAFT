@@ -198,3 +198,43 @@ def gafftemplate2xml(
         ffxmlfiles.append(f"./gaffxml_{i}.xml")
 
     return ffxmlfiles
+
+
+def merge_xml(ffxml_list, outxml):
+    """
+    Merge multiple XML files into one.
+    Parameters
+    ----------
+    ffxml_list : list
+        List of XML files to be merged.
+    outxml : str
+        Name of the output XML file.
+    """
+    ff = Hamiltonian(*ffxml_list)
+    del_idx = []
+    attribfromres_flag = False
+    # ffinfo_nb = ff.ffinfo["Forces"]["NonbondedForce"]["node"]
+    for i, f in enumerate(ff.ffinfo["Forces"]["NonbondedForce"]["node"]):
+        if "name" in f and "attrib" in f:
+            if (
+                f["name"] == "UseAttributeFromResidue"
+                and f["attrib"]["name"] == "charge"
+                and attribfromres_flag is False
+            ):
+                attribfromres_flag = True
+            elif (
+                f["name"] == "UseAttributeFromResidue"
+                and f["attrib"]["name"] == "charge"
+                and attribfromres_flag is True
+            ):
+                del_idx.append(i)
+
+    n_del = 0
+    for i in del_idx:
+        ff.ffinfo["Forces"]["NonbondedForce"]["node"].pop(i - n_del)
+        n_del += 1
+
+    os.makedirs("xmlfiles", exist_ok=True)
+    ff.renderXML(os.path.join("xmlfiles", outxml))
+
+    return os.path.join("xmlfiles", outxml)

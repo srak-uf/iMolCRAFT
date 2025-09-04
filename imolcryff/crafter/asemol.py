@@ -592,7 +592,8 @@ def pdb2packmol(
     num_mols,
     cell=None,
     density=None,
-    outfile="packmol_tmp.xyz"
+    outfile="packmol_tmp.xyz",
+    cleanup=True,
 ):
     """
     Liquid packing using packmol.
@@ -720,4 +721,10 @@ def pdb2packmol(
     atoms_packtmp.cell = cell
     atoms_packtmp.pbc = True
     write(f"{outfile}", atoms_packtmp)
+
+    if cleanup is True:
+        os.remove("pack_tmp.inp")
+        os.remove("packmol_tmp.pdb")
+        for i in range(len(pdbfiles)):
+            os.remove(f"atoms_{i}.pdb")
     return bonds_top, atomslist_mols, molecule_list
