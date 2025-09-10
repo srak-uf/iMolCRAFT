@@ -19,6 +19,7 @@ train_state.pkl
 loop*xml
 test_*com
 test_*log
+build/*
 
 ### Antechamber ###
 ANTECHAMBER_*
