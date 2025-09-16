@@ -1,8 +1,28 @@
+# Installation of stable version
+```
+git clone git@github.com:srak-uf/iMolCRAFT.git
+cd iMolCRAFT
+conda env create -f env.yml # this script can be used in linux and mac
+conda activate imc
+git clone https://github.com/srak-uf/DMFF
+cd DMFF
+pip install . 
+cd ..
+
+git clone https://github.com/srak-uf/openff-recharge
+cd openff-recharge
+pip install .
+cd ..
+
+# Installation of iMolCryFF
+pip install .
+```
+
 # Installation of developer version
 ```
 git clone git@github.com:srak-uf/iMolCRAFT.git
 cd iMolCRAFT
-conda env create -f env.yml # this script can be used in linux
+conda env create -f env.yml # this script can be used in linux and mac
 conda activate imc
 git clone https://github.com/srak-uf/DMFF
 cd DMFF
