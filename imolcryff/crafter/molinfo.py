@@ -346,7 +346,7 @@ class Crafter:
             self.mol_info[key]["networkX"] = networkX
         os.makedirs(key, exist_ok=True)
         self.mol_info[key]["directory"] = key
-        write(f"{key}/{key}.xyz", atomslist[0], format="xyz")
+        write(os.path.join(key, f"{key}.xyz"), atomslist[0], format="xyz")
 
     def get_rdkitmol(self, keys=None, il_assign=True):
         """
@@ -479,9 +479,11 @@ class Crafter:
 
                 if g16_flag is True:
                     calc_geoopt = Gaussian(
-                        label=f"{key}_{i}", charge=nc, **geoopt_params_g16
+                        label=f"{self.mol_info[key]['directory']}/{key}_{i}",
+                        charge=nc,
+                        **geoopt_params_g16
                     )
-                    calc_geoopt.directory = self.mol_info[key]["directory"]
+                    # calc_geoopt.directory = self.mol_info[key]["directory"]
                     atoms_tmp.calc = calc_geoopt
                     trajectory.append(atoms_tmp.calc.label + ".log")
                 elif psi4_flag is True:
@@ -491,10 +493,11 @@ class Crafter:
                         basis_set=geoopt_params_psi4["basis"],
                         charge=nc,
                         multiplicity=1,
-                        label=f"{key}_{i}_psi4",
+                        label=f"{self.mol_info[key]['directory']}/{key}_{i}_psi4",
                     )
-                    calc_geoopt.directory = self.mol_info[key]["directory"]
+                    # calc_geoopt.directory = self.mol_info[key]["directory"]
                     atoms_tmp.calc = calc_geoopt
+                    print(calc_geoopt.label, calc_geoopt.directory, "label and directory")
                     trajectory.append(calc_geoopt.label + ".xyz")
 
                 if do_calc:
@@ -596,6 +599,7 @@ class Crafter:
 
         charge_type = kwargs.get("type", "resp")
         software = kwargs.get("software", False)
+        params = kwargs.get("params", None)
         if software == "psi4":
             psi4_flag = True
         else:
@@ -605,6 +609,10 @@ class Crafter:
 
         if charge_type not in ["resp", "am1bcc"]:
             assert False, "charge_type should be resp or am1bcc"
+        
+        # assign total charge if not assigned
+        if any(self.mol_info[key]["netcharge"] is None for key in keys):
+            self._assign_totalcharge()
 
         for key in keys:
             if self.mol_info[key]["aseatoms_stable"] is not None:
@@ -622,7 +630,7 @@ class Crafter:
                     netcharge,
                     label,
                     directory=self.mol_info[key]["directory"],
-                    params=kwargs,
+                    params=params,
                 )
             elif psi4_flag is True:
                 if self.mol_info[key]["molecule_OFF"] is None:
@@ -635,7 +643,7 @@ class Crafter:
                     netcharge,
                     label,
                     directory=self.mol_info[key]["directory"],
-                    params=kwargs,
+                    params=params,
                 )
 
             self.mol_info[key]["ChargeCalc"].get_partialcharges()

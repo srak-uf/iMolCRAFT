@@ -18,7 +18,6 @@ class Psi4GeoOptimizer(Calculator):
         charge=0,
         multiplicity=1,
         label="psi4_geoopt",
-        directory=None,
     ):
         Calculator.__init__(self, atoms=atoms)
         self.results = {}
@@ -32,13 +31,12 @@ class Psi4GeoOptimizer(Calculator):
             self.memory -= 1
         self.threads = 2 ** (multiprocessing.cpu_count().bit_length() - 1)  # 2^n
         self.label = label
-        self.directory = directory
-        if self.directory is not None:
-            os.makedirs(self.directory, exist_ok=True)
+        # if self.directory is not None:
+        #     os.makedirs(self.directory, exist_ok=True)
 
     def calculate(self, atoms=None, properties=["energy"], system_changes=all_changes):
-        inputfile = os.path.join(self.directory, f"{self.label}.psi4in")
-        outputfile = os.path.join(self.directory, f"{self.label}.psi4out")
+        inputfile = os.path.join(f"{self.label}.psi4in")
+        outputfile = os.path.join(f"{self.label}.psi4out")
         self.generate_input(inputfile)
         print(f"psi4 {inputfile}  {outputfile}")
         os_value = os.system(f"psi4 {inputfile}  {outputfile}")

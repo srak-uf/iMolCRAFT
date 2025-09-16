@@ -24,7 +24,7 @@ class TestPsi4GeoOptimizer:
                                                method="hf",
                                                basis_set="6-31g",
                                                charge=0,
-                                               directory=tmpdir)
+                                               label=tmpdir)
             yield
 
         if os.path.exists("fort.7"):

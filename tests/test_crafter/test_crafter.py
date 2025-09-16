@@ -128,7 +128,7 @@ class TestCrafter_function():
 
     def test_get_partial_charges(self, init_crafter):
         self.crafter.append_fromAtomsList([self.atoms], "ethane")
-        self.crafter.get_partial_charges()
+        self.crafter.get_partial_charges(software="psi4")
         assert len(self.crafter.mol_info["ethane"]["partial_charges"]) == 8
         assert np.isclose(
             np.sum(self.crafter.mol_info["ethane"]["partial_charges"]), 0.0, atol=1e-4)
@@ -138,5 +138,5 @@ class TestCrafter_function():
         self.crafter.params_ff = {
             "fftype": "gaff-2.11"
         }
-        self.crafter.get_partial_charges()
+        self.crafter.get_partial_charges(software="psi4")
         self.crafter.get_ffxml()

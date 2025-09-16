@@ -23,6 +23,8 @@ def atoms2rdkit(atoms: Atoms, nc: int = 0, il_assign: bool = True):
     element_symbols = atoms.get_chemical_symbols()
     positions = atoms.positions
 
+    assert isinstance(nc, int), f"nc must be an integer, but got {nc}"
+
     # Create a conformer first
     conf = Chem.Conformer(len(atoms))
     for i, atom in enumerate(atoms):
