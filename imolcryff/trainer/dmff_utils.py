@@ -57,7 +57,7 @@ def parser_dmffyaml(yaml_file):
 
     # Check for required keys and set defaults if not present
     if "sampling" not in data:
-        data["sampling"] = default_params["opt_sample"]
+        data["sampling"] = default_params["sampling"]
     for key in default_params["sampling"]:
         if key not in data["sampling"]:
             data["sampling"][key] = default_params["sampling"][key]
