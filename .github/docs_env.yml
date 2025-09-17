@@ -1,0 +1,21 @@
+name: docs
+channels:
+  - conda-forge
+  - conda-forge/label/libint_dev 
+dependencies:
+  - mdanalysis 
+  - mdtraj=1.9.7
+  - openbabel=3.1.1
+  - openff-forcefields=2024.09.0
+  - openmm=8.1.2
+  - openmmforcefields=0.14.1
+  - packmol>=20.15
+  - psi4=1.8.2 
+  - pip=24.2
+  - pip:
+    - rdkit==2024.3.2
+    - jax==0.4.38
+    - https://github.com/jax-md/jax-md/archive/main.zip
+    - jaxopt==0.8.1
+    - optax==0.2.3
+    - pymbar==4.0.1
