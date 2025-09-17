@@ -1,20 +1,35 @@
 from rdkit import Chem
 from openmm import PeriodicTorsionForce, LangevinMiddleIntegrator
-from openmm.unit import kelvin, picosecond, picoseconds, degree, kilojoules_per_mole, angstrom
-from openmm.app import NoCutoff, Simulation, PDBFile, ForceField
+from openmm.unit import (
+    kelvin,
+    picosecond,
+    picoseconds,
+    degree,
+    kilojoules_per_mole,
+    angstrom,
+)
+from imolcryff.io.rdkit import atoms2rdkit
+from openmm.app import NoCutoff, Simulation, PDBFile, ForceField, Modeller
 from openmm.openmm import XmlSerializer
 import numpy as np
 from ase.io import read, write
 from ase.calculators.gaussian import Gaussian
-import copy, os, tempfile, subprocess
+from ase import units
+import copy
+import os
+import tempfile
+import subprocess
 import cclib
 import networkx as nx
 
-class DihedCalculator:
+
+class DihedralCalculator:
     """
-    Class for dihedral angle calculations using quantum mechanical methods and force fields.
-    This class allows for the calculation of dihedral angles and their corresponding energies
-    using both quantum mechanical methods by Gaussian and force fields.
+    Class for dihedral angle calculations using quantum mechanical methods and
+    force fields.
+    This class allows for the calculation of dihedral angles and their
+    corresponding energies using both quantum mechanical methods (Gaussian)
+    and force fields.
 
     Parameters
     ----------
@@ -33,8 +48,6 @@ class DihedCalculator:
     ----------
     atoms: ase.Atoms
         ASE Atoms object of the molecule.
-    rdmol: rdkit.Chem.rdchem.Mol
-        RDKit molecule object.
     nc: int
         Net charge of the molecule.
     label: str
@@ -52,18 +65,24 @@ class DihedCalculator:
     ff_calculators: list
         List of force field calculators for each dihedral angle.
     qm_dihedscan: list
-        List of dictionaries containing the results of the quantum mechanical dihedral scans.
+        List of dictionaries containing the results of the quantum mechanical
+        dihedral scans.
     ff_dihedscan: list
         List of dictionaries containing the results of the force field dihedral scans.
     """
-    def __init__(self, atoms, rdkitmol, label, directory=None, qmparams=None):
+
+    def __init__(
+            self,
+            atoms,
+            label,
+            directory=None,
+            qmparams=None
+        ):
         """
         Parameters
         ----------
         atoms: ase.Atoms
             ASE Atoms object of the molecule.
-        rdkitmol: rdkit.Chem.rdchem.Mol
-            RDKit molecule object.
         label: str
             Label for the calculation.
         directory: str
@@ -74,17 +93,15 @@ class DihedCalculator:
         self.atoms = atoms.copy()
         self.atoms.pbc = False
         self.atoms.cell = None
-        self.rdmol = rdkitmol
+        self.rdmol, _, _ = atoms2rdkit(atoms)
         self.nc = sum([atom.GetFormalCharge() for atom in self.rdmol.GetAtoms()])
         self.label = label
         if qmparams is None:
             self.qmparams = {
-                            "method": "wb97xd",
-                            "basis": "6-311++g(d,p)",
-                            "opt": "modredundant",
-                            # "mem": "92GB",
-                            # "nprocshared": 40,
-                            }
+                "method": "wb97xd",
+                "basis": "6-311+g(2d,p)",
+                "opt": "modredundant",
+            }
         else:
             self.qmparams = qmparams
 
@@ -92,50 +109,56 @@ class DihedCalculator:
             self.directory = os.getcwd()
         else:
             self.directory = directory
-        
-        # dihedral_list: [[d1_1, d1_2, d1_3, d1_4], [d2_1, d2_2, d2_3, d2_4],...]
-        # dihedral_elem_list: [[H, C, C, H], [C, C, C, C],...]
-        self.dihedral_list, self.dihedral_elem_list = get_rotatable_dihedral(self.rdmol)
-        self.qm_calculators = [None for _ in range(len(self.dihedral_list))]
-        self.ff_calculators = [None for _ in range(len(self.dihedral_list))]
-        self.qm_dihedscan = [{"angle": [], "energy": [], "atoms": []} for _ in range(len(self.dihedral_list))]
-        self.ff_dihedscan = [{"angle": [], "energy": [], "atoms": []} for _ in range(len(self.dihedral_list))]
 
-    def get_dihedral_qm(self, dihed_list=None, do_calc=True):
+        # scan_list: [[d1_1, d1_2, d1_3, d1_4], [d2_1, d2_2, d2_3, d2_4],...]
+        # scan_elem_list: [[H, C, C, H], [C, C, C, C],...]
+        self.scan_list, self.scan_elem_list = get_rotatable_dihedral(self.rdmol)
+        self.qm_calculators = [None for _ in range(len(self.scan_list))]
+        self.ff_calculators = [None for _ in range(len(self.scan_list))]
+        self.qm_scan = [
+            {"angle_deg": [], "energy_kjmol": [], "atoms": []}
+            for _ in range(len(self.scan_list))
+        ]
+        self.ff_scan = [
+            {"angle_deg": [], "energy_kjmol": [], "atoms": []}
+            for _ in range(len(self.scan_list))
+        ]
+
+    def do_qmscan(self, dihed_idx=None, do_calc=True):
         """
         Perform dihedral angle calculations using quantum mechanical methods.
 
         Parameters
         ----------
-        dihed_list: list of int
+        dihed_idx: list of int
             List of indices of the dihedral angles to be calculated.
         do_calc: bool
             If True, perform the calculations. If False, only prepare the input files.
         """
-        if dihed_list is None:
-            dihed_list = self.dihedral_list
-        
-        for di in range(len(dihed_list)):
-            label = f"{self.label}_dihed_{di}" # f"{key}_dihed_{di}"
-            d0 = dihed_list[di][0] + 1
-            d1 = dihed_list[di][1] + 1
-            d2 = dihed_list[di][2] + 1
-            d3 = dihed_list[di][3] + 1
+        if dihed_idx is None:
+            dihed_idx = [i for i in range(len(self.scan_list))]
+
+        for di in dihed_idx:
+            label = f"{self.label}_dihed_{di}"  # f"{key}_dihed_{di}"
+            d0 = self.scan_list[di][0] + 1
+            d1 = self.scan_list[di][1] + 1
+            d2 = self.scan_list[di][2] + 1
+            d3 = self.scan_list[di][3] + 1
             g16_addsec = f"D {d0} {d1} {d2} {d3} S 35 10.0"
             params = self.qmparams.copy()
             params["addsec"] = g16_addsec
             g16 = Gaussian(
-                    label= label,
-                    charge= int(self.nc),
-                    **params,
-                )
+                label=label,
+                charge=int(self.nc),
+                **params,
+            )
             g16.directory = os.path.abspath(self.directory)
             g16.write_input(self.atoms, system_changes=0)
             comfile = os.path.join(self.directory, f"{label}.com")
             logfile = os.path.join(self.directory, f"{label}.log")
             with open(comfile) as f:
                 lines = f.readlines()
-            del lines[-3]     # to cope with bug of ase
+            del lines[-3]  # to cope with bug of ase
             with open(comfile, mode="w") as f:
                 f.writelines(lines)
 
@@ -148,11 +171,13 @@ class DihedCalculator:
                 print(cmd)
                 print(output)
 
-                self.qm_dihedscan[di]["angle"],  \
-                self.qm_dihedscan[di]["energy"], \
-                self.qm_dihedscan[di]["atoms"] = load_g16scan(logfile)
-    
-    def get_dihedral_ff(self, ffxml, dihed_list=None, angles=None, ini_geom="QM"):
+                (
+                    self.qm_scan[di]["angle_deg"],
+                    self.qm_scan[di]["energy_kjmol"],
+                    self.qm_scan[di]["atoms"],
+                ) = load_g16scan(logfile)
+
+    def do_ffscan(self, ffxml, dihed_idx=None, angles=None, ini_geom="QM"):
         """
         Perform dihedral angle calculations using force fields.
 
@@ -160,52 +185,100 @@ class DihedCalculator:
         ----------
         ffxml: str
             Path to the force field XML file.
-        dihed_list: list of int
+        dihed_idx: list of int
             List of indices of the dihedral angles to be calculated.
-        angles: list of float
+        angles: QM or list of float
+            If QM, use the angles from the quantum mechanical calculation.
             List of dihedral angles (in degrees) to scan.
         ini_geom: str
             Initial geometry for the dihedral scan. Can be "QM" or "FF".
             QM: Use the relaxed scan geometry from the quantum mechanical calculation.
             FF: Use the initial geometry from the force field calculation.
         """
-        if dihed_list is None:
-            dihed_list = self.dihedral_list
-        
-        for di in range(len(dihed_list)):
+        if dihed_idx is None:
+            dihed_idx = [int(i) for i in range(len(self.scan_list))]
+
+        if isinstance(dihed_idx, int or str):
+            dihed_idx = [int(dihed_idx)]
+
+        for di in dihed_idx:
             label = f"{self.label}_dihed_{di}"
-            d0 = dihed_list[di][0]
-            d1 = dihed_list[di][1]
-            d2 = dihed_list[di][2]
-            d3 = dihed_list[di][3]
+            d0 = self.scan_list[di][0]
+            d1 = self.scan_list[di][1]
+            d2 = self.scan_list[di][2]
+            d3 = self.scan_list[di][3]
             if ini_geom == "QM":
-                self.qm_dihedscan[di]["angle"] ,\
-                self.ff_dihedscan[di]["energy"],\
-                self.ff_dihedscan[di]["atoms"] = \
-                            scan_ff_dihedral(ffxml,
-                                             self.qm_dihedscan[di]["angle"],
-                                             self.dihedral_list[di],
-                                             atoms_list=self.qm_dihedscan[di]["atoms"],
-                                             )
-            else:                
+                (
+                    self.ff_scan[di]["angle_deg"],
+                    self.ff_scan[di]["energy_kjmol"],
+                    self.ff_scan[di]["atoms"],
+                ) = scan_ff_dihedral(
+                    ffxml,
+                    self.qm_scan[di]["angle_deg"],
+                    self.scan_list[di],
+                    atoms_list=self.qm_scan[di]["atoms"],
+                )
+            else:
                 if angles is None:
-                    if len(self.qm_dihedscan[di]["angle"]) == 0:
+                    if len(self.qm_scan[di]["angle_deg"]) == 0:
                         angles = np.arange(-180, 181, 10)
                     else:
-                        angles = self.qm_dihedscan[di]["angle"]
+                        angles = self.qm_scan[di]["angle_deg"]
+                elif not isinstance(angles, str):
+                    angles = np.array(angles)
+                elif angles == "QM":
+                    angles = self.qm_scan[di]["angle_deg"]
 
-                self.qm_dihedscan[di]["angle"]  ,\
-                self.ff_dihedscan[di]["energy"] ,\
-                self.ff_dihedscan[di]["atoms"] = \
-                            scan_ff_dihedral(ffxml,
-                                             angles,
-                                             self.dihedral_list[di],
-                                             geoopt_atoms=self.atoms,
-                                             )
-            self.ff_dihedscan[di]["angle"] = self.qm_dihedscan[di]["angle"]
+                (
+                    self.ff_scan[di]["angle_deg"],
+                    self.ff_scan[di]["energy_kjmol"],
+                    self.ff_scan[di]["atoms"],
+                ) = scan_ff_dihedral(
+                    ffxml,
+                    angles,
+                    self.scan_list[di],
+                    geoopt_atoms=self.atoms,
+                )
+
 
 def load_g16scan(g16logfile):
+    """
+    Load the results of a Gaussian 16 scan log file.
+
+    Parameters
+    ----------
+    g16logfile: str
+        Path to the Gaussian 16 log file.
+
+    Returns
+    -------
+    angle: numpy.ndarray
+        Array of dihedral angles (in degrees).
+    energy: numpy.ndarray
+        Array of energies (in kJ/mol) for each dihedral angle.
+    aseatoms: list of ase.Atoms
+        List of ASE Atoms objects for each dihedral angle.
+    """
     try:
+        # "Gaussian 16: Apple_M1-G16RevC.02 7-Dec-2021 "
+        # -> "Gaussian 16: Apple_M1-G16RevC.02 7-Dec-2021" for cclib
+        with open(g16logfile) as f:
+            lines = f.readlines()
+            for i, line in enumerate(lines):
+                if (
+                    line.replace('\n', '') == " *********************************************"
+                    and len(lines[i+1].split()) == 5
+                ):
+                    s = lines[i+1]
+                    parts = s.split()
+                    parts[2] = parts[2] + '_' + parts[3]
+                    del parts[3]
+                    lines[i+1] = ' '.join(parts)+"\n"
+                    break
+
+        with open(g16logfile, mode="w") as f:
+            f.writelines(lines)
+
         dihed_cclib = cclib.io.ccread(g16logfile)
         energy = dihed_cclib.scanenergies
         angle = dihed_cclib.scanparm[0]
@@ -216,7 +289,7 @@ def load_g16scan(g16logfile):
             for j, atom in enumerate(sc):
                 sc_tmp[j].position = sc[j]
             aseatoms.append(sc_tmp)
-        
+
         zip_lists = zip(angle, energy, aseatoms)
         # 昇順でソート
         zip_sort = sorted(zip_lists)
@@ -224,15 +297,18 @@ def load_g16scan(g16logfile):
         angle, energy, aseatoms = zip(*zip_sort)
         angle = np.array(angle)
         energy = np.array(energy)
-    except:
+        energy = (energy - energy.min()) / (units.kJ * units.mol**-1)
+    except Exception:
         import traceback
+
         traceback.print_exc()
         energy = None
         angle = None
         aseatoms = None
         print(f"Warning: Failed reading results: {g16logfile}")
-    
+
     return angle, energy, aseatoms
+
 
 def get_rotatable_dihedral(rdmol):
     """
@@ -248,11 +324,12 @@ def get_rotatable_dihedral(rdmol):
     dihedral_list: list of list of int
         List of dihedral angles, each defined by a list of four atom indices.
     dihedral_elem_list: list of list of str
-        List of elements involved in the dihedral angles, each defined by a list of four element symbols.
+        List of elements involved in the dihedral angles, each defined by a list of
+        four element symbols.
     """
     id_mol = copy.deepcopy(rdmol)
     # https://sourceforge.net/p/rdkit/mailman/message/34360982/
-    RotatableBond = Chem.MolFromSmarts('[!$(*#*)&!D1]-&!@[!$(*#*)&!D1]')
+    RotatableBond = Chem.MolFromSmarts("[!$(*#*)&!D1]-&!@[!$(*#*)&!D1]")
     rotatable_list = id_mol.GetSubstructMatches(RotatableBond)
     dihedral_list = []
     dihedral_elem_list = []
@@ -294,10 +371,13 @@ def get_rotatable_dihedral(rdmol):
 
         dihedral_list.append(dihedral)
         dihedral_elem_list.append(dihedral_elem)
-        
+
     return dihedral_list, dihedral_elem_list
 
-def scan_ff_dihedral(ffxml, angles, dihed_atidx, atoms_list=None, geoopt_atoms=None, bonds=None):
+
+def scan_ff_dihedral(
+    ffxml, angles, dihed_atidx, atoms_list=None, geoopt_atoms=None, bonds=None
+):
     """
     Relaxed dihedral scan using OpenMM
 
@@ -324,6 +404,7 @@ def scan_ff_dihedral(ffxml, angles, dihed_atidx, atoms_list=None, geoopt_atoms=N
         List of ASE Atoms objects after energy minimization for each angle.
     """
     from ..crafter.asemol import aseatoms2pdb, asemol_wrapper
+    from ..crafter.ffxml import check_vsite, delvsite_pdb
 
     dihedral_ffenergy = []
     ff_dihedatoms = []
@@ -333,9 +414,13 @@ def scan_ff_dihedral(ffxml, angles, dihed_atidx, atoms_list=None, geoopt_atoms=N
     d4 = dihed_atidx[3]
 
     if atoms_list is None and geoopt_atoms is None:
-        AssertionError("Both atoms_list and geoopt_atoms are None. Please provide one of them.")
+        assert (
+            False
+        ), "Both atoms_list and geoopt_atoms are None. Please provide one of them."
     elif geoopt_atoms is not None:
-        angle_geoopt = geoopt_atoms.get_dihedral(d1,d2,d3,d4)
+        # Set dihedral angle
+        # # change the dihedral angle from -180 to 180
+        angle_geoopt = geoopt_atoms.get_dihedral(d1, d2, d3, d4)
         angle_geoopt = ((angle_geoopt + 180) % 360) - 180
         min_idx = np.argmin(np.abs(angle_geoopt - angles))
         angles = np.concatenate((angles[min_idx:], angles[:min_idx]))
@@ -346,7 +431,7 @@ def scan_ff_dihedral(ffxml, angles, dihed_atidx, atoms_list=None, geoopt_atoms=N
         pos_prev = geoopt_atoms.get_positions()
     elif atoms_list is not None:
         if len(angles) != len(atoms_list):
-            AssertionError("The length of angles and atoms_list must be the same.")
+            assert False, "The length of angles and atoms_list must be the same."
         aw = asemol_wrapper(atoms_list[0])
         [atoms], _, [G] = aw.get_ase_molecules(out_nX=True)
         if bonds is None:
@@ -365,8 +450,10 @@ def scan_ff_dihedral(ffxml, angles, dihed_atidx, atoms_list=None, geoopt_atoms=N
                     a1 = atomlist_openmm[b[0]]
                     a2 = atomlist_openmm[b[1]]
                     pdb_omm.topology.addBond(a1, a2)
-                PDBFile.writeFile(pdb_omm.topology, pdb_omm.positions, open(temppdb, 'w'))
-            
+                PDBFile.writeFile(
+                    pdb_omm.topology, pdb_omm.positions, open(temppdb, "w")
+                )
+
             elif geoopt_atoms is not None:
                 # Set dihedral angle
                 temppdb = os.path.join(td, f"temp_dihed_{i}.pdb")
@@ -381,26 +468,55 @@ def scan_ff_dihedral(ffxml, angles, dihed_atidx, atoms_list=None, geoopt_atoms=N
                     a1 = atomlist_openmm[b[0]]
                     a2 = atomlist_openmm[b[1]]
                     pdb_omm.topology.addBond(a1, a2)
-                PDBFile.writeFile(pdb_omm.topology, pdb_omm.positions, open(temppdb, 'w'))
-                
+                PDBFile.writeFile(
+                    pdb_omm.topology, pdb_omm.positions, open(temppdb, "w")
+                )
+
             # relaxed scan
             forcefield = ForceField(ffxml)
-            system = forcefield.createSystem(pdb_omm.topology, nonbondedMethod=NoCutoff)
+
+            num_vsites = check_vsite(ffxml)
+            if num_vsites > 0:
+                modeller = Modeller(pdb_omm.topology, pdb_omm.positions)
+                modeller.addExtraParticles(ForceField(ffxml))
+                # pos = modeller.getPositions()
+                topology = modeller.topology
+            else:
+                topology = pdb_omm.topology
+
+            system = forcefield.createSystem(topology, nonbondedMethod=NoCutoff)
             tempsysxml = os.path.join(td, "system.xml")
-            with open(tempsysxml, 'w') as output:
+            with open(tempsysxml, "w") as output:
                 output.write(XmlSerializer.serialize(system))
 
             restraint = PeriodicTorsionForce()
-            restraint.addTorsion(d1,d2,d3,d4, 1, (angles[i]+180)*degree, 10000*kilojoules_per_mole)
+            map_idx_wovsite2vsite = [
+                i for i, atom in enumerate(topology.atoms()) if atom.element is not None
+            ]
+            d1_wv = map_idx_wovsite2vsite[d1]
+            d2_wv = map_idx_wovsite2vsite[d2]
+            d3_wv = map_idx_wovsite2vsite[d3]
+            d4_wv = map_idx_wovsite2vsite[d4]
+            restraint.addTorsion(
+                d1_wv,
+                d2_wv,
+                d3_wv,
+                d4_wv,
+                1,
+                (angles[i] + 180) * degree,
+                10000 * kilojoules_per_mole,
+            )
             system.addForce(restraint)
-            integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, 0.004*picoseconds)
-            simulation = Simulation(pdb_omm.topology, system,integrator)
+            integrator = LangevinMiddleIntegrator(
+                300 * kelvin, 1 / picosecond, 0.004 * picoseconds
+            )
+            simulation = Simulation(pdb_omm.topology, system, integrator)
             simulation.context.setPositions(pdb_omm.positions)
             simulation.minimizeEnergy()
             state = simulation.context.getState(getPositions=True, getEnergy=True)
             crd = simulation.context.getState(getPositions=True).getPositions()
-            PDBFile.writeFile(pdb_omm.topology, crd, open(temppdb, 'w'))
-            
+            PDBFile.writeFile(pdb_omm.topology, crd, open(temppdb, "w"))
+
             pos_prev = []
             for p in state.getPositions():
                 p = np.array(p)
@@ -410,27 +526,41 @@ def scan_ff_dihedral(ffxml, angles, dihed_atidx, atoms_list=None, geoopt_atoms=N
                 pos_prev.append([xx, yy, zz])
 
             pdb_omm = PDBFile(temppdb)
-            system = forcefield.createSystem(pdb_omm.topology,nonbondedMethod=NoCutoff)
+            system = forcefield.createSystem(pdb_omm.topology, nonbondedMethod=NoCutoff)
             for j, f in enumerate(system.getForces()):
                 f.setForceGroup(j)
-                integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, 0.004*picoseconds)
+                integrator = LangevinMiddleIntegrator(
+                    300 * kelvin, 1 / picosecond, 0.004 * picoseconds
+                )
                 simulation = Simulation(pdb_omm.topology, system, integrator)
                 simulation.context.setPositions(pdb_omm.positions)
-            
+
             potential_energies = []
             for gi, f in enumerate(system.getForces()):
                 state = simulation.context.getState(getEnergy=True, groups={gi})
                 potential_energies.append(state.getPotentialEnergy().real)
-            
+
             dihedral_ffenergy.append(sum(potential_energies))
+            if num_vsites > 0:
+                # Remove virtual sites from the PDB file
+                delvsite_pdb(temppdb)
+
             atoms = read(temppdb)
             atoms.cell = None
             atoms.pbc = False
             ff_dihedatoms.append(atoms)
 
     ff_pot = np.array(dihedral_ffenergy)
-    ff_pot_kjmol = (ff_pot - ff_pot.min())
+    ff_pot_kjmol = ff_pot - ff_pot.min()
+    # anglesを小さい順にソート
+    zip_lists = zip(angles, ff_pot_kjmol, ff_dihedatoms)
+    # 昇順でソート
+    zip_sort = sorted(zip_lists)
+    # zipを解除
+    angles, ff_pot_kjmol, ff_dihedatoms = zip(*zip_sort)
+
     return angles, ff_pot_kjmol, ff_dihedatoms
+
 
 def rotate_dihedral(atoms, dihed_list, desired_angle, chemical_bonds=None):
     """
@@ -446,13 +576,13 @@ def rotate_dihedral(atoms, dihed_list, desired_angle, chemical_bonds=None):
         The desired dihedral angle in degrees.
     chemical_bonds: pandas.DataFrame
         The definition of chemical bonds: element1, element2, cutoff.
-    
+
     Returns
     -------
     atoms_rotated: ase.Atoms
         The rotated molecule.
     """
-    from ..crafter.asemol import aseatoms2pdb, asemol_wrapper
+    from ..crafter.asemol import asemol_wrapper
 
     d1 = dihed_list[0]
     d2 = dihed_list[1]
@@ -465,18 +595,27 @@ def rotate_dihedral(atoms, dihed_list, desired_angle, chemical_bonds=None):
     dangle_in = atoms.get_dihedral(d1, d2, d3, d4)
 
     aw = asemol_wrapper(atoms, chemical_bonds=chemical_bonds)
-    [atoms], _, [G] = aw.get_ase_molecules(out_nX=True)
+    try:
+        [atoms], _, [G] = aw.get_ase_molecules(out_nX=True)
+    except Exception:
+        print(atoms)
+        write("error.pdb", atoms)
+        assert False, "Failed to get ASE molecules. Please check the input."
 
     rot_axis = r3 - r2
     rot_axis /= np.linalg.norm(rot_axis)
 
     desired_angle = ((desired_angle + 180) % 360) - 180
     dangle_in = ((dangle_in + 180) % 360) - 180
-    theta = np.radians(desired_angle-dangle_in)
-    K = np.array([[0, -rot_axis[2], rot_axis[1]],
-              [rot_axis[2], 0, -rot_axis[0]],
-              [-rot_axis[1], rot_axis[0], 0]])
-    R= np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * np.dot(K, K)
+    theta = np.radians(desired_angle - dangle_in)
+    K = np.array(
+        [
+            [0, -rot_axis[2], rot_axis[1]],
+            [rot_axis[2], 0, -rot_axis[0]],
+            [-rot_axis[1], rot_axis[0], 0],
+        ]
+    )
+    R = np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * np.dot(K, K)
 
     for e in G.edges():
         if (e[0] == d2 and e[1] == d3) or (e[0] == d3 and e[1] == d2):
@@ -530,6 +669,7 @@ def parse_g16scan(file):
                 parserd_lines.append(float(line.split()[4]))
     return scanned_energy
 
+
 # def draw_dihedral_plots(mol_info, molkey):
 #     import matplotlib.pyplot as plt
 #     plt.figure(figsize=(4, 3))
@@ -550,7 +690,7 @@ def parse_g16scan(file):
 #         else:
 #             dihedral_pots_gt.append(None)
 #             dihedral_pots_ff.append(None)
-            
+
 #     plt.legend(loc='lower center', bbox_to_anchor=(0.5, 1), ncol=2)
 #     plt.xlabel("Dihedral angle (deg)")
 #     plt.ylabel("Potential energy (kJ/mol)")

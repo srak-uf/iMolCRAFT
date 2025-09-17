@@ -1,4 +1,6 @@
 from openff.toolkit.topology import Molecule
+from ase import Atoms
+
 
 def read_mol2(filename):
     """
@@ -14,22 +16,23 @@ def read_mol2(filename):
     ----------
     filename : str
         The name of the mol2 file to read.
-        
+
     Returns
     -------
     dict
         A dictionary containing the contents of the mol2 file.
     """
     with open(filename) as f:
-        l = f.readlines()
+        lines = f.readlines()
         mol2_dict = {}
-        for i in range(len(l)):
-            if l[i].startswith("@<TRIPOS>"):
-                key_name = l[i].strip()
+        for i in range(len(lines)):
+            if lines[i].startswith("@<TRIPOS>"):
+                key_name = lines[i].strip()
                 mol2_dict[key_name] = []
-            elif l[i].strip() != "":
-                mol2_dict[key_name].append(l[i].strip().split())
+            elif lines[i].strip() != "":
+                mol2_dict[key_name].append(lines[i].strip().split())
     return mol2_dict
+
 
 def write_mol2(filename, input):
     """
@@ -41,7 +44,8 @@ def write_mol2(filename, input):
         The name of the file to write to.
     input : dict or openff.toolkit.topology.Molecule
         The input data to write. If a dictionary, it should contain the keys
-        "@<TRIPOS>MOLECULE", "@<TRIPOS>ATOM", "@<TRIPOS>BOND", and "@<TRIPOS>SUBSTRUCTURE".
+        "@<TRIPOS>MOLECULE", "@<TRIPOS>ATOM", "@<TRIPOS>BOND", and
+        "@<TRIPOS>SUBSTRUCTURE".
         If a molecule object, it will be written in the mol2 format.
     """
     if isinstance(input, dict):
@@ -52,7 +56,7 @@ def write_mol2(filename, input):
         dict_flag = False
     else:
         raise ValueError("Input must be a dictionary or a molecule object.")
-    
+
     with open(filename, mode="w") as f:
         if dict_flag:
             # Handle mol2_dict writing
@@ -64,7 +68,7 @@ def write_mol2(filename, input):
         elif offmol_flag:
             # Handle molecule writing
             f.write("@<TRIPOS>MOLECULE\n")
-            f.write(f"{input.name}\n")
+            f.write("MOL\n")
             f.write(f"{len(input.atoms)} {len(input.bonds)} 0 0 0\n")
             f.write("SMALL\n")
             f.write("CHARGES\n")
@@ -76,11 +80,25 @@ def write_mol2(filename, input):
                 yy = input.conformers[0].magnitude[i, 1]
                 zz = input.conformers[0].magnitude[i, 2]
                 charge = input.partial_charges[i].magnitude
-                f.write(f"{i+1} {atom.symbol} {xx} {yy} {zz} {atom.symbol}  1  {input.name} {charge}\n")
+                f.write(
+                    f"{i+1} {atom.symbol} {xx} {yy} {zz} {atom.symbol}  1  "
+                    f"MOL {charge}\n"
+                )
             f.write("@<TRIPOS>BOND\n")
             for i, bond in enumerate(input.bonds):
-                f.write(f"{i+1} {bond.atom1_index+1} {bond.atom2_index+1} {bond.bond_order}\n")
+                f.write(
+                    f"{i+1} {bond.atom1_index+1} "
+                    f"{bond.atom2_index+1} {bond.bond_order}\n"
+                )
             f.write("@<TRIPOS>SUBSTRUCTURE\n")
-            f.write(f"1 {input.name} 1 TEMP              0 ****  ****    0 ROOT\n")
+            f.write("1 MOL 1 TEMP              0 ****  ****    0 ROOT\n")
         else:
             raise ValueError("Either mol2_dict or molecule must be provided.")
+
+
+def mol2_to_aseatoms(mol2file):
+    mol2_dict = read_mol2(mol2file)
+    symbols = [atom[1] for atom in mol2_dict["@<TRIPOS>ATOM"]]
+    positions = [list(map(float, atom[2:5])) for atom in mol2_dict["@<TRIPOS>ATOM"]]
+    atoms = Atoms(symbols=symbols, positions=positions)
+    return atoms

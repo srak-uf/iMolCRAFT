@@ -1,0 +1,67 @@
+<ForceField>
+  <Info>
+    <DateGenerated>2025-03-18</DateGenerated>
+    <ffsource>https://github.com/MaginnGroup/Polarizable-GAFF-input-files/blob/main/%5BC4C1im%5D%5BPF6%5D/pair-sc.lmp</ffsource>
+  </Info>
+  <AtomTypes>
+    <Type element="P" name="p_pf6" class="p_pf6" mass="30.97"/>
+    <Type element="F" name="f1_pf6" class="f1_pf6" mass="19.0"/>
+    <Type element="F" name="f2_pf6" class="f2_pf6" mass="19.0"/>
+    <Type element="F" name="f3_pf6" class="f3_pf6" mass="19.0"/>
+    <Type element="F" name="f4_pf6" class="f4_pf6" mass="19.0"/>
+    <Type element="F" name="f5_pf6" class="f5_pf6" mass="19.0"/>
+    <Type element="F" name="f6_pf6" class="f6_pf6" mass="19.0"/>
+  </AtomTypes>
+  <HarmonicBondForce>
+    <Bond class1="p_pf6" class2="f1_pf6" length="0.1606" k="217819.04"/>
+    <Bond class1="p_pf6" class2="f2_pf6" length="0.1606" k="217819.04"/>
+    <Bond class1="p_pf6" class2="f3_pf6" length="0.1606" k="217819.04"/>
+    <Bond class1="p_pf6" class2="f4_pf6" length="0.1606" k="217819.04"/>
+    <Bond class1="p_pf6" class2="f5_pf6" length="0.1606" k="217819.04"/>
+    <Bond class1="p_pf6" class2="f6_pf6" length="0.1606" k="217819.04"/>
+  </HarmonicBondForce>
+  <HarmonicAngleForce>
+    <Angle class1="f1_pf6" class2="p_pf6" class3="f6_pf6" angle="3.14159" k="1624.2288"/>
+    <Angle class1="f2_pf6" class2="p_pf6" class3="f5_pf6" angle="3.14159" k="1624.2288"/>
+    <Angle class1="f3_pf6" class2="p_pf6" class3="f4_pf6" angle="3.14159" k="1624.2288"/>
+    <Angle class1="f1_pf6" class2="p_pf6" class3="f2_pf6" angle="1.5708" k="1624.2288"/>
+    <Angle class1="f1_pf6" class2="p_pf6" class3="f3_pf6" angle="1.5708" k="1624.2288"/>
+    <Angle class1="f1_pf6" class2="p_pf6" class3="f4_pf6" angle="1.5708" k="1624.2288"/>
+    <Angle class1="f1_pf6" class2="p_pf6" class3="f5_pf6" angle="1.5708" k="1624.2288"/>
+    <Angle class1="f2_pf6" class2="p_pf6" class3="f3_pf6" angle="1.5708" k="1624.2288"/>
+    <Angle class1="f2_pf6" class2="p_pf6" class3="f4_pf6" angle="1.5708" k="1624.2288"/>
+    <Angle class1="f2_pf6" class2="p_pf6" class3="f6_pf6" angle="1.5708" k="1624.2288"/>
+    <Angle class1="f3_pf6" class2="p_pf6" class3="f5_pf6" angle="1.5708" k="1624.2288"/>
+    <Angle class1="f3_pf6" class2="p_pf6" class3="f6_pf6" angle="1.5708" k="1624.2288"/>
+    <Angle class1="f4_pf6" class2="p_pf6" class3="f5_pf6" angle="1.5708" k="1624.2288"/>
+    <Angle class1="f4_pf6" class2="p_pf6" class3="f6_pf6" angle="1.5708" k="1624.2288"/>
+    <Angle class1="f5_pf6" class2="p_pf6" class3="f6_pf6" angle="1.5708" k="1624.2288"/>
+  </HarmonicAngleForce>
+  <NonbondedForce coulomb14scale="0.8333333333333334" lj14scale="0.5">
+    <UseAttributeFromResidue name="charge"/>
+    <Atom class="p_pf6" sigma="0.3742000" epsilon="0.8368"/>
+    <Atom class="f1_pf6" sigma="0.3118000" epsilon="0.255224"/>
+    <Atom class="f2_pf6" sigma="0.3118000" epsilon="0.255224"/>
+    <Atom class="f3_pf6" sigma="0.3118000" epsilon="0.255224"/>
+    <Atom class="f4_pf6" sigma="0.3118000" epsilon="0.255224"/>
+    <Atom class="f5_pf6" sigma="0.3118000" epsilon="0.255224"/>
+    <Atom class="f6_pf6" sigma="0.3118000" epsilon="0.255224"/>
+  </NonbondedForce>
+  <Residues>
+    <Residue name="F[P-](F)(F)(F)(F)F">
+    <Atom name="P1" type="p_pf6" charge="0.385778"/>
+    <Atom name="F1" type="f1_pf6" charge="-0.230963"/>
+    <Atom name="F2" type="f2_pf6" charge="-0.230963"/>
+    <Atom name="F3" type="f3_pf6" charge="-0.230963"/>
+    <Atom name="F4" type="f4_pf6" charge="-0.230963"/>
+    <Atom name="F5" type="f5_pf6" charge="-0.230963"/>
+    <Atom name="F6" type="f6_pf6" charge="-0.230963"/>
+    <Bond atomName1="P1" atomName2="F1"/>
+    <Bond atomName1="P1" atomName2="F2"/>
+    <Bond atomName1="P1" atomName2="F3"/>
+    <Bond atomName1="P1" atomName2="F4"/>
+    <Bond atomName1="P1" atomName2="F5"/>
+    <Bond atomName1="P1" atomName2="F6"/>
+    </Residue>
+  </Residues>
+</ForceField>
