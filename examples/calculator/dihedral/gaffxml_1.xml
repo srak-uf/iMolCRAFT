@@ -1,0 +1,38 @@
+<ForceField>
+  <Info>
+    <DateGenerated>2025-06-02</DateGenerated>
+  </Info>
+  <AtomTypes>
+    <Type element="N" name="n1" class="n1" mass="14.01"/>
+    <Type element="C" name="c1" class="c1" mass="12.01"/>
+    <Type element="C" name="c3" class="c3" mass="12.01"/>
+    <Type element="H" name="hc" class="hc" mass="1.008"/>
+  </AtomTypes>
+  <HarmonicBondForce>
+    <Bond class1="c1" class2="n1" length="0.11530000000000001" k="746007.1999999998"/>
+    <Bond class1="c1" class2="c3" length="0.14670000000000002" k="247609.11999999994"/>
+    <Bond class1="c3" class2="c3" length="0.15380000000000002" k="194555.99999999997"/>
+    <Bond class1="c3" class2="hc" length="0.1097" k="314553.11999999994"/>
+  </HarmonicBondForce>
+  <HarmonicAngleForce>
+    <Angle class1="c3" class2="c1" class3="n1" angle="3.116808978211474" k="612.5376"/>
+    <Angle class1="c1" class2="c3" class3="c3" angle="1.9497073074028655" k="554.7984"/>
+    <Angle class1="c1" class2="c3" class3="hc" angle="1.909564734606996" k="409.1952"/>
+    <Angle class1="c3" class2="c3" class3="hc" angle="1.9163715186897738" k="391.62239999999997"/>
+    <Angle class1="hc" class2="c3" class3="hc" angle="1.8776252092954997" k="326.35200000000003"/>
+  </HarmonicAngleForce>
+  <PeriodicTorsionForce>
+    <Proper class1="n1" class2="c1" class3="c3" class4="c3" periodicity1="2" phase1="3.141592653589793" k1="0.0"/>
+    <Proper class1="n1" class2="c1" class3="c3" class4="hc" periodicity1="2" phase1="3.141592653589793" k1="0.0"/>
+    <Proper class1="c1" class2="c3" class3="c3" class4="c1" periodicity1="3" phase1="0.0" k1="0.6508444444444444"/>
+    <Proper class1="c1" class2="c3" class3="c3" class4="hc" periodicity1="3" phase1="0.0" k1="0.6508444444444444"/>
+    <Proper class1="hc" class2="c3" class3="c3" class4="hc" periodicity1="3" phase1="0.0" k1="0.50208"/>
+  </PeriodicTorsionForce>
+  <NonbondedForce coulomb14scale="0.8333333333333334" lj14scale="0.5">
+    <UseAttributeFromResidue name="charge"/>
+    <Atom class="n1" sigma="0.3273518249934863" epsilon="0.4594032"/>
+    <Atom class="c1" sigma="0.34789594943380253" epsilon="0.6677664"/>
+    <Atom class="c3" sigma="0.3397709531243626" epsilon="0.4510352"/>
+    <Atom class="hc" sigma="0.2600176998764394" epsilon="0.0870272"/>
+  </NonbondedForce>
+<Residues><Residue name="[H][C]([H])([C]#[N])[C]([H])([H])[C]#[N]"><Atom name="N1" type="n1" charge="-0.4453693630892197"/><Atom name="N2" type="n1" charge="-0.4453693630892197"/><Atom name="C1" type="c1" charge="0.29580977848800727"/><Atom name="C2" type="c1" charge="0.29580977848800727"/><Atom name="C3" type="c3" charge="-0.04537888950201698"/><Atom name="C4" type="c3" charge="-0.04537888950201698"/><Atom name="H1" type="hc" charge="0.09746923705161463"/><Atom name="H2" type="hc" charge="0.09746923705161463"/><Atom name="H3" type="hc" charge="0.09746923705161463"/><Atom name="H4" type="hc" charge="0.09746923705161463"/><Bond atomName1="C1" atomName2="N1"/><Bond atomName1="C2" atomName2="N2"/><Bond atomName1="C3" atomName2="C1"/><Bond atomName1="C4" atomName2="C3"/><Bond atomName1="C4" atomName2="C2"/><Bond atomName1="H1" atomName2="C3"/><Bond atomName1="H2" atomName2="C4"/><Bond atomName1="H3" atomName2="C3"/><Bond atomName1="H4" atomName2="C4"/></Residue></Residues></ForceField>
