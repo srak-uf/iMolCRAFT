@@ -23,7 +23,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e .
+          pip install .
           pip install sphinx myst-parser sphinx_rtd_theme
 
       - name: Generate Sphinx documentation
