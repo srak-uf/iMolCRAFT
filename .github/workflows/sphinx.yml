@@ -20,7 +20,7 @@ jobs:
         uses: conda-incubator/setup-miniconda@v3
         with:
           activate-environment: imc
-          environment-file: ./.github/docs_env.yml
+          environment-file: env.yml
           auto-activate-base: false
 
       - name: Install dependencies
