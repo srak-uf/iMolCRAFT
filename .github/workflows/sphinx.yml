@@ -23,8 +23,10 @@ jobs:
           environment-file: env.yml
           auto-activate-base: false
 
-      - name: Install dependencies
+      - name: Install iMolCRAFT & sphinx
         run: |
+          pip install git+https://github.com/srak-uf/DMFF
+          pip install git+https://github.com/srak-uf/openff-recharge
           pip install .
           pip install sphinx myst-parser sphinx_rtd_theme
 
