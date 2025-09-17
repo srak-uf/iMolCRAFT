@@ -123,8 +123,10 @@ class Crafter:
                 )
                 if os.path.isfile(new_cif):
                     self.structure["cif"] = new_cif
+                else:
+                    raise FileNotFoundError(f"CIF file not found: {self.structure['cif']}")
             else:
-                raise FileNotFoundError(f"CIF file not found: {self.structure['cif']}")
+                self.structure["cif"] = self.structure["cif"]
         elif "molecules" in self.structure.keys():
             for i, molfile in enumerate(self.structure["molecules"]):
                 if not os.path.isfile(molfile):
@@ -133,10 +135,12 @@ class Crafter:
                     )
                     if os.path.isfile(new_molfile):
                         self.structure["molecules"][i] = new_molfile
+                    else:
+                        raise FileNotFoundError(
+                            f"Molecule file not found: {self.structure['molecules'][i]}"
+                        )
                 else:
-                    raise FileNotFoundError(
-                        f"Molecule file not found: {self.structure['molecules'][i]}"
-                    )
+                    self.structure["molecules"][i] = molfile
 
     def prep(self, do_opt=True, do_charge=True):
         """
