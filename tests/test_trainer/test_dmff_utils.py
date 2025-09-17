@@ -6,7 +6,11 @@ import jax.numpy as jnp
 
 
 def test_parser_dmffyaml():
-    d = dmff_utils.parser_dmffyaml(os.path.join("..", "data", "dmff.yml"))
+    d = dmff_utils.parser_dmffyaml(
+                os.path.join(os.path.dirname(__file__),
+                "..",
+                "data",
+                "ethane.xml"))
     assert set(d.keys()) == set(['sampling', 'targets'])
     assert set(d["targets"].keys()) == set([
         'density_gcm3', 'La_A', 'Lc_A', 'rdf', 'adf'
