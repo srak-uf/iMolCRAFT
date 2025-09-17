@@ -1,4 +1,3 @@
-from imolcraft.io.mol2 import read_mol2, write_mol2
 import os
 import subprocess
 from ase.io import write
