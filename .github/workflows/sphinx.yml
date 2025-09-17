@@ -23,6 +23,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          pip install --upgrade MDAnalysis
           pip install MDAnalysis openff rdkit
           pip install .
           pip install sphinx myst-parser sphinx_rtd_theme
