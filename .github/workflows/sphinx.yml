@@ -16,15 +16,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v3
+      - name: Install Python
+        uses: conda-incubator/setup-miniconda@v3
         with:
-          python-version: '3.10.12'
+          activate-environment: imc
+          environment-file: ./.github/docs.yml
+          auto-activate-base: false
 
       - name: Install dependencies
         run: |
-          pip install --upgrade MDAnalysis
-          pip install MDAnalysis openff rdkit
           pip install .
           pip install sphinx myst-parser sphinx_rtd_theme
 
