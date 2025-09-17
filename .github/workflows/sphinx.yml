@@ -23,7 +23,7 @@ jobs:
           environment-file: env.yml
           auto-activate-base: false
 
-      - name: Install iMolCRAFT & sphinx
+      - name: Install iMolCraft & sphinx
         shell: bash -el {0}
         run: |
           pip install git+https://github.com/srak-uf/DMFF
