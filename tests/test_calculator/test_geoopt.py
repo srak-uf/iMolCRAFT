@@ -1,4 +1,4 @@
-from imolcryff.calculator import Psi4GeoOptimizer
+from imolcraft.calculator import Psi4GeoOptimizer
 from ase import Atoms
 import numpy as np
 import os

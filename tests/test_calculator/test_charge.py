@@ -1,4 +1,4 @@
-from imolcryff.calculator import ChargeCalculator, Psi4ChargeCalculator
+from imolcraft.calculator import ChargeCalculator, Psi4ChargeCalculator
 from ase import Atoms
 import tempfile
 import numpy as np

@@ -1,4 +1,4 @@
-from imolcryff.crafter.molinfo import Crafter
+from imolcraft.crafter.molinfo import Crafter
 import os
 import numpy as np
 from ase import Atoms

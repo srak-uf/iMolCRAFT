@@ -1,5 +1,5 @@
-import imolcryff
-from imolcryff.io.mol2 import read_mol2
+import imolcraft
+from imolcraft.io.mol2 import read_mol2
 from dmff import Hamiltonian
 import openmmforcefields
 from openff.toolkit import Molecule, Quantity
@@ -98,7 +98,7 @@ def gafftemplate2xml(
                                 angles_idx.append((i, j, k))
             return np.array(angles), np.array(angles_idx)
 
-        pf6xml = os.path.join(imolcryff.__path__[0], "data", "PF6_gaff.xml")
+        pf6xml = os.path.join(imolcraft.__path__[0], "data", "PF6_gaff.xml")
         ff = Hamiltonian(pf6xml)
         atoms = molecule2aseatoms(molecule_off)
         angles, angles_idx = get_element_angles(atoms, "F", "P", "F")

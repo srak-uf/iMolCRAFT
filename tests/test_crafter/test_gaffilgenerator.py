@@ -1,6 +1,6 @@
-from imolcryff.crafter.gaffil_generators import GAFFilTemplateGenerator
-from imolcryff.crafter.ffxml import gafftemplate2xml
-from imolcryff.io.rdkit import _il_assign
+from imolcraft.crafter.gaffil_generators import GAFFilTemplateGenerator
+from imolcraft.crafter.ffxml import gafftemplate2xml
+from imolcraft.io.rdkit import _il_assign
 from openff.toolkit.topology import Molecule
 from rdkit import Chem
 import os

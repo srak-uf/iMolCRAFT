@@ -3,7 +3,7 @@ import ase
 from ase import units
 from ase.geometry import get_distances
 from ase.data import chemical_symbols
-import imolcryff
+import imolcraft
 import networkx as nx
 import pandas as pd
 import numpy as np
@@ -55,7 +55,7 @@ class asemol_wrapper:
 
         if chemical_bonds is None:
             if bond_def_file is None:
-                path = imolcryff.__path__[0]
+                path = imolcraft.__path__[0]
                 self.bond_def_file = os.path.join(path, "data", "bond_def.ini")
 
             self.chemical_bonds = pd.DataFrame(

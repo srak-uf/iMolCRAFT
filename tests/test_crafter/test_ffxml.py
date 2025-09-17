@@ -1,4 +1,4 @@
-from imolcryff.crafter.ffxml import check_vsite
+from imolcraft.crafter.ffxml import check_vsite
 import os
 import pytest
 

@@ -8,9 +8,9 @@ import os
 import optax
 import time
 from typing import List, Callable, Optional, Any, Union, Tuple
-from ..crafter.ffxml import check_vsite
-from imolcryff.crafter.ffxml import merge_xml
-from ..trainer.dmff_utils import (
+from imolcraft.crafter.ffxml import check_vsite
+from imolcraft.crafter.ffxml import merge_xml
+from imolcraft.trainer.dmff_utils import (
     get_chgparams_from_rescharges,
     get_rescharges_from_residues,
     vsiteinfo_to_params,
