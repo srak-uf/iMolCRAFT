@@ -32,6 +32,7 @@ jobs:
           pip install sphinx myst-parser sphinx_rtd_theme
 
       - name: Generate Sphinx documentation
+        shell: bash -el {0}
         run: |
           cd docs
           make html
