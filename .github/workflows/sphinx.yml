@@ -24,6 +24,7 @@ jobs:
           auto-activate-base: false
 
       - name: Install iMolCRAFT & sphinx
+        shell: bash -el {0}
         run: |
           pip install git+https://github.com/srak-uf/DMFF
           pip install git+https://github.com/srak-uf/openff-recharge
