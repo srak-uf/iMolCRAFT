@@ -1,4 +1,4 @@
-from imolcryff.calculator import DistanceCalculator
+from imolcraft.calculator import DistanceCalculator
 from ase import Atoms
 import numpy as np
 import os

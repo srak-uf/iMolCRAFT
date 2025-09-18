@@ -8,7 +8,7 @@ from openmm.unit import (
     kilojoules_per_mole,
     angstrom,
 )
-from imolcryff.io.rdkit import atoms2rdkit
+from imolcraft.io.rdkit import atoms2rdkit
 from openmm.app import NoCutoff, Simulation, PDBFile, ForceField, Modeller
 from openmm.openmm import XmlSerializer
 import numpy as np

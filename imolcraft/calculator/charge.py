@@ -1,9 +1,9 @@
-from ..io.mol2 import read_mol2, write_mol2
 import os
 import subprocess
 from ase.io import write
 from ase.calculators.gaussian import Gaussian
-from imolcryff.io.rdkit import atoms2rdkit
+from imolcraft.io.rdkit import atoms2rdkit
+from imolcraft.io.mol2 import read_mol2, write_mol2
 from rdkit import Chem
 import tempfile
 from openff import toolkit

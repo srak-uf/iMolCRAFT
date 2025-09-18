@@ -14,7 +14,7 @@ cd openff-recharge
 pip install .
 cd ..
 
-# Installation of iMolCryFF
+# Installation of iMolCRAFT
 pip install .
 ```
 
@@ -34,13 +34,16 @@ cd openff-recharge
 pip install -e .
 cd ..
 
-# Installation of iMolCryFF
+# Installation of iMolCRAFT
 pip install -e .
 
 # make document (Optional)
-# conda install -c conda-forge sphinx myst-parser sphinx_rtd_theme
-# cd docs
-# make html
+conda install -c conda-forge sphinx myst-parser sphinx_rtd_theme
+cd docs
+make html
+
+# test
+conda install -c conda-forge pytest
 ```
 Additionally, you can optimize force field parameters by using [DMFF](https://github.com/srak-uf/DMFF). This DMFF repository is the modified version.    
 The sample codes for the optimization are located in [the example/opt](https://github.com/srak-uf/imolcryff/tree/main/examples/opt) directory.

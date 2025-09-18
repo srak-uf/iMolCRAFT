@@ -1,5 +1,5 @@
-from imolcryff.calculator import DihedralCalculator
-from imolcryff.io.rdkit import atoms2rdkit
+from imolcraft.calculator import DihedralCalculator
+from imolcraft.io.rdkit import atoms2rdkit
 from ase import Atoms
 import tempfile
 import numpy as np

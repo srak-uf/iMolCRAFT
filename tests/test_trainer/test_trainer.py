@@ -1,8 +1,8 @@
-from imolcryff.trainer import DistanceTrainer, DihedralTrainer, ThermodynamicTrainer
-from imolcryff.calculator import DistanceCalculator, DihedralCalculator
-from imolcryff.trainer.loss import loss_energy, loss_thermodynamicperturbation
-from imolcryff.crafter.asemol import aseatoms2pdb, asemol_wrapper, merge_asemols
-from imolcryff.crafter import Crafter
+from imolcraft.trainer import DistanceTrainer, DihedralTrainer, ThermodynamicTrainer
+from imolcraft.calculator import DistanceCalculator, DihedralCalculator
+from imolcraft.trainer.loss import loss_energy, loss_thermodynamicperturbation
+from imolcraft.crafter.asemol import aseatoms2pdb, asemol_wrapper, merge_asemols
+from imolcraft.crafter import Crafter
 from functools import partial
 from ase import Atoms
 from ase.io import write

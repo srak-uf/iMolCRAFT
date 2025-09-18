@@ -20,6 +20,7 @@ loop*xml
 test_*com
 test_*log
 build/*
+timer.dat
 
 ### Antechamber ###
 ANTECHAMBER_*
@@ -35,7 +36,6 @@ qout
 
 ### psi4 ###
 MOL_*psi4.*
-MOL*.*
 timer.dat
 psi4_*
 psi*.*.clean

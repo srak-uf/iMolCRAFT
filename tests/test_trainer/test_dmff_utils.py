@@ -1,4 +1,4 @@
-from imolcryff.trainer import dmff_utils
+from imolcraft.trainer import dmff_utils
 import os
 import pytest
 import numpy as np

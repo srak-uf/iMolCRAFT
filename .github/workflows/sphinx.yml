@@ -1,0 +1,70 @@
+name: Deploy Sphinx Docs to GitHub Pages.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: imc
+          environment-file: env.yml
+          auto-activate-base: false
+
+      - name: Install iMolCraft & sphinx
+        shell: bash -el {0}
+        run: |
+          pip install git+https://github.com/srak-uf/DMFF
+          pip install git+https://github.com/srak-uf/openff-recharge
+          pip install .
+          pip install sphinx myst-parser sphinx_rtd_theme
+
+      - name: Generate Sphinx documentation
+        shell: bash -el {0}
+        run: |
+          cd docs
+          make html
+
+      # - name: List uploaded artifacts  # アーティファクトの内容をリスト表示
+      #   run: ls -al ./doc
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation
+          path: docs/build/html
+
+  deploy:
+    environment:
+        name: github-pages
+        url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: documentation
+          path: ./documentation
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Upload pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./documentation
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4 

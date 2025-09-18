@@ -15,7 +15,7 @@ def read_mol2(filename):
     Parameters
     ----------
     filename : str
-        The name of the mol2 file to read.
+        The name of the mol2 file.
 
     Returns
     -------
