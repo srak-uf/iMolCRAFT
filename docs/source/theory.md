@@ -1,6 +1,8 @@
 # Theory
 ## Force field
-gaff
+$$
+\mathbf{x}
+$$  
 
 ## Automatic differentiation
 hoge
