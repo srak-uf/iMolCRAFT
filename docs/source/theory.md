@@ -1,6 +1,8 @@
 # Theory
 ## Force field
-gaff
+$$
+U(\mathbf{r})
+$$
 
 ## Automatic differentiation
 hoge
