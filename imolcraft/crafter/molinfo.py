@@ -215,14 +215,24 @@ class Crafter:
         # create structure
         # # crystal structure
         if self.structure["type"] == "crystal":
-            system_atoms = merge_asemols(self.molatoms)
-            system_atoms = system_atoms.repeat(self.structure.get("repeat", [1, 1, 1]))
+            unit_cell_atoms = merge_asemols(self.molatoms)
+            repeat_factors = self.structure.get("repeat", [1, 1, 1])
+            system_atoms = unit_cell_atoms.repeat(repeat_factors)
             with tempfile.NamedTemporaryFile() as temp_pdb:
                 temp_pdb_name = temp_pdb.name
                 aseatoms2pdb(temp_pdb_name, system_atoms)
                 pdb = PDBFile(temp_pdb_name)
-                pdb_b = asemol_wrapper(system_atoms)
-                _ = pdb_b.get_bonds()
+                
+                # Use optimized bond calculation for supercells
+                if repeat_factors != [1, 1, 1]:
+                    # Supercell case - use optimized calculation
+                    pdb_b = asemol_wrapper(system_atoms)
+                    _ = pdb_b.get_bonds(unit_cell_atoms=unit_cell_atoms, repeat_factors=repeat_factors)
+                else:
+                    # Unit cell case - use standard calculation
+                    pdb_b = asemol_wrapper(system_atoms)
+                    _ = pdb_b.get_bonds()
+                    
                 bonds_list = [[bond[0], bond[1]] for bond in pdb_b.bonds]
                 atomlist_openmm = [a for a in pdb.topology.atoms()]
                 for bond in bonds_list:
