@@ -16,6 +16,8 @@ trainer = ThermodynamicTrainer(
     nums_ffxml=nums_ffxml,
     pdbfile=pdbfile,
     loss_fn=lossfn,
+    sampling_params=sampling_params,
+    target_params=target_params,
     opt_fftypes=opt_fftypes,
 )
 
@@ -33,6 +35,8 @@ trainer = ThermodynamicTrainer(
     nums_ffxml=nums_ffxml,
     pdbfile=pdbfile,
     loss_fn=lossfn,
+    sampling_params=sampling_params,
+    target_params=target_params,
     opt_fftypes=opt_fftypes,
     # New early stopping parameters:
     early_stopping=True,       # Enable early stopping
@@ -49,6 +53,34 @@ if trainer.converged:
     print(f"Training converged at epoch {trainer._epoch}")
 else:
     print("Training completed all epochs without convergence")
+"""
+
+# Similarly for other trainer types:
+"""
+# Distance trainer with early stopping
+distance_trainer = DistanceTrainer(
+    ffxml_list=ffxml_list,
+    nums_ffxml=nums_ffxml,
+    pdbfile=pdbfile,
+    calculator=calculator,
+    loss_fn=loss_fn,
+    early_stopping=True,
+    patience=15,
+    min_delta=1e-5,
+    convergence_window=8,
+)
+
+# Dihedral trainer with early stopping
+dihedral_trainer = DihedralTrainer(
+    ffxml=ffxml,
+    pdbfile=pdbfile,
+    calculator=calculator,
+    loss_fn=loss_fn,
+    early_stopping=True,
+    patience=20,
+    min_delta=1e-4,
+    convergence_window=10,
+)
 """
 
 # The early stopping algorithm works by:
@@ -72,3 +104,8 @@ print("- Prevents overfitting")
 print("- Saves computational time")
 print()
 print("Usage: Add early stopping parameters to any trainer constructor.")
+print()
+print("Supported trainers:")
+print("- ThermodynamicTrainer")
+print("- DistanceTrainer")
+print("- DihedralTrainer")

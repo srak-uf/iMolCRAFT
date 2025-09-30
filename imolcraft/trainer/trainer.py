@@ -50,6 +50,10 @@ class DistanceTrainer(BaseTrainer):
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.01,
         clip: Union[float, List[float]] = 0.1,
+        early_stopping: bool = False,
+        patience: int = 10,
+        min_delta: float = 1e-6,
+        convergence_window: int = 5,
     ) -> None:
 
         super().__init__(
@@ -63,6 +67,10 @@ class DistanceTrainer(BaseTrainer):
             label=label,
             lr=lr,
             clip=clip,
+            early_stopping=early_stopping,
+            patience=patience,
+            min_delta=min_delta,
+            convergence_window=convergence_window,
         )
         self.relax_steps = relax_steps
         self.inputs = {"positions": [], "pairs": [], "dihed_index": []}
@@ -277,6 +285,10 @@ class DihedralTrainer(BaseTrainer):
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.01,
         clip: Union[float, List[float]] = 0.1,
+        early_stopping: bool = False,
+        patience: int = 10,
+        min_delta: float = 1e-6,
+        convergence_window: int = 5,
     ) -> None:
         """
         Initialize the DihedralTrainer.
@@ -303,6 +315,14 @@ class DihedralTrainer(BaseTrainer):
             Learning rate(s) for optimizer (default: 0.0001).
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
+        early_stopping : bool, optional
+            Enable early stopping based on loss convergence (default: False).
+        patience : int, optional
+            Number of epochs to wait before stopping after convergence criteria is met (default: 10).
+        min_delta : float, optional
+            Minimum change in loss to qualify as improvement (default: 1e-6).
+        convergence_window : int, optional
+            Number of recent epochs to use for convergence analysis (default: 5).
         """
         super().__init__(
             ffxml_list=[ffxml],
@@ -315,6 +335,10 @@ class DihedralTrainer(BaseTrainer):
             label=label,
             lr=lr,
             clip=clip,
+            early_stopping=early_stopping,
+            patience=patience,
+            min_delta=min_delta,
+            convergence_window=convergence_window,
         )
 
         self.relax_steps = relax_steps
@@ -440,6 +464,10 @@ class ThermodynamicTrainer(BaseTrainer):
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
+        early_stopping: bool = False,
+        patience: int = 10,
+        min_delta: float = 1e-6,
+        convergence_window: int = 5,
     ) -> None:
         """
         Initialize the ThermodynamicTrainer.
@@ -468,6 +496,14 @@ class ThermodynamicTrainer(BaseTrainer):
             Learning rate(s) for optimizer (default: 0.0001).
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
+        early_stopping : bool, optional
+            Enable early stopping based on loss convergence (default: False).
+        patience : int, optional
+            Number of epochs to wait before stopping after convergence criteria is met (default: 10).
+        min_delta : float, optional
+            Minimum change in loss to qualify as improvement (default: 1e-6).
+        convergence_window : int, optional
+            Number of recent epochs to use for convergence analysis (default: 5).
         """
         # params
         self.sampling_params = sampling_params
@@ -483,6 +519,10 @@ class ThermodynamicTrainer(BaseTrainer):
             label=label,
             lr=lr,
             clip=clip,
+            early_stopping=early_stopping,
+            patience=patience,
+            min_delta=min_delta,
+            convergence_window=convergence_window,
         )
 
         # MD + Energy function setup
