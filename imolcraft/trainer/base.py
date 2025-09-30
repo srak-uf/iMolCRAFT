@@ -36,6 +36,10 @@ class BaseTrainer:
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
+        early_stopping: bool = False,
+        patience: int = 10,
+        min_delta: float = 1e-6,
+        convergence_window: int = 5,
     ) -> None:
 
         """
@@ -63,6 +67,14 @@ class BaseTrainer:
             Learning rate(s) for optimizer (default: 0.0001).
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
+        early_stopping : bool, optional
+            Enable early stopping based on loss convergence (default: False).
+        patience : int, optional
+            Number of epochs to wait before stopping after convergence criteria is met (default: 10).
+        min_delta : float, optional
+            Minimum change in loss to qualify as improvement (default: 1e-6).
+        convergence_window : int, optional
+            Number of recent epochs to use for convergence analysis (default: 5).
         """
         if isinstance(ffxml_list, str):
             ffxml_list = [ffxml_list]
@@ -160,6 +172,15 @@ class BaseTrainer:
         self._modifyfns["after_grad"] = lambda grads: grads
         self._modifyfns["after_update"] = lambda ffparams: ffparams
 
+        # Early stopping parameters
+        self.early_stopping = early_stopping
+        self.patience = patience
+        self.min_delta = min_delta
+        self.convergence_window = convergence_window
+        self.best_loss_early_stopping = float('inf')  # Separate variable for early stopping
+        self.patience_counter = 0
+        self.converged = False
+
     def add_modifyfn(self, type_fn: str, fn: Callable[[Any], Any]) -> None:
         """
         Register a hook function to modify gradients or parameters.
@@ -199,6 +220,71 @@ class BaseTrainer:
             return self._modifyfns[type_fn](*args, **kwargs)
         else:
             return
+
+    def _check_convergence(self) -> bool:
+        """
+        Check if training has converged based on loss gradient and patience.
+        
+        Returns
+        -------
+        bool
+            True if convergence criteria are met, False otherwise.
+        """
+        if not self.early_stopping or len(self.losses) < self.convergence_window:
+            return False
+            
+        # Get recent losses for gradient calculation
+        recent_losses = self.losses[-self.convergence_window:]
+        
+        # Calculate the slope (derivative) of loss over recent epochs
+        # Using linear regression slope: (n*Σxy - ΣxΣy) / (n*Σx² - (Σx)²)
+        n = len(recent_losses)
+        x = list(range(n))  # epoch indices
+        y = recent_losses   # loss values
+        
+        sum_x = sum(x)
+        sum_y = sum(y)
+        sum_xy = sum(xi * yi for xi, yi in zip(x, y))
+        sum_x2 = sum(xi * xi for xi in x)
+        
+        # Calculate slope (derivative)
+        denominator = n * sum_x2 - sum_x * sum_x
+        if abs(denominator) < 1e-12:  # Avoid division by zero
+            slope = 0.0
+        else:
+            slope = (n * sum_xy - sum_x * sum_y) / denominator
+        
+        # Check if current loss is better than best loss
+        current_loss = self.losses[-1]
+        
+        # Initialize best_loss_early_stopping if it's still infinity
+        if self.best_loss_early_stopping == float('inf'):
+            self.best_loss_early_stopping = current_loss
+            self.patience_counter = 0
+            return False
+        
+        if current_loss < self.best_loss_early_stopping - self.min_delta:
+            self.best_loss_early_stopping = current_loss
+            self.patience_counter = 0
+            return False
+        else:
+            self.patience_counter += 1
+        
+        # Check convergence criteria:
+        # 1. Loss gradient (slope) magnitude is very small
+        # 2. Patience counter has reached the limit
+        slope_magnitude = abs(slope)
+        gradient_converged = slope_magnitude < self.min_delta
+        patience_exceeded = self.patience_counter >= self.patience
+        
+        if gradient_converged and patience_exceeded:
+            print(f"Training converged: Loss gradient magnitude ({slope_magnitude:.2e}) < {self.min_delta} for {self.patience} epochs")
+            return True
+        elif patience_exceeded:
+            print(f"Early stopping: No improvement for {self.patience} epochs")
+            return True
+            
+        return False
 
     def get_loss_gradients(self) -> Tuple[Any, Any]:
         """
@@ -267,22 +353,28 @@ class BaseTrainer:
         self.checkpoint_frequency = checkpoint_frequency
         start_epoch = self._epoch
         end_epoch = start_epoch + steps + 1
+        
         for i_epoch in range(start_epoch, end_epoch):
             start_time = time.time()
             self.before_step()
             self.training_step()
             self.after_step()
+            
             if len(self.losses) == 0 or self.loss < min(self.losses):
                 self.best_params = self.ffparams
                 self.best_epoch = self._epoch
                 self.best_loss = self.loss
                 self.ff.renderXML(f"{self.label}_best.xml")
+                
             self.epochs.append(self._epoch)
             self.losses.append(self.loss)
+            
             if i_epoch % checkpoint_frequency == 0:
                 self.write_checkpoint(checkpoint_frequency)
+                
             self._epoch += 1
             end_time = time.time()
+            
             print(f"Epoch {i_epoch} completed in {end_time - start_time:.2f} seconds.")
             print("Loss: ", self.loss)
             print(
@@ -291,3 +383,9 @@ class BaseTrainer:
                 "at epoch ",
                 self.epochs[self.losses.index(min(self.losses))],
             )
+            
+            # Check for convergence if early stopping is enabled
+            if self._check_convergence():
+                self.converged = True
+                print(f"Training stopped early at epoch {i_epoch} due to convergence.")
+                break
