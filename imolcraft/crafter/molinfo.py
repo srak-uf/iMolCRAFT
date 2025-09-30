@@ -232,7 +232,7 @@ class Crafter:
                     # Unit cell case - use standard calculation
                     pdb_b = asemol_wrapper(system_atoms)
                     _ = pdb_b.get_bonds()
-                    
+
                 bonds_list = [[bond[0], bond[1]] for bond in pdb_b.bonds]
                 atomlist_openmm = [a for a in pdb.topology.atoms()]
                 for bond in bonds_list:
@@ -737,7 +737,7 @@ class Crafter:
 
             charge_deficit = total_charge - net_charge
 
-            if not np.isclose(charge_deficit, 0.0):
+            if not np.isclose(charge_deficit, 0.0, atol=1e-8):
                 print(
                     (
                         f"Net charge of {key} is {net_charge} and "
