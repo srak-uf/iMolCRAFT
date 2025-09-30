@@ -37,9 +37,13 @@ class BaseTrainer:
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
         early_stopping: bool = False,
-        patience: int = 10,
-        min_delta: float = 1e-6,
-        convergence_window: int = 5,
+        patience: int = 7,
+        min_delta: float = 0.0,
+        mode: str = "min",
+        check_finite: bool = True,
+        stopping_threshold: Optional[float] = None,
+        divergence_threshold: Optional[float] = None,
+        verbose: bool = False,
     ) -> None:
 
         """
@@ -68,13 +72,21 @@ class BaseTrainer:
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
         early_stopping : bool, optional
-            Enable early stopping based on loss convergence (default: False).
+            Enable early stopping based on loss monitoring (default: False).
         patience : int, optional
-            Number of epochs to wait before stopping after convergence criteria is met (default: 10).
+            Number of epochs with no improvement after which training will be stopped (default: 7).
         min_delta : float, optional
-            Minimum change in loss to qualify as improvement (default: 1e-6).
-        convergence_window : int, optional
-            Number of recent epochs to use for convergence analysis (default: 5).
+            Minimum change in the monitored quantity to qualify as an improvement (default: 0.0).
+        mode : str, optional
+            One of 'min', 'max'. In 'min' mode, training stops when monitored quantity stops decreasing (default: 'min').
+        check_finite : bool, optional
+            When set True, stops training when the monitored metric becomes NaN or infinite (default: True).
+        stopping_threshold : float, optional
+            Stop training immediately once the monitored quantity reaches this threshold (default: None).
+        divergence_threshold : float, optional
+            Stop training as soon as the monitored quantity becomes worse than this threshold (default: None).
+        verbose : bool, optional
+            If True, prints early stopping messages (default: False).
         """
         if isinstance(ffxml_list, str):
             ffxml_list = [ffxml_list]
@@ -172,14 +184,25 @@ class BaseTrainer:
         self._modifyfns["after_grad"] = lambda grads: grads
         self._modifyfns["after_update"] = lambda ffparams: ffparams
 
-        # Early stopping parameters
+        # Early stopping parameters (following PyTorch Lightning pattern)
         self.early_stopping = early_stopping
         self.patience = patience
-        self.min_delta = min_delta
-        self.convergence_window = convergence_window
-        self.best_loss_early_stopping = float('inf')  # Separate variable for early stopping
-        self.patience_counter = 0
-        self.converged = False
+        self.min_delta = abs(min_delta)
+        self.mode = mode.lower()
+        self.check_finite = check_finite
+        self.stopping_threshold = stopping_threshold
+        self.divergence_threshold = divergence_threshold
+        self.verbose = verbose
+        
+        # Validation
+        if self.mode not in ["min", "max"]:
+            raise ValueError(f"Mode must be 'min' or 'max', got {mode}")
+        
+        # Early stopping state
+        self.best_score = float('inf') if self.mode == 'min' else float('-inf')
+        self.wait_count = 0
+        self.stopped_epoch = 0
+        self.should_stop = False
 
     def add_modifyfn(self, type_fn: str, fn: Callable[[Any], Any]) -> None:
         """
@@ -221,69 +244,71 @@ class BaseTrainer:
         else:
             return
 
-    def _check_convergence(self) -> bool:
+    def _is_improvement(self, current: float) -> bool:
+        """Check if current metric is an improvement over best score."""
+        if self.mode == 'min':
+            return current < self.best_score - self.min_delta
+        else:  # mode == 'max'
+            return current > self.best_score + self.min_delta
+    
+    def _check_early_stopping(self, current_loss: float) -> bool:
         """
-        Check if training has converged based on loss gradient and patience.
+        Check early stopping criteria following PyTorch Lightning pattern.
         
+        Parameters
+        ----------
+        current_loss : float
+            Current epoch's loss value.
+            
         Returns
         -------
         bool
-            True if convergence criteria are met, False otherwise.
+            True if training should stop, False otherwise.
         """
-        if not self.early_stopping or len(self.losses) < self.convergence_window:
+        if not self.early_stopping:
             return False
             
-        # Get recent losses for gradient calculation
-        recent_losses = self.losses[-self.convergence_window:]
-        
-        # Calculate the slope (derivative) of loss over recent epochs
-        # Using linear regression slope: (n*Σxy - ΣxΣy) / (n*Σx² - (Σx)²)
-        n = len(recent_losses)
-        x = list(range(n))  # epoch indices
-        y = recent_losses   # loss values
-        
-        sum_x = sum(x)
-        sum_y = sum(y)
-        sum_xy = sum(xi * yi for xi, yi in zip(x, y))
-        sum_x2 = sum(xi * xi for xi in x)
-        
-        # Calculate slope (derivative)
-        denominator = n * sum_x2 - sum_x * sum_x
-        if abs(denominator) < 1e-12:  # Avoid division by zero
-            slope = 0.0
-        else:
-            slope = (n * sum_xy - sum_x * sum_y) / denominator
-        
-        # Check if current loss is better than best loss
-        current_loss = self.losses[-1]
-        
-        # Initialize best_loss_early_stopping if it's still infinity
-        if self.best_loss_early_stopping == float('inf'):
-            self.best_loss_early_stopping = current_loss
-            self.patience_counter = 0
-            return False
-        
-        if current_loss < self.best_loss_early_stopping - self.min_delta:
-            self.best_loss_early_stopping = current_loss
-            self.patience_counter = 0
-            return False
-        else:
-            self.patience_counter += 1
-        
-        # Check convergence criteria:
-        # 1. Loss gradient (slope) magnitude is very small
-        # 2. Patience counter has reached the limit
-        slope_magnitude = abs(slope)
-        gradient_converged = slope_magnitude < self.min_delta
-        patience_exceeded = self.patience_counter >= self.patience
-        
-        if gradient_converged and patience_exceeded:
-            print(f"Training converged: Loss gradient magnitude ({slope_magnitude:.2e}) < {self.min_delta} for {self.patience} epochs")
+        # Check for non-finite values
+        if self.check_finite and (not isinstance(current_loss, (int, float)) or 
+                                  current_loss != current_loss or  # NaN check
+                                  abs(current_loss) == float('inf')):
+            if self.verbose:
+                print(f"Early stopping: Loss is not finite (loss={current_loss})")
             return True
-        elif patience_exceeded:
-            print(f"Early stopping: No improvement for {self.patience} epochs")
-            return True
-            
+        
+        # Check stopping threshold
+        if self.stopping_threshold is not None:
+            if (self.mode == 'min' and current_loss <= self.stopping_threshold) or \
+               (self.mode == 'max' and current_loss >= self.stopping_threshold):
+                if self.verbose:
+                    print(f"Early stopping: Stopping threshold reached (loss={current_loss:.6f})")
+                return True
+        
+        # Check divergence threshold  
+        if self.divergence_threshold is not None:
+            if (self.mode == 'min' and current_loss >= self.divergence_threshold) or \
+               (self.mode == 'max' and current_loss <= self.divergence_threshold):
+                if self.verbose:
+                    print(f"Early stopping: Divergence threshold reached (loss={current_loss:.6f})")
+                return True
+        
+        # Check for improvement
+        if self._is_improvement(current_loss):
+            if self.verbose:
+                improvement = abs(self.best_score - current_loss)
+                print(f"Loss improved by {improvement:.6f} >= min_delta={self.min_delta:.6f}. "
+                      f"New best score: {current_loss:.6f}")
+            self.best_score = current_loss
+            self.wait_count = 0
+            return False
+        else:
+            self.wait_count += 1
+            if self.wait_count >= self.patience:
+                if self.verbose:
+                    print(f"Early stopping: Loss did not improve for {self.wait_count} epochs. "
+                          f"Best score: {self.best_score:.6f}")
+                return True
+        
         return False
 
     def get_loss_gradients(self) -> Tuple[Any, Any]:
@@ -384,8 +409,9 @@ class BaseTrainer:
                 self.epochs[self.losses.index(min(self.losses))],
             )
             
-            # Check for convergence if early stopping is enabled
-            if self._check_convergence():
-                self.converged = True
-                print(f"Training stopped early at epoch {i_epoch} due to convergence.")
+            # Check for early stopping
+            if self._check_early_stopping(self.loss):
+                self.should_stop = True
+                self.stopped_epoch = i_epoch
+                print(f"Training stopped early at epoch {i_epoch}.")
                 break

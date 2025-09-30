@@ -51,9 +51,13 @@ class DistanceTrainer(BaseTrainer):
         lr: Union[float, List[float]] = 0.01,
         clip: Union[float, List[float]] = 0.1,
         early_stopping: bool = False,
-        patience: int = 10,
-        min_delta: float = 1e-6,
-        convergence_window: int = 5,
+        patience: int = 7,
+        min_delta: float = 0.0,
+        mode: str = "min",
+        check_finite: bool = True,
+        stopping_threshold: Optional[float] = None,
+        divergence_threshold: Optional[float] = None,
+        verbose: bool = False,
     ) -> None:
 
         super().__init__(
@@ -70,7 +74,11 @@ class DistanceTrainer(BaseTrainer):
             early_stopping=early_stopping,
             patience=patience,
             min_delta=min_delta,
-            convergence_window=convergence_window,
+            mode=mode,
+            check_finite=check_finite,
+            stopping_threshold=stopping_threshold,
+            divergence_threshold=divergence_threshold,
+            verbose=verbose,
         )
         self.relax_steps = relax_steps
         self.inputs = {"positions": [], "pairs": [], "dihed_index": []}
@@ -286,9 +294,13 @@ class DihedralTrainer(BaseTrainer):
         lr: Union[float, List[float]] = 0.01,
         clip: Union[float, List[float]] = 0.1,
         early_stopping: bool = False,
-        patience: int = 10,
-        min_delta: float = 1e-6,
-        convergence_window: int = 5,
+        patience: int = 7,
+        min_delta: float = 0.0,
+        mode: str = "min",
+        check_finite: bool = True,
+        stopping_threshold: Optional[float] = None,
+        divergence_threshold: Optional[float] = None,
+        verbose: bool = False,
     ) -> None:
         """
         Initialize the DihedralTrainer.
@@ -316,13 +328,21 @@ class DihedralTrainer(BaseTrainer):
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
         early_stopping : bool, optional
-            Enable early stopping based on loss convergence (default: False).
+            Enable early stopping based on loss monitoring (default: False).
         patience : int, optional
-            Number of epochs to wait before stopping after convergence criteria is met (default: 10).
+            Number of epochs with no improvement after which training will be stopped (default: 7).
         min_delta : float, optional
-            Minimum change in loss to qualify as improvement (default: 1e-6).
-        convergence_window : int, optional
-            Number of recent epochs to use for convergence analysis (default: 5).
+            Minimum change in the monitored quantity to qualify as an improvement (default: 0.0).
+        mode : str, optional
+            One of 'min', 'max'. In 'min' mode, training stops when monitored quantity stops decreasing (default: 'min').
+        check_finite : bool, optional
+            When set True, stops training when the monitored metric becomes NaN or infinite (default: True).
+        stopping_threshold : float, optional
+            Stop training immediately once the monitored quantity reaches this threshold (default: None).
+        divergence_threshold : float, optional
+            Stop training as soon as the monitored quantity becomes worse than this threshold (default: None).
+        verbose : bool, optional
+            If True, prints early stopping messages (default: False).
         """
         super().__init__(
             ffxml_list=[ffxml],
@@ -338,7 +358,11 @@ class DihedralTrainer(BaseTrainer):
             early_stopping=early_stopping,
             patience=patience,
             min_delta=min_delta,
-            convergence_window=convergence_window,
+            mode=mode,
+            check_finite=check_finite,
+            stopping_threshold=stopping_threshold,
+            divergence_threshold=divergence_threshold,
+            verbose=verbose,
         )
 
         self.relax_steps = relax_steps
@@ -465,9 +489,13 @@ class ThermodynamicTrainer(BaseTrainer):
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
         early_stopping: bool = False,
-        patience: int = 10,
-        min_delta: float = 1e-6,
-        convergence_window: int = 5,
+        patience: int = 7,
+        min_delta: float = 0.0,
+        mode: str = "min",
+        check_finite: bool = True,
+        stopping_threshold: Optional[float] = None,
+        divergence_threshold: Optional[float] = None,
+        verbose: bool = False,
     ) -> None:
         """
         Initialize the ThermodynamicTrainer.
@@ -497,13 +525,21 @@ class ThermodynamicTrainer(BaseTrainer):
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
         early_stopping : bool, optional
-            Enable early stopping based on loss convergence (default: False).
+            Enable early stopping based on loss monitoring (default: False).
         patience : int, optional
-            Number of epochs to wait before stopping after convergence criteria is met (default: 10).
+            Number of epochs with no improvement after which training will be stopped (default: 7).
         min_delta : float, optional
-            Minimum change in loss to qualify as improvement (default: 1e-6).
-        convergence_window : int, optional
-            Number of recent epochs to use for convergence analysis (default: 5).
+            Minimum change in the monitored quantity to qualify as an improvement (default: 0.0).
+        mode : str, optional
+            One of 'min', 'max'. In 'min' mode, training stops when monitored quantity stops decreasing (default: 'min').
+        check_finite : bool, optional
+            When set True, stops training when the monitored metric becomes NaN or infinite (default: True).
+        stopping_threshold : float, optional
+            Stop training immediately once the monitored quantity reaches this threshold (default: None).
+        divergence_threshold : float, optional
+            Stop training as soon as the monitored quantity becomes worse than this threshold (default: None).
+        verbose : bool, optional
+            If True, prints early stopping messages (default: False).
         """
         # params
         self.sampling_params = sampling_params
@@ -522,7 +558,11 @@ class ThermodynamicTrainer(BaseTrainer):
             early_stopping=early_stopping,
             patience=patience,
             min_delta=min_delta,
-            convergence_window=convergence_window,
+            mode=mode,
+            check_finite=check_finite,
+            stopping_threshold=stopping_threshold,
+            divergence_threshold=divergence_threshold,
+            verbose=verbose,
         )
 
         # MD + Energy function setup

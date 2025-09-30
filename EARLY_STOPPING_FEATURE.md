@@ -1,4 +1,4 @@
-# Early Stopping Feature for Loss Function Convergence
+# PyTorch Lightning-Style Early Stopping Feature
 
 ## Problem Statement
 
@@ -9,42 +9,53 @@ Translation: "Currently, loss function convergence is judged by visual inspectio
 
 ## Solution
 
-This implementation provides automatic early stopping based on mathematical analysis of the loss function's derivative, eliminating the need for manual visual inspection.
+This implementation provides automatic early stopping following **PyTorch Lightning's proven approach**, which is the standard in deep learning. The implementation directly monitors the loss metric without complex gradient calculations, making it simpler, more robust, and aligned with deep learning best practices.
 
 ### Key Features
 
-1. **Automatic Convergence Detection**: Uses gradient analysis instead of visual inspection
-2. **Configurable Parameters**: Flexible thresholds and patience settings
-3. **Backward Compatibility**: Disabled by default, existing code unchanged
-4. **Universal Support**: Works with all trainer types
+1. **Direct Metric Monitoring**: Monitors loss values directly (no gradient calculation needed)
+2. **PyTorch Lightning Compatibility**: Follows the same pattern as PyTorch Lightning's EarlyStopping
+3. **Mode Support**: Supports both 'min' (for loss) and 'max' (for accuracy) modes
+4. **Robust Safety Features**: Includes stopping/divergence thresholds and finite value checking
+5. **Backward Compatibility**: Disabled by default, existing code unchanged
 
-### Algorithm
+### Algorithm (PyTorch Lightning Style)
 
-The early stopping mechanism:
+The early stopping mechanism follows the standard deep learning pattern:
 
-1. **Gradient Calculation**: Computes the slope of the loss function over recent epochs using linear regression:
-   ```
-   slope = (n*Σxy - ΣxΣy) / (n*Σx² - (Σx)²)
-   ```
+1. **Direct Monitoring**: Monitors the loss value directly each epoch
+2. **Improvement Check**: Compares current loss with best score: `current < best - min_delta`
+3. **Patience Counter**: Increments when no improvement, resets when improved
+4. **Early Termination**: Stops when patience counter reaches limit
+5. **Safety Checks**: Additional checks for thresholds and finite values
 
-2. **Convergence Check**: Determines if `|slope| < min_delta`
+```python
+# Simplified algorithm
+if current_loss < best_score - min_delta:
+    best_score = current_loss
+    wait_count = 0  # Reset patience
+else:
+    wait_count += 1
+    if wait_count >= patience:
+        stop_training()
+```
 
-3. **Patience Mechanism**: Waits for specified epochs to confirm stable convergence
-
-4. **Early Termination**: Stops training when criteria are met
-
-### Parameters
+### Parameters (PyTorch Lightning Compatible)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `early_stopping` | `False` | Enable/disable the feature |
-| `patience` | `10` | Epochs to wait after convergence detected |
-| `min_delta` | `1e-6` | Minimum improvement threshold |
-| `convergence_window` | `5` | Window size for gradient analysis |
+| `patience` | `7` | Number of epochs with no improvement before stopping |
+| `min_delta` | `0.0` | Minimum change to qualify as improvement |
+| `mode` | `'min'` | 'min' for loss, 'max' for accuracy |
+| `check_finite` | `True` | Stop training on NaN or infinite values |
+| `stopping_threshold` | `None` | Stop immediately when metric reaches this value |
+| `divergence_threshold` | `None` | Stop if metric becomes worse than this threshold |
+| `verbose` | `False` | Print early stopping messages |
 
 ### Usage Examples
 
-#### ThermodynamicTrainer
+#### Basic Usage (Loss Minimization)
 ```python
 trainer = ThermodynamicTrainer(
     ffxml_list=ffxml_list,
@@ -54,60 +65,75 @@ trainer = ThermodynamicTrainer(
     sampling_params=sampling_params,
     target_params=target_params,
     opt_fftypes=opt_fftypes,
-    early_stopping=True,      # Enable early stopping
-    patience=10,              # Wait 10 epochs after convergence
-    min_delta=1e-6,          # Minimum improvement threshold
-    convergence_window=5,    # Look at last 5 epochs
+    # PyTorch Lightning-style early stopping
+    early_stopping=True,         # Enable early stopping
+    patience=7,                  # Standard patience value
+    min_delta=0.0,              # Any improvement counts
+    mode='min',                 # Minimize loss
+    verbose=True,               # Show stopping messages
 )
 
-trainer.fit(1000, 10)  # Will stop early when converged
+trainer.fit(1000, 10)  # Will stop early when appropriate
 
-if trainer.converged:
-    print(f"Training converged at epoch {trainer._epoch}")
+if trainer.should_stop:
+    print(f"Stopped early at epoch {trainer.stopped_epoch}")
+    print(f"Best score: {trainer.best_score}")
 ```
 
-#### DistanceTrainer
+#### Advanced Usage with Thresholds
 ```python
-trainer = DistanceTrainer(
-    ffxml_list=ffxml_list,
-    nums_ffxml=nums_ffxml,
-    pdbfile=pdbfile,
-    calculator=calculator,
-    loss_fn=loss_fn,
+trainer = ThermodynamicTrainer(
+    # ... other parameters ...
     early_stopping=True,
     patience=15,
-    min_delta=1e-5,
-    convergence_window=8,
+    min_delta=0.001,            # Require meaningful improvement
+    mode='min',
+    stopping_threshold=0.01,    # Stop immediately if loss <= 0.01
+    divergence_threshold=100.0, # Stop if loss >= 100.0 (diverged)
+    check_finite=True,          # Stop on NaN/Inf
+    verbose=True,
 )
 ```
 
-#### DihedralTrainer
+#### For Maximizing Metrics (e.g., Accuracy)
 ```python
-trainer = DihedralTrainer(
-    ffxml=ffxml,
-    pdbfile=pdbfile,
-    calculator=calculator,
-    loss_fn=loss_fn,
+trainer = SomeTrainer(
+    # ... other parameters ...
     early_stopping=True,
-    patience=20,
-    min_delta=1e-4,
-    convergence_window=10,
+    mode='max',                 # Maximize the metric
+    patience=10,
+    min_delta=0.01,            # Minimum accuracy improvement
+    stopping_threshold=0.95,    # Stop when accuracy >= 95%
+    verbose=True,
 )
 ```
 
-### Benefits
+### Comparison with Previous Implementation
 
-- **Efficiency**: Automatically stops when converged, saving computational time
-- **Objectivity**: Mathematical criteria replace subjective visual inspection
-- **Consistency**: Reproducible convergence determination
-- **Flexibility**: Configurable parameters for different optimization scenarios
-- **Prevention**: Helps prevent overfitting by stopping at optimal points
+| Aspect | Previous (Gradient-based) | Current (PyTorch Lightning) |
+|--------|--------------------------|----------------------------|
+| **Algorithm** | Linear regression slope calculation | Direct metric comparison |
+| **Complexity** | Complex gradient math | Simple comparison logic |
+| **Pattern** | Custom approach | Standard deep learning pattern |
+| **Robustness** | Sensitive to noise | More robust to fluctuations |
+| **Parameters** | `convergence_window`, gradient thresholds | Standard `patience`, `min_delta` |
+| **Compatibility** | Custom implementation | PyTorch Lightning compatible |
+| **Safety** | Basic NaN checking | Comprehensive threshold checks |
+
+### Benefits Over Previous Implementation
+
+- **Simplicity**: No complex gradient calculations needed
+- **Robustness**: More reliable in noisy loss landscapes
+- **Standards Compliance**: Follows established deep learning practices
+- **Flexibility**: Support for both minimization and maximization
+- **Safety**: Better handling of edge cases (NaN, divergence)
+- **Familiarity**: Uses patterns familiar to deep learning practitioners
 
 ### Implementation Details
 
 - **Location**: `imolcraft/trainer/base.py` (core logic)
-- **Integration**: All trainer classes updated to support parameters
-- **Testing**: Unit tests verify convergence logic correctness
-- **Documentation**: Examples and usage demonstrations provided
+- **Integration**: All trainer classes updated with new parameters
+- **Testing**: Comprehensive tests verify PyTorch Lightning compatibility
+- **Documentation**: Updated examples and usage demonstrations
 
-This solution directly addresses the original issue by replacing manual visual inspection ("目で見て") with automated mathematical analysis of the loss function's derivative ("loss関数の微分量を求めて").
+This solution directly addresses the original issue by replacing manual visual inspection ("目で見て") with automated, mathematically sound early stopping that follows deep learning best practices, making it both more reliable and more familiar to practitioners in the field.
