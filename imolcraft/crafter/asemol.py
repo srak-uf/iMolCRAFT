@@ -69,17 +69,168 @@ class asemol_wrapper:
                 self.chemical_bonds.loc[elem_i, elem_j] = data.iloc[:, 2].values[i]
                 self.chemical_bonds.loc[elem_j, elem_i] = data.iloc[:, 2].values[i]
 
-    def get_bonds(self) -> list:
+    def get_bonds(self, use_cache=True, unit_cell_atoms=None, repeat_factors=None) -> list:
         """
         Returns a list of bonds (pairs of atom indices) based on the distance matrix and
         the chemical bond definitions. The bonds are determined by checking if the
         distance between atoms is less than or equal to the defined bond length.
+
+        Parameters
+        ----------
+        use_cache : bool, optional
+            Whether to use cached bonds if available. Default is True.
+        unit_cell_atoms : ase.Atoms, optional
+            If provided along with repeat_factors, will use optimized supercell calculation
+        repeat_factors : tuple or list, optional
+            The repeat factors (nx, ny, nz) used to create the supercell
 
         Returns
         -------
         bonds : list
             List of tuples, where each tuple contains the indices of the two atoms
             that are bonded.
+        """
+        if use_cache and self.bonds is not None:
+            return self.bonds
+
+        # Use optimized calculation for supercells if unit cell info is provided
+        if unit_cell_atoms is not None and repeat_factors is not None:
+            bonds = self._calculate_supercell_bonds_fast(unit_cell_atoms, repeat_factors)
+        else:
+            bonds = self._calculate_bonds()
+            
+        self.bonds = bonds
+        return bonds
+
+    def _calculate_supercell_bonds_fast(self, unit_cell_atoms, repeat_factors):
+        """
+        Fast bond calculation for supercells created by repeating a unit cell.
+        
+        This method provides significant performance improvement by calculating bonds
+        for the smaller unit cell and replicating the pattern. 
+        
+        Parameters
+        ----------
+        unit_cell_atoms : ase.Atoms
+            The original unit cell
+        repeat_factors : tuple or list
+            The repeat factors (nx, ny, nz)
+            
+        Returns
+        -------
+        bonds : list
+            List of bond tuples
+        """
+        nx, ny, nz = repeat_factors
+        n_unit = len(unit_cell_atoms)
+        total_cells = nx * ny * nz
+        
+        # Only use optimization for large systems where benefit is clear
+        if len(self.atoms) < 1000:  # Higher threshold to avoid overhead
+            return self._calculate_bonds()
+        
+        # Calculate bonds for unit cell (much smaller, so fast)
+        unit_wrapper = asemol_wrapper(unit_cell_atoms, chemical_bonds=self.chemical_bonds)
+        unit_bonds = unit_wrapper._calculate_bonds()
+        
+        all_bonds = []
+        
+        # Replicate intra-cell bonds for each copy of the unit cell
+        for cell_idx in range(total_cells):
+            atom_offset = cell_idx * n_unit
+            
+            # Add unit cell bonds with proper atom index offset
+            for bond in unit_bonds:
+                new_bond = (bond[0] + atom_offset, bond[1] + atom_offset)
+                all_bonds.append(new_bond)
+        
+        # For inter-cell bonds, use the most efficient approach available
+        # For very large systems, we can accept some approximation for speed
+        inter_bonds = self._find_intercell_bonds_simple(unit_cell_atoms, repeat_factors)
+        all_bonds.extend(inter_bonds)
+        
+        return all_bonds
+    
+    def _find_intercell_bonds_simple(self, unit_cell_atoms, repeat_factors):
+        """
+        Simple but efficient inter-cell bond calculation.
+        
+        For very large systems, we prioritize speed over perfect accuracy.
+        """
+        nx, ny, nz = repeat_factors
+        n_unit = len(unit_cell_atoms)
+        
+        # For large systems, use a very targeted approach
+        # Only check bonds between atoms that are likely to be at cell boundaries
+        
+        max_bond_length = self.chemical_bonds.values.max()
+        unit_cell = unit_cell_atoms.cell
+        
+        inter_bonds = []
+        
+        # Find atoms near cell boundaries in the unit cell
+        boundary_atoms = []
+        for i, pos in enumerate(unit_cell_atoms.positions):
+            # Check if atom is near any cell face
+            near_boundary = False
+            for dim in range(3):
+                cell_dim = unit_cell[dim, dim]
+                if pos[dim] < max_bond_length or pos[dim] > cell_dim - max_bond_length:
+                    near_boundary = True
+                    break
+            
+            if near_boundary:
+                boundary_atoms.append(i)
+        
+        # For each boundary atom in each cell, check limited neighbors
+        if len(boundary_atoms) > 0:
+            for cell_idx in range(nx * ny * nz):
+                ix = cell_idx // (ny * nz)
+                iy = (cell_idx % (ny * nz)) // nz
+                iz = cell_idx % nz
+                
+                cell_offset = cell_idx * n_unit
+                
+                # Only check +x, +y, +z neighbors to avoid double counting
+                neighbor_deltas = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
+                
+                for dx, dy, dz in neighbor_deltas:
+                    neighbor_ix = (ix + dx) % nx
+                    neighbor_iy = (iy + dy) % ny
+                    neighbor_iz = (iz + dz) % nz
+                    
+                    neighbor_cell_idx = neighbor_ix * ny * nz + neighbor_iy * nz + neighbor_iz
+                    neighbor_offset = neighbor_cell_idx * n_unit
+                    
+                    # Check bonds between boundary atoms and all atoms in neighbor cell
+                    for boundary_atom in boundary_atoms:
+                        atom_i = cell_offset + boundary_atom
+                        
+                        for j in range(n_unit):
+                            atom_j = neighbor_offset + j
+                            
+                            if atom_i >= atom_j:  # Avoid double counting
+                                continue
+                            
+                            # Check bond
+                            pos_i = self.atoms.positions[atom_i]
+                            pos_j = self.atoms.positions[atom_j]
+                            
+                            geo_dist = get_distances([pos_i], [pos_j], 
+                                                   cell=self.atoms.cell, pbc=True)[1][0, 0]
+                            
+                            bond_length = self.chemical_bonds.loc[
+                                self.atoms[atom_i].symbol, self.atoms[atom_j].symbol
+                            ]
+                            
+                            if geo_dist <= bond_length:
+                                inter_bonds.append((atom_i, atom_j))
+        
+        return inter_bonds
+
+    def _calculate_bonds(self) -> list:
+        """
+        Calculate bonds using the standard O(n^2) distance-based method.
         """
         atoms = self.atoms
         geo_matrx = get_distances(atoms.positions, cell=atoms.cell, pbc=True)[1]
@@ -91,7 +242,6 @@ class asemol_wrapper:
                     <= self.chemical_bonds.loc[atoms[i].symbol, atoms[j].symbol]
                 ):
                     bonds.append((i, j))
-        self.bonds = bonds
         return bonds
 
     def get_molecules(self):

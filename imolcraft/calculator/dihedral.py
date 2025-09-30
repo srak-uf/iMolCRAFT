@@ -75,6 +75,7 @@ class DihedralCalculator:
             self,
             atoms,
             label,
+            nc=int(0)
             directory=None,
             qmparams=None
         ):
@@ -93,8 +94,8 @@ class DihedralCalculator:
         self.atoms = atoms.copy()
         self.atoms.pbc = False
         self.atoms.cell = None
-        self.rdmol, _, _ = atoms2rdkit(atoms)
-        self.nc = sum([atom.GetFormalCharge() for atom in self.rdmol.GetAtoms()])
+        self.rdmol, _, _ = atoms2rdkit(atoms, nc=nc)
+        self.nc = nc # sum([atom.GetFormalCharge() for atom in self.rdmol.GetAtoms()])
         self.label = label
         if qmparams is None:
             self.qmparams = {
