@@ -28,8 +28,7 @@ Overview
    :caption: Main
 
    installation
-   theory
-   workflow
+   theory.rst
 
 .. toctree::
    :maxdepth: 2
