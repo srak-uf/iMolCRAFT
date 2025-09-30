@@ -1,0 +1,14 @@
+name: docs
+channels:
+  - conda-forge
+  - conda-forge/label/libint_dev 
+dependencies:
+  - mdanalysis 
+  - mdtraj=1.9.7
+  - openff-forcefields=2024.09.0
+  - openmm=8.1.2
+  - openmmforcefields=0.14.1
+  - packmol>=20.15
+  - pip=24.2
+  - pip:
+    - rdkit==2024.3.2

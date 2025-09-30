@@ -7,6 +7,7 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 import os
 import sys
+
 sys.path.insert(0, os.path.abspath('../../imolcryff'))
 
 
@@ -21,6 +22,7 @@ release = '0.0.1'
 extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
+    'sphinx.ext.mathjax',
     'myst_parser'
 ]
 

@@ -1,4 +1,4 @@
-name: imc
+name: imc_dev
 channels:
   - conda-forge
   - conda-forge/label/libint_dev 
@@ -26,5 +26,3 @@ dependencies:
     - jaxopt==0.8.1
     - optax==0.2.3
     - pymbar==4.0.1
-    - git+https://github.com/srak-uf/DMFF.git
-    - git+https://github.com/srak-uf/openff-recharge.git

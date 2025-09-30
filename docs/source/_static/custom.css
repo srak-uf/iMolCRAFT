@@ -28,3 +28,18 @@
 .icon.icon-home { /* link above logo */
     color: #6c6a6a;
 }
+
+.wy-nav-top {
+    color: #c6c3c3;
+}
+
+.wy-nav-top a {
+    color: #6c6a6a;
+}
+/* .admonition-title { notes, title */
+    /* background: #d35f5f !important;  */
+/* } */
+
+/* .version { version spec under logo */
+    /* color: #d35f5f !important; */
+/* } */
