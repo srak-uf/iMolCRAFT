@@ -75,7 +75,7 @@ class DihedralCalculator:
             self,
             atoms,
             label,
-            nc=int(0)
+            nc=int(0),
             directory=None,
             qmparams=None
         ):
