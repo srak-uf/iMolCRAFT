@@ -179,6 +179,9 @@ class Crafter:
         if do_charge is True:
             self.get_partial_charges(params_ff=self.params_ff, **self.params_charge)
             self.get_molecule_off()
+        
+        # Save PDB files with bond information for each molecule
+        self.save_molecule_pdbs_with_bonds()
 
     def build(self):
         """
@@ -268,6 +271,60 @@ class Crafter:
 
         with open("system.xml", "w") as output:
             output.write(XmlSerializer.serialize(system))
+
+    def save_molecule_pdbs_with_bonds(self, keys=None, output_dir="."):
+        """
+        Save PDB files with bond information for each molecule.
+        This enables using the PDB files with the Dihedral optimizer.
+
+        Parameters
+        ----------
+        keys : list, optional
+            List of molecule keys to save. If None, saves all molecules.
+        output_dir : str, optional
+            Directory to save the PDB files. Default is current directory.
+        """
+        import os
+        if keys is None:
+            keys = self.mol_info.keys()
+        
+        for key in keys:
+            # Get the atoms from aseatoms_stable (geometry optimized) or aseatoms_list
+            if self.mol_info[key]["aseatoms_stable"] is not None:
+                if isinstance(self.mol_info[key]["aseatoms_stable"], list):
+                    atoms = self.mol_info[key]["aseatoms_stable"][0]
+                else:
+                    atoms = self.mol_info[key]["aseatoms_stable"]
+            elif len(self.mol_info[key]["aseatoms_list"]) > 0:
+                atoms = self.mol_info[key]["aseatoms_list"][0]
+            else:
+                continue
+            
+            # Create a temporary PDB file
+            with tempfile.NamedTemporaryFile(suffix=".pdb", delete=False) as temp_pdb:
+                temp_pdb_name = temp_pdb.name
+                aseatoms2pdb(temp_pdb_name, atoms)
+                pdb = PDBFile(temp_pdb_name)
+                
+                # Calculate bonds
+                pdb_b = asemol_wrapper(atoms)
+                _ = pdb_b.get_bonds()
+                bonds_list = [[bond[0], bond[1]] for bond in pdb_b.bonds]
+                
+                # Add bonds to topology
+                atomlist_openmm = [a for a in pdb.topology.atoms()]
+                for bond in bonds_list:
+                    a1 = atomlist_openmm[bond[0]]
+                    a2 = atomlist_openmm[bond[1]]
+                    pdb.topology.addBond(a1, a2)
+                
+                # Save PDB with bonds
+                output_filename = os.path.join(output_dir, f"{key}_bonds.pdb")
+                with open(output_filename, "w") as f:
+                    PDBFile.writeFile(pdb.topology, pdb.positions, f)
+                
+                # Clean up temporary file
+                os.unlink(temp_pdb_name)
 
     def get_ffxml(self):
         self.get_molecule_off()
