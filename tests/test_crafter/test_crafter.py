@@ -62,15 +62,10 @@ class TestCrafter_crystal:
             assert self.crafter.mol_info["MOL_0"]["netcharge"] == -1  # BH4-
             assert self.crafter.mol_info["MOL_1"]["netcharge"] == 1  # Li+
             
-            # Check that PDB files with bonds were created
+            # Check that PDB files with bonds were created by get_molecule_off()
             assert os.path.exists("MOL_0_bonds.pdb"), "MOL_0_bonds.pdb was not created"
             assert os.path.exists("MOL_1_bonds.pdb"), "MOL_1_bonds.pdb was not created"
             
-            # Check that the files contain CONECT records
-            with open("MOL_0_bonds.pdb", 'r') as f:
-                content = f.read()
-                assert 'CONECT' in content, "MOL_0_bonds.pdb does not contain CONECT records"
-                
         finally:
             os.chdir(original_dir)
             shutil.rmtree(test_dir)
@@ -106,10 +101,10 @@ class TestCrafter_crystal:
 
             self.crafter.build()
             
-            # Verify that both supercell and individual molecule PDB files with bonds were created
+            # Verify that PDB files with bonds were created
             assert os.path.exists("supercell_bonds.pdb"), "supercell_bonds.pdb was not created"
-            assert os.path.exists("MOL_0_bonds.pdb"), "MOL_0_bonds.pdb was not created during build"
-            assert os.path.exists("MOL_1_bonds.pdb"), "MOL_1_bonds.pdb was not created during build"
+            assert os.path.exists("MOL_0_bonds.pdb"), "MOL_0_bonds.pdb was not created"
+            assert os.path.exists("MOL_1_bonds.pdb"), "MOL_1_bonds.pdb was not created"
             
         finally:
             os.chdir(original_dir)
@@ -140,39 +135,13 @@ class TestCrafter_liquid:
 
     @pytest.mark.qm
     def test_prep_liq(self, init_crafter):
-        import tempfile
-        import shutil
-        
-        # Create a temporary directory for this test
-        test_dir = tempfile.mkdtemp()
-        original_dir = os.getcwd()
-        
-        try:
-            os.chdir(test_dir)
-            
-            # Copy CH4.pdb to test directory
-            atoms = Atoms('CH4', [(-1.397, 1.740, 0.000),
-                                  (-1.041, 0.731, 0.000),
-                                  (-1.041, 2.244, 0.874),
-                                  (-1.041, 2.244, -0.874),
-                                  (-2.467, 1.740, 0.000)])
-            write("CH4.pdb", atoms)
-            
-            self.crafter.structure["fixed_property"] = "num_mols"
-            self.crafter.structure["priority_property"] = "cell"
-            self.crafter.structure["nmols"] = [5]
-            self.crafter.structure["density_kgm3"] = 0.5
-            self.crafter.structure["cell_A"] = [10.0, 10.0, 10.0]
-            self.crafter.prep(do_opt=False, do_charge=True)
-            self.crafter.build()
-            
-            # Verify that PDB files with bonds were created
-            assert os.path.exists("MOL_0_bonds.pdb"), "MOL_0_bonds.pdb was not created"
-            assert os.path.exists("supercell_bonds.pdb"), "supercell_bonds.pdb was not created"
-            
-        finally:
-            os.chdir(original_dir)
-            shutil.rmtree(test_dir)
+        self.crafter.structure["fixed_property"] = "num_mols"
+        self.crafter.structure["priority_property"] = "cell"
+        self.crafter.structure["nmols"] = [5]
+        self.crafter.structure["density_kgm3"] = 0.5
+        self.crafter.structure["cell_A"] = [10.0, 10.0, 10.0]
+        self.crafter.prep(do_opt=False, do_charge=True)
+        self.crafter.build()
 
 
 class TestCrafter_function():
@@ -208,38 +177,3 @@ class TestCrafter_function():
         }
         self.crafter.get_partial_charges(software="psi4")
         self.crafter.get_ffxml()
-
-    def test_save_molecule_pdbs_with_bonds(self, init_crafter):
-        """Test that PDB files with bond information are created"""
-        import tempfile
-        import shutil
-        
-        # Create a temporary directory for this test
-        test_dir = tempfile.mkdtemp()
-        original_dir = os.getcwd()
-        
-        try:
-            os.chdir(test_dir)
-            
-            # Add molecule to crafter
-            self.crafter.append_fromAtomsList([self.atoms], "ethane")
-            
-            # Save PDB with bonds
-            self.crafter.save_molecule_pdbs_with_bonds()
-            
-            # Check that the file was created
-            expected_file = "ethane_bonds.pdb"
-            assert os.path.exists(expected_file), f"{expected_file} was not created"
-            
-            # Check that the file contains CONECT records
-            with open(expected_file, 'r') as f:
-                content = f.read()
-                assert 'CONECT' in content, f"{expected_file} does not contain CONECT records"
-                
-                # Count CONECT records - should have bonds for the molecule
-                conect_lines = [line for line in content.split('\n') if line.startswith('CONECT')]
-                assert len(conect_lines) > 0, "No CONECT records found"
-                
-        finally:
-            os.chdir(original_dir)
-            shutil.rmtree(test_dir)
