@@ -77,24 +77,43 @@ class TestCrafter_crystal:
 
     @pytest.mark.qm
     def test_prep_and_build(self, init_crafter):
-        self.crafter.from_yaml(
-            os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "data",
-                "craft_params.yml"
+        import tempfile
+        import shutil
+        
+        # Create a temporary directory for this test
+        test_dir = tempfile.mkdtemp()
+        original_dir = os.getcwd()
+        
+        try:
+            os.chdir(test_dir)
+            
+            self.crafter.from_yaml(
+                os.path.join(
+                    os.path.dirname(__file__),
+                    "..",
+                    "data",
+                    "craft_params.yml"
+                )
             )
-        )
-        self.crafter.prep(do_opt=True, do_charge=True)
-        assert len(self.crafter.mol_info["MOL_0"]["partial_charges"]) == 5
-        MOL0_charges = self.crafter.mol_info["MOL_0"]["partial_charges"]
-        assert np.isclose(np.sum(MOL0_charges), -0.8)
-        assert np.isclose(MOL0_charges[0], 0.1108411888503414, atol=1e-4)
-        assert np.isclose(MOL0_charges[1], MOL0_charges[2], atol=1e-4)
-        assert np.isclose(MOL0_charges[1], MOL0_charges[3], atol=1e-4)
-        assert np.isclose(MOL0_charges[1], MOL0_charges[4], atol=1e-4)
+            self.crafter.prep(do_opt=True, do_charge=True)
+            assert len(self.crafter.mol_info["MOL_0"]["partial_charges"]) == 5
+            MOL0_charges = self.crafter.mol_info["MOL_0"]["partial_charges"]
+            assert np.isclose(np.sum(MOL0_charges), -0.8)
+            assert np.isclose(MOL0_charges[0], 0.1108411888503414, atol=1e-4)
+            assert np.isclose(MOL0_charges[1], MOL0_charges[2], atol=1e-4)
+            assert np.isclose(MOL0_charges[1], MOL0_charges[3], atol=1e-4)
+            assert np.isclose(MOL0_charges[1], MOL0_charges[4], atol=1e-4)
 
-        self.crafter.build()
+            self.crafter.build()
+            
+            # Verify that both supercell and individual molecule PDB files with bonds were created
+            assert os.path.exists("supercell_bonds.pdb"), "supercell_bonds.pdb was not created"
+            assert os.path.exists("MOL_0_bonds.pdb"), "MOL_0_bonds.pdb was not created during build"
+            assert os.path.exists("MOL_1_bonds.pdb"), "MOL_1_bonds.pdb was not created during build"
+            
+        finally:
+            os.chdir(original_dir)
+            shutil.rmtree(test_dir)
 
 
 class TestCrafter_liquid:
@@ -121,13 +140,39 @@ class TestCrafter_liquid:
 
     @pytest.mark.qm
     def test_prep_liq(self, init_crafter):
-        self.crafter.structure["fixed_property"] = "num_mols"
-        self.crafter.structure["priority_property"] = "cell"
-        self.crafter.structure["nmols"] = [5]
-        self.crafter.structure["density_kgm3"] = 0.5
-        self.crafter.structure["cell_A"] = [10.0, 10.0, 10.0]
-        self.crafter.prep(do_opt=False, do_charge=True)
-        self.crafter.build()
+        import tempfile
+        import shutil
+        
+        # Create a temporary directory for this test
+        test_dir = tempfile.mkdtemp()
+        original_dir = os.getcwd()
+        
+        try:
+            os.chdir(test_dir)
+            
+            # Copy CH4.pdb to test directory
+            atoms = Atoms('CH4', [(-1.397, 1.740, 0.000),
+                                  (-1.041, 0.731, 0.000),
+                                  (-1.041, 2.244, 0.874),
+                                  (-1.041, 2.244, -0.874),
+                                  (-2.467, 1.740, 0.000)])
+            write("CH4.pdb", atoms)
+            
+            self.crafter.structure["fixed_property"] = "num_mols"
+            self.crafter.structure["priority_property"] = "cell"
+            self.crafter.structure["nmols"] = [5]
+            self.crafter.structure["density_kgm3"] = 0.5
+            self.crafter.structure["cell_A"] = [10.0, 10.0, 10.0]
+            self.crafter.prep(do_opt=False, do_charge=True)
+            self.crafter.build()
+            
+            # Verify that PDB files with bonds were created
+            assert os.path.exists("MOL_0_bonds.pdb"), "MOL_0_bonds.pdb was not created"
+            assert os.path.exists("supercell_bonds.pdb"), "supercell_bonds.pdb was not created"
+            
+        finally:
+            os.chdir(original_dir)
+            shutil.rmtree(test_dir)
 
 
 class TestCrafter_function():

@@ -264,6 +264,9 @@ class Crafter:
         # Save the supecell with bonds
         pdb.writeFile(pdb.topology, pdb.positions, open("supercell_bonds.pdb", "w"))
         pdb = PDBFile("supercell_bonds.pdb")
+        
+        # Save individual molecule PDB files with bonds
+        self.save_molecule_pdbs_with_bonds()
 
         # create system
         forcefield = ForceField(*ffxmlfiles)
