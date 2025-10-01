@@ -62,9 +62,9 @@ class TestCrafter_crystal:
             assert self.crafter.mol_info["MOL_0"]["netcharge"] == -1  # BH4-
             assert self.crafter.mol_info["MOL_1"]["netcharge"] == 1  # Li+
             
-            # Check that PDB files with bonds were created by get_molecule_off()
-            assert os.path.exists("MOL_0_bonds.pdb"), "MOL_0_bonds.pdb was not created"
-            assert os.path.exists("MOL_1_bonds.pdb"), "MOL_1_bonds.pdb was not created"
+            # Check that PDB files with bonds were created by get_molecule_off() in subdirectories
+            assert os.path.exists("MOL_0/MOL_0_bonds.pdb"), "MOL_0/MOL_0_bonds.pdb was not created"
+            assert os.path.exists("MOL_1/MOL_1_bonds.pdb"), "MOL_1/MOL_1_bonds.pdb was not created"
             
         finally:
             os.chdir(original_dir)
@@ -101,10 +101,10 @@ class TestCrafter_crystal:
 
             self.crafter.build()
             
-            # Verify that PDB files with bonds were created
+            # Verify that PDB files with bonds were created in subdirectories
             assert os.path.exists("supercell_bonds.pdb"), "supercell_bonds.pdb was not created"
-            assert os.path.exists("MOL_0_bonds.pdb"), "MOL_0_bonds.pdb was not created"
-            assert os.path.exists("MOL_1_bonds.pdb"), "MOL_1_bonds.pdb was not created"
+            assert os.path.exists("MOL_0/MOL_0_bonds.pdb"), "MOL_0/MOL_0_bonds.pdb was not created"
+            assert os.path.exists("MOL_1/MOL_1_bonds.pdb"), "MOL_1/MOL_1_bonds.pdb was not created"
             
         finally:
             os.chdir(original_dir)

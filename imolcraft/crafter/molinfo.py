@@ -596,7 +596,7 @@ class Crafter:
             self.mol_info[key]["molecule_OFF"] = molecule_off
             
             # Save PDB file with bond information
-            pdb_filename = f"{key}_bonds.pdb"
+            pdb_filename = os.path.join(dirname, f"{key}_bonds.pdb")
             molecule_off.to_file(pdb_filename, file_format="PDB")
 
     def get_partial_charges(self, keys=None, params_ff=None, **kwargs):
