@@ -560,7 +560,7 @@ class Crafter:
 
     def get_molecule_off(self, keys=None, **kwargs):
         """
-        Get OpenFF molecule from ASE atoms
+        Get OpenFF molecule from ASE atoms and save PDB file with bond information.
 
         Parameters
         ----------
@@ -594,6 +594,10 @@ class Crafter:
                 setattr(molecule_off, attr_key, attr_value)
 
             self.mol_info[key]["molecule_OFF"] = molecule_off
+            
+            # Save PDB file with bond information
+            pdb_filename = os.path.join(dirname, f"{key}_bonds.pdb")
+            molecule_off.to_file(pdb_filename, file_format="PDB")
 
     def get_partial_charges(self, keys=None, params_ff=None, **kwargs):
         """
