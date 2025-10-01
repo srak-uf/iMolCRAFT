@@ -39,18 +39,41 @@ class TestCrafter_crystal:
         assert structure['repeat'] == [1, 1, 2]
 
     def test_prep_woqm(self, init_crafter):
-        self.crafter.from_yaml(
-            os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "data",
-                "craft_params.yml"
+        import tempfile
+        import shutil
+        
+        # Create a temporary directory for this test
+        test_dir = tempfile.mkdtemp()
+        original_dir = os.getcwd()
+        
+        try:
+            os.chdir(test_dir)
+            
+            self.crafter.from_yaml(
+                os.path.join(
+                    os.path.dirname(__file__),
+                    "..",
+                    "data",
+                    "craft_params.yml"
+                )
             )
-        )
-        self.crafter.prep(do_opt=False, do_charge=False)
-        assert len(self.crafter.molatoms) == 8
-        assert self.crafter.mol_info["MOL_0"]["netcharge"] == -1  # BH4-
-        assert self.crafter.mol_info["MOL_1"]["netcharge"] == 1  # Li+
+            self.crafter.prep(do_opt=False, do_charge=False)
+            assert len(self.crafter.molatoms) == 8
+            assert self.crafter.mol_info["MOL_0"]["netcharge"] == -1  # BH4-
+            assert self.crafter.mol_info["MOL_1"]["netcharge"] == 1  # Li+
+            
+            # Check that PDB files with bonds were created
+            assert os.path.exists("MOL_0_bonds.pdb"), "MOL_0_bonds.pdb was not created"
+            assert os.path.exists("MOL_1_bonds.pdb"), "MOL_1_bonds.pdb was not created"
+            
+            # Check that the files contain CONECT records
+            with open("MOL_0_bonds.pdb", 'r') as f:
+                content = f.read()
+                assert 'CONECT' in content, "MOL_0_bonds.pdb does not contain CONECT records"
+                
+        finally:
+            os.chdir(original_dir)
+            shutil.rmtree(test_dir)
 
     @pytest.mark.qm
     def test_prep_and_build(self, init_crafter):
@@ -140,3 +163,38 @@ class TestCrafter_function():
         }
         self.crafter.get_partial_charges(software="psi4")
         self.crafter.get_ffxml()
+
+    def test_save_molecule_pdbs_with_bonds(self, init_crafter):
+        """Test that PDB files with bond information are created"""
+        import tempfile
+        import shutil
+        
+        # Create a temporary directory for this test
+        test_dir = tempfile.mkdtemp()
+        original_dir = os.getcwd()
+        
+        try:
+            os.chdir(test_dir)
+            
+            # Add molecule to crafter
+            self.crafter.append_fromAtomsList([self.atoms], "ethane")
+            
+            # Save PDB with bonds
+            self.crafter.save_molecule_pdbs_with_bonds()
+            
+            # Check that the file was created
+            expected_file = "ethane_bonds.pdb"
+            assert os.path.exists(expected_file), f"{expected_file} was not created"
+            
+            # Check that the file contains CONECT records
+            with open(expected_file, 'r') as f:
+                content = f.read()
+                assert 'CONECT' in content, f"{expected_file} does not contain CONECT records"
+                
+                # Count CONECT records - should have bonds for the molecule
+                conect_lines = [line for line in content.split('\n') if line.startswith('CONECT')]
+                assert len(conect_lines) > 0, "No CONECT records found"
+                
+        finally:
+            os.chdir(original_dir)
+            shutil.rmtree(test_dir)
