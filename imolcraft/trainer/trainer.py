@@ -665,9 +665,7 @@ class ThermodynamicTrainer(BaseTrainer):
             ]
             removedstateidx = [i for i, flag in enumerate(self.resample) if flag]
         else:
-            removedstatename = [
-                self.estimator.states[i].name for i in self.sampling_params
-            ]
+            removedstatename = []
             removedstateidx = [i for i in self.sampling_params]
 
         for idx in removedstateidx:
