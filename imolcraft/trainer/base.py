@@ -220,17 +220,17 @@ class BaseTrainer:
         if jnp.isnan(self.loss) or jnp.isinf(self.loss):
             print("Warning: Loss is NaN or Inf. Skipping this step.")
             # self.ffparamsを0.01%ランダムにずらす
-            self.ffparams = jax.tree_util.tree_map(
+            grads = jax.tree_util.tree_map(
                 lambda x: x
                 + 0.0001 * jax.random.normal(jax.random.PRNGKey(1), shape=x.shape),
                 self.ffparams,
             )
-        else:
-            grads = self._do_modify("after_grad", grads)
-            updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
-            # print("Updates: ", updates)
-            self.ffparams = optax.apply_updates(self.ffparams, updates)
-            self.ffparams = self._do_modify("after_update", self.ffparams)
+
+        grads = self._do_modify("after_grad", grads)
+        updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
+        # print("Updates: ", updates)
+        self.ffparams = optax.apply_updates(self.ffparams, updates)
+        self.ffparams = self._do_modify("after_update", self.ffparams)
 
     def before_step(self) -> None:
         """
