@@ -30,7 +30,9 @@ iMolCRAFT uses classical force fields to perform molecular dynamics simulations 
 
 Automatic differentiation
 -------------------------
-aaa
+iMolCRAFT is a wrapper of DMFF or JAX-MD software to perform force field calculations including automatic-differentiation functions.
+This allows users to easily implement new force field functional forms and the parameter optimization.
+One of the examples is the dihedral parameter fitting. The sample jupyter notebook is provided in the examples folder.
 
 Thermodynamic gradient
 -----------------------

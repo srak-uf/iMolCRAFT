@@ -27,7 +27,7 @@ cd ..
 pip install -e .
 
 # make document (Optional)
-conda install -c conda-forge sphinx myst-parser sphinx_rtd_theme
+conda install -c conda-forge sphinx myst-parser sphinx_rtd_theme myst-nb
 cd docs
 make html
 
