@@ -7,7 +7,7 @@ from openmm.app import ForceField, Modeller
 import jax.numpy as jnp
 import os
 import mdtraj as md
-from jax import value_and_grad
+from jax import value_and_grad, jit
 from jax.tree_util import tree_map
 from ..trainer.dmff_utils import (
     update_rescharges_from_params,
@@ -41,7 +41,7 @@ class DistanceTrainer(BaseTrainer):
         loss_fn: Callable[..., float],
         relax_steps: int = 20,
         opt_fftypes: List[str] = [
-            "NonbondedForce/charges",
+            "NonbondedForce/charge",
             "NonbondedForce/sigma",
             "NonbondedForce/epsilon",
         ],
@@ -67,6 +67,7 @@ class DistanceTrainer(BaseTrainer):
         self.relax_steps = relax_steps
         self.inputs = {"positions": [], "pairs": [], "dihed_index": []}
         self.calculator = calculator
+        self.efunc = jit(self.potentials.getPotentialFunc())
 
     def setup(self) -> None:
         """
@@ -118,7 +119,7 @@ class DistanceTrainer(BaseTrainer):
         for i_dihed in range(len(self.inputs["positions"])):
             loss_tmp, grads_tmp = value_and_grad(self.loss_fn, argnums=0)(
                 self.ffparams,
-                self.ff,
+                self.efunc,
                 self.pdb.topology,
                 self.inputs["positions"][i_dihed],
                 self.inputs["pairs"][i_dihed],
@@ -141,7 +142,7 @@ class DistanceTrainer(BaseTrainer):
             if key == "NonbondedForce":
                 ffparams_wo_charge[key] = {}
                 for key2 in self.ffparams[key].keys():
-                    if key2 != "charges":
+                    if key2 != "charge":
                         ffparams_wo_charge[key][key2] = self.ffparams[key][key2]
             elif key == "VsiteForce":
                 pass
@@ -389,7 +390,7 @@ class DihedralTrainer(BaseTrainer):
             if key == "NonbondedForce":
                 ffparams_wo_charge[key] = {}
                 for key2 in self.ffparams[key].keys():
-                    if key2 != "charges":
+                    if key2 != "charge":
                         ffparams_wo_charge[key][key2] = self.ffparams[key][key2]
             elif key == "VsiteForce":
                 pass
@@ -432,7 +433,7 @@ class ThermodynamicTrainer(BaseTrainer):
         sampling_params: List[Any],
         target_params: List[Any],
         opt_fftypes: List[str] = [
-            "NonbondedForce/charges",
+            "NonbondedForce/charge",
             "NonbondedForce/sigma",
             "NonbondedForce/epsilon",
         ],
@@ -490,27 +491,35 @@ class ThermodynamicTrainer(BaseTrainer):
             self.pdb = [self.pdb]
             self.pdbfile = [self.pdbfile]
             self.pdbfile_vsite = [self.pdbfile_vsite]
-            self.potentials = [self.potentials]
-            self.topology = [self.topology]
             self.sampling_params = [self.sampling_params]
+            pots = self.ff.createPotential(
+                    self.pdb[0].topology,
+                    nonbondedMethod=app.PME,
+                    nonbondedCutoff=self.sampling_params[0]["rcut_nm"]
+                    * unit.nanometer,
+                    )
+            self.potentials = [pots]
+            self.topology = [self.topology]
+            self.efuncs = [jit(self.potentials[0].getPotentialFunc())]
         elif isinstance(self.sampling_params, list):
             self.pdbfile = []
             self.pdb = []
             self.pdbfile_vsite = []
             self.potentials = []
+            self.efuncs = []
             self.topology = []
             self.T_K = []
             for i, sampling_param in enumerate(self.sampling_params):
                 self.pdbfile.append(sampling_param["init_structure"])
                 self.pdb.append(app.PDBFile(self.pdbfile[i]))
-                self.potentials.append(
-                    self.ff.createPotential(
+                pots = self.ff.createPotential(
                         self.pdb[i].topology,
                         nonbondedMethod=app.PME,
                         nonbondedCutoff=self.sampling_params[i]["rcut_nm"]
                         * unit.nanometer,
                     )
-                )
+                self.potentials.append(pots)
+                self.efuncs.append(jit(pots.getPotentialFunc()))
                 self.topology.append(self.pdb[i].topology)
                 if self.num_vsites > 0:
                     modeller = Modeller(self.pdb[i].topology, self.pdb[i].positions)
@@ -633,8 +642,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 self.loss_fn[i], argnums=0, has_aux=True
             )(
                 self.ffparams,
-                self.ff,
-                self.pdb[i].topology,  # wo virtual sites
+                self.efuncs[i],
                 self.potentials[i].meta["cov_map"],
                 self.rc_nm[i],
                 self.ensemble[i],
@@ -666,7 +674,7 @@ class ThermodynamicTrainer(BaseTrainer):
             removedstateidx = [i for i, flag in enumerate(self.resample) if flag]
         else:
             removedstatename = []
-            removedstateidx = [i for i in self.sampling_params]
+            removedstateidx = [i for i in range(len(self.sampling_params))]
 
         for idx in removedstateidx:
             if len(removedstatename) > 0:
@@ -724,18 +732,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 self.rescharges, self.ffparams
             )
             self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
-            ffparams_wo_charge = {}
-            for key in self.ffparams.keys():
-                if key == "NonbondedForce":
-                    ffparams_wo_charge[key] = {}
-                    for key2 in self.ffparams[key].keys():
-                        if key2 != "charges":
-                            ffparams_wo_charge[key][key2] = self.ffparams[key][key2]
-                elif key == "VsiteForce":
-                    pass
-                else:
-                    ffparams_wo_charge[key] = self.ffparams[key]
-            self.ff.getParameters().parameters = ffparams_wo_charge
+            self.ff.getParameters().parameters = self.ffparams
             os.makedirs("xmlfiles", exist_ok=True)
             self.ff.renderXML(f"xmlfiles/epoch-{self._epoch+1}.xml")
             self.ffxml = f"xmlfiles/epoch-{self._epoch+1}.xml"

@@ -198,7 +198,7 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
         Updated force field parameters with neutralized charges.
     """
 
-    assert len(ffparams["NonbondedForce"]["charges"]) == len(natoms_list), (
+    assert len(ffparams["NonbondedForce"]["charge"]) == len(natoms_list), (
         "len(ffparams['NonbondedForce']['charges']) != len(natoms_list)"
     )
 
@@ -208,17 +208,17 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
         )
         for i, target_list in enumerate(target_lists):
             net_q = jnp.dot(
-                ffparams["NonbondedForce"]["charges"][jnp.array(target_list)],
+                ffparams["NonbondedForce"]["charge"][jnp.array(target_list)],
                 natoms_list[jnp.array(target_list)],
             )
             desired_q = target_charges[i]
             natoms_list_sum = natoms_list[jnp.array(target_list)].sum()
             charges_mod = (
-                ffparams["NonbondedForce"]["charges"][jnp.array(target_list)]
+                ffparams["NonbondedForce"]["charge"][jnp.array(target_list)]
                 + (desired_q - net_q) / natoms_list_sum
             )
-            ffparams["NonbondedForce"]["charges"] = (
-                ffparams["NonbondedForce"]["charges"]
+            ffparams["NonbondedForce"]["charge"] = (
+                ffparams["NonbondedForce"]["charge"]
                 .at[jnp.array(target_list)]
                 .set(charges_mod)
             )
@@ -240,19 +240,19 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
             )
 
             # Update charges for non-targeted atoms
-            net_q = jnp.dot(ffparams["NonbondedForce"]["charges"], natoms_list)
-            ffparams["NonbondedForce"]["charges"] = (
-                ffparams["NonbondedForce"]["charges"]
+            net_q = jnp.dot(ffparams["NonbondedForce"]["charge"], natoms_list)
+            ffparams["NonbondedForce"]["charge"] = (
+                ffparams["NonbondedForce"]["charge"]
                 .at[nottarget_idx]
                 .set(
-                    ffparams["NonbondedForce"]["charges"][nottarget_idx]
+                    ffparams["NonbondedForce"]["charge"][nottarget_idx]
                     - (net_q - nc) / nottarget_list.sum()
                 )
             )
     elif nc is not None:
-        net_q = jnp.dot(ffparams["NonbondedForce"]["charges"], natoms_list)
-        ffparams["NonbondedForce"]["charges"] = (
-            ffparams["NonbondedForce"]["charges"] - (net_q - nc) / natoms_list.sum()
+        net_q = jnp.dot(ffparams["NonbondedForce"]["charge"], natoms_list)
+        ffparams["NonbondedForce"]["charge"] = (
+            ffparams["NonbondedForce"]["charge"] - (net_q - nc) / natoms_list.sum()
         )
 
     return ffparams
@@ -335,7 +335,7 @@ def update_ffinfo_from_params(ff, params):
         for i, _ in enumerate(ff.ffinfo["Residues"][i_res]["particles"]):
             ff.ffinfo["Residues"][i_res]["particles"][i]["charge"] = params[
                 "NonbondedForce"
-            ]["charges"][idx]
+            ]["charge"][idx]
             idx += 1
 
     idx = 0
@@ -350,7 +350,7 @@ def update_ffinfo_from_params(ff, params):
             )
             for i_weight in range(n_weights):
                 ff.ffinfo["Residues"][i_res]["vsites"][i][f"weight{i_weight+1}"] = (
-                    params["VsiteForce"]["weight"][idx]
+                    params["VirtualSite"]["weight"][idx]
                 )
                 idx += 1
 
@@ -366,15 +366,15 @@ def get_chgparams_from_rescharges(params, rescharges):
             for key2 in rescharges[i_res][key]
         ]
     ).sum()
-    params["NonbondedForce"]["charges"] = jnp.zeros(natoms)
+    params["NonbondedForce"]["charge"] = jnp.zeros(natoms)
     ishift = 0
     for res in rescharges:
         natoms = 0
         for t in res:
             for key in res[t]:
                 for idx in res[t][key]["index"]:
-                    params["NonbondedForce"]["charges"] = (
-                        params["NonbondedForce"]["charges"]
+                    params["NonbondedForce"]["charge"] = (
+                        params["NonbondedForce"]["charge"]
                         .at[idx + ishift]
                         .set(res[t][key]["value"])
                     )
@@ -399,12 +399,12 @@ def vsiteinfo_to_params(ff, params):
             # weights_tmpのすべての要素をweightsに追加
             weights.extend(weights_tmp)
 
-    params["VsiteForce"] = {}
-    params["VsiteForce"]["weight"] = jnp.zeros(len(weights))
-    params["VsiteForce"]["scale"] = jnp.zeros(len(weights))
+    params["VirtualSite"] = {}
+    params["VirtualSite"]["weight"] = jnp.zeros(len(weights))
+    params["VirtualSite"]["scale"] = jnp.zeros(len(weights))
     for i in range(len(weights)):
-        params["VsiteForce"]["weight"] = (
-            params["VsiteForce"]["weight"].at[i].set(weights[i])
+        params["VirtualSite"]["weight"] = (
+            params["VirtualSite"]["weight"].at[i].set(weights[i])
         )
 
     return params
@@ -420,10 +420,10 @@ def update_rescharges_from_params(rescharges, params):
                 for idx in res[t][key]["index"]:
                     natoms += 1
                     charge_forave.append(
-                        params["NonbondedForce"]["charges"][idx + ishift]
+                        params["NonbondedForce"]["charge"][idx + ishift]
                     )
                 res[t][key]["value"] = np.mean(charge_forave)
-                # res[t][key]["value"] = params["NonbondedForce"]["charges"][idx+ishift]
+                # res[t][key]["value"] = params["NonbondedForce"]["charge"][idx+ishift]
         ishift += natoms
     return rescharges
 
@@ -587,6 +587,7 @@ def md_sample(
         app.StateDataReporter(
             sys.stdout,
             nstxout,
+            potentialEnergy=True,
             density=True,
             step=True,
             remainingTime=True,
