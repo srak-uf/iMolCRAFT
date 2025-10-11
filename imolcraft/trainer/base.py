@@ -123,9 +123,6 @@ class BaseTrainer:
         self.lr = lr
         self.clip = clip
 
-        # ffparams
-        self.ffparams.pop('VirtualSite')
-
         multiTrans = MultiTransform(self.ffparams)
         self.optimizer_algo = optimizer_algo
         for i, opt_fftype in enumerate(self.opt_fftypes):

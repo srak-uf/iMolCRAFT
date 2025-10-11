@@ -491,9 +491,15 @@ class ThermodynamicTrainer(BaseTrainer):
             self.pdb = [self.pdb]
             self.pdbfile = [self.pdbfile]
             self.pdbfile_vsite = [self.pdbfile_vsite]
-            self.potentials = [self.potentials]
-            self.topology = [self.topology]
             self.sampling_params = [self.sampling_params]
+            pots = self.ff.createPotential(
+                    self.pdb[0].topology,
+                    nonbondedMethod=app.PME,
+                    nonbondedCutoff=self.sampling_params[0]["rcut_nm"]
+                    * unit.nanometer,
+                    )
+            self.potentials = [pots]
+            self.topology = [self.topology]
             self.efuncs = [jit(self.potentials[0].getPotentialFunc())]
         elif isinstance(self.sampling_params, list):
             self.pdbfile = []
