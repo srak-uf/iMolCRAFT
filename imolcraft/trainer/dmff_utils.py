@@ -339,7 +339,7 @@ def update_ffinfo_from_params(ff, params):
             idx += 1
 
     idx = 0
-    if "VirtualSite"  in params:
+    if "VirtualSite" in params:
         w2_ave2 = params["VirtualSite"]["vsite_w2_type_2"] if "vsite_w2_type_2" in params["VirtualSite"] else []
         if len(w2_ave2) > 0:
             w1_ave2 = jnp.ones(w2_ave2.shape) - w2_ave2
@@ -357,7 +357,7 @@ def update_ffinfo_from_params(ff, params):
 
         for i_res in range(len(ff.ffinfo["Residues"])):
             for i, _ in enumerate(ff.ffinfo["Residues"][i_res]["vsites"]):
-                if ff.ffinfo["Residues"][i_res]["vsites"][i]["type"] == "type_2":
+                if ff.ffinfo["Residues"][i_res]["vsites"][i]["type"] == "average2":
                     ff.ffinfo["Residues"][i_res]["vsites"][i]["weight1"] = float(
                         w1_ave2[ave2_idx]
                     )
@@ -365,7 +365,7 @@ def update_ffinfo_from_params(ff, params):
                         w2_ave2[ave2_idx]
                     )
                     ave2_idx += 1
-                elif ff.ffinfo["Residues"][i_res]["vsites"][i]["type"] == "type_3":
+                elif ff.ffinfo["Residues"][i_res]["vsites"][i]["type"] == "average3":
                     ff.ffinfo["Residues"][i_res]["vsites"][i]["weight1"] = float(
                         w1_ave3[ave3_idx]
                     )
