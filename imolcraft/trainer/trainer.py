@@ -749,6 +749,9 @@ class ThermodynamicTrainer(BaseTrainer):
                         if v < self.neff[ii] and k != "Total" and ii == i:
                             self.resample[i] = True
                             print(f"  {i} -> Resample")
+                        else:  # Vsiteのposition update
+                            # self.estimator._input***
+                            pass
                 except Exception:
                     print("Warning: Error in estimating effective sample size")
                     self.estimator.states = []

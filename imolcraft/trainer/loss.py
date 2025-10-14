@@ -6,8 +6,10 @@ from jax import jit, vmap
 from .dmff_utils import update_ffinfo_from_params
 from openmm import app
 import openmm.unit as unit
-from dmff.mbar import TargetState, buildTrajEnergyFunction, MBAREstimator
+from dmff.mbar import TargetState, buildTrajEnergyFunction, MBAREstimator, buildInputEnergyFunction
 from dmff import Hamiltonian, DMFFTopology
+import psutil
+import os
 
 
 def mse_energy(
@@ -135,14 +137,26 @@ def loss_thermodynamicperturbation(
         ens = "npt"
     else:
         ens = ensemble
-    target_energy_function = buildTrajEnergyFunction(
-        efunc, cov_map, rc, ensemble=ens, useFreud=True, pressure=pressure
-    )
-    target_state = TargetState(Temperature_K, target_energy_function)
-    weight, utarget = estimator.estimate_weight(
-        target_state, parameters=ffparams
-    )
 
+    if estimator._input is None:
+        target_energy_function = buildTrajEnergyFunction(
+            efunc, cov_map, rc, ensemble=ens, useFreud=True, pressure=pressure
+        )
+        target_state = TargetState(Temperature_K, target_energy_function)
+        weight, utarget = estimator.estimate_weight(
+            target_state, parameters=ffparams, return_input=True
+        )
+    else:
+        input_energy_function = buildInputEnergyFunction(
+            efunc, ensemble=ens, pressure=pressure
+        )
+        target_state = TargetState(Temperature_K, input_energy_function)
+        weight, utarget = estimator.estimate_weight(
+            target_state, parameters=ffparams, direct=True
+        )
+
+    process = psutil.Process(os.getpid())
+    print(f"Get weight, Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
     loss = 0.0
     weighted_results = {}
     for key in target_gt.keys():
@@ -167,4 +181,5 @@ def loss_thermodynamicperturbation(
                 elif losstype_distribfn == "jsdivergence":
                     loss_tmp = jsdivergence(rdf_pred, target_gt[key][kind]["gt"])
                 loss += target_gt[key][kind]["weight"] * loss_tmp
+    print(f"Finish loss calc Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
     return loss, (utarget, weighted_results)

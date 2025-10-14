@@ -217,6 +217,8 @@ class BaseTrainer:
         Handles NaN/Inf loss by perturbing parameters.
         """
         self.loss, grads = self.get_loss_gradients()
+        process = psutil.Process(os.getpid())
+        print(f"grad obtained.... Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
         if jnp.isnan(self.loss) or jnp.isinf(self.loss):
             print("Warning: Loss is NaN or Inf. Skipping this step.")
             # self.ffparamsを0.01%ランダムにずらす
@@ -227,10 +229,12 @@ class BaseTrainer:
             )
 
         grads = self._do_modify("after_grad", grads)
+        print(f"grad modify.... Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
         # print("Updates: ", updates)
         self.ffparams = optax.apply_updates(self.ffparams, updates)
         self.ffparams = self._do_modify("after_update", self.ffparams)
+        print(f"update finished.... Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
 
     def before_step(self) -> None:
         """

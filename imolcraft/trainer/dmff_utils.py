@@ -339,20 +339,55 @@ def update_ffinfo_from_params(ff, params):
             idx += 1
 
     idx = 0
-    for i_res in range(len(ff.ffinfo["Residues"])):
-        for i, _ in enumerate(ff.ffinfo["Residues"][i_res]["vsites"]):
-            n_weights = len(
-                [
-                    key
-                    for key in ff.ffinfo["Residues"][i_res]["vsites"][i].keys()
-                    if key.startswith("weight")
-                ]
-            )
-            for i_weight in range(n_weights):
-                ff.ffinfo["Residues"][i_res]["vsites"][i][f"weight{i_weight+1}"] = (
-                    params["VirtualSite"]["weight"][idx]
-                )
-                idx += 1
+    if "VirtualSite"  in params:
+        w2_ave2 = params["VirtualSite"]["vsite_w2_type_2"] if "vsite_w2_type_2" in params["VirtualSite"] else []
+        if len(w2_ave2) > 0:
+            w1_ave2 = jnp.ones(w2_ave2.shape) - w2_ave2
+            ave2_idx = 0
+        w2_ave3 = params["VirtualSite"]["vsite_w2_type_3"] if "vsite_w2_type_3" in params["VirtualSite"] else []
+        w3_ave3 = params["VirtualSite"]["vsite_w3_type_3"] if "vsite_w3_type_3" in params["VirtualSite"] else []
+        if len(w2_ave3) > 0 or len(w3_ave3) > 0:
+            w1_ave3 = jnp.ones(w2_ave3.shape) - w2_ave3 - w3_ave3
+            ave3_idx = 0
+
+        # "vsite_w2_type_2, vsite_w2_type_3, vsite_w3_type_3"以外のkeyがあればエラー
+        for key in params["VirtualSite"].keys():
+            if key not in ["vsite_w2_type_2", "vsite_w2_type_3", "vsite_w3_type_3"]:
+                raise ValueError(f"Unknown key in VirtualSite params: {key}")
+
+        for i_res in range(len(ff.ffinfo["Residues"])):
+            for i, _ in enumerate(ff.ffinfo["Residues"][i_res]["vsites"]):
+                if ff.ffinfo["Residues"][i_res]["vsites"][i]["type"] == "type_2":
+                    ff.ffinfo["Residues"][i_res]["vsites"][i]["weight1"] = float(
+                        w1_ave2[ave2_idx]
+                    )
+                    ff.ffinfo["Residues"][i_res]["vsites"][i]["weight2"] = float(
+                        w2_ave2[ave2_idx]
+                    )
+                    ave2_idx += 1
+                elif ff.ffinfo["Residues"][i_res]["vsites"][i]["type"] == "type_3":
+                    ff.ffinfo["Residues"][i_res]["vsites"][i]["weight1"] = float(
+                        w1_ave3[ave3_idx]
+                    )
+                    ff.ffinfo["Residues"][i_res]["vsites"][i]["weight2"] = float(
+                        w2_ave3[ave3_idx]
+                    )
+                    ff.ffinfo["Residues"][i_res]["vsites"][i]["weight3"] = float(
+                        w3_ave3[ave3_idx]
+                    )
+                    ave3_idx += 1
+                # n_weights = len(
+                #     [
+                #         key
+                #         for key in ff.ffinfo["Residues"][i_res]["vsites"][i].keys()
+                #         if key.startswith("weight")
+                #     ]
+                # )
+                # for i_weight in range(n_weights):
+                #     ff.ffinfo["Residues"][i_res]["vsites"][i][f"weight{i_weight+1}"] = (
+                #         params["VirtualSite"]["weight"][idx]
+                #     )
+                #     idx += 1
 
     return ff
 
