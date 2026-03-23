@@ -120,7 +120,6 @@ class DistanceTrainer(BaseTrainer):
             loss_tmp, grads_tmp = value_and_grad(self.loss_fn, argnums=0)(
                 self.ffparams,
                 self.efunc,
-                self.pdb.topology,
                 self.inputs["positions"][i_dihed],
                 self.inputs["pairs"][i_dihed],
                 self.GT_scans[i_dihed],
@@ -321,6 +320,7 @@ class DihedralTrainer(BaseTrainer):
         self.relax_steps = relax_steps
         self.inputs = {"positions": [], "pairs": [], "dihed_index": []}
         self.calculator = calculator
+        self.efunc = jit(self.potentials.getPotentialFunc())
 
     def setup(self) -> None:
         """
@@ -367,8 +367,7 @@ class DihedralTrainer(BaseTrainer):
         for i_dihed in range(len(self.inputs["positions"])):
             loss_tmp, grads_tmp = value_and_grad(self.loss_fn, argnums=0)(
                 self.ffparams,
-                self.ff,
-                self.pdb.topology,
+                self.efunc,
                 self.inputs["positions"][i_dihed],
                 self.inputs["pairs"][i_dihed],
                 self.GT_scans[i_dihed],

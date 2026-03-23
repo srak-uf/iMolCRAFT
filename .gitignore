@@ -21,6 +21,16 @@ test_*com
 test_*log
 build/*
 timer.dat
+epoch*.xml
+MOL_*.*
+
+# egg-info
+*.egg-info/
+
+# examples
+dmc_*png
+MOL_0_resp.mol2
+MOL_0.sdf
 
 ### Antechamber ###
 ANTECHAMBER_*
@@ -146,3 +156,12 @@ classes.png
 imolcryff/calculator/xmlfiles/ethane1.xml
 imolcryff/calculator/ethane1_best.xml
 imolcryff/calculator/hoge.pdb
+examples/crafter/crystal/MOL_0/MOL_0.sdf
+.gitignore
+examples/crafter/crystal/MOL_0/MOL_0_resp.mol2
+examples/crafter/crystal/MOL_0/MOL_0.sdf
+examples/crafter/crystal/MOL_0/MOL_0.xyz
+examples/crafter/crystal/MOL_1/MOL_1_resp.mol2
+examples/crafter/crystal/MOL_1/MOL_1.sdf
+examples/crafter/crystal/MOL_1/MOL_1.xyz
+examples/crafter/crystal/MOL_2/MOL_2_resp.mol2
