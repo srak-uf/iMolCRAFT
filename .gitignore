@@ -201,3 +201,14 @@ examples/opt/distance/xmlfiles/SN1_Li1.xml
 examples/opt/distance/xmlfiles/merged.xml
 examples/opt/distance/vs_testtest.pdb
 examples/opt/distance/SN1_Li1_best.xml
+examples/opt/2rdf_1adf_density/loss_wrightfactor/dmff_parsed.yaml
+examples/opt/2rdf_1adf_density/loss_wrightfactor/2rdf_1adf_density_best.xml
+examples/opt/2rdf_1adf_density/loss_wrightfactor/2rdf_1adf_density_learning_curve.png
+examples/opt/2rdf_1adf_density/loss_wrightfactor/sample_0.png
+examples/opt/2rdf_1adf_density/loss_wrightfactor/sample_1.png
+examples/opt/2rdf_1adf_density/loss_wrightfactor/vs_merged_supercell_bonds.pdb
+examples/opt/distance/hoge.pdb
+examples/opt/2rdf_1adf_density/loss_wrightfactor/xmlfiles/2rdf_1adf_density.xml
+examples/opt/2rdf_1adf_density/loss_wrightfactor/xtcfiles/.sample_0.xtc_offsets.npz
+examples/opt/2rdf_1adf_density/loss_wrightfactor/xtcfiles/sample_0.xtc
+tests/test_trainer/test_tp_learning_curve.png
