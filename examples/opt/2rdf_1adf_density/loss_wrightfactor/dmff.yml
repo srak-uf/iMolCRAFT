@@ -12,6 +12,7 @@ sampling:
     prod_steps : 100000
     nstxout: 1000
     neff: 30
+    dispcorr: True
 targets:
     density_gcm3:
         weight: 1.0

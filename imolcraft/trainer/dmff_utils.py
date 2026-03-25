@@ -48,6 +48,8 @@ def parser_dmffyaml(yaml_file):
             "anneal_Tmax": 400,
             "anneal_totaltime": 0,
             "nstxout": 100,
+            "rcut_nm": 1.2,
+            "dispcorr": False
         }
     }
     necessarykeys_sampling = ["init_structure", "relax_steps", "prod_steps"]

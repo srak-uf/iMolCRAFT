@@ -496,6 +496,7 @@ class ThermodynamicTrainer(BaseTrainer):
                     nonbondedMethod=app.PME,
                     nonbondedCutoff=self.sampling_params[0]["rcut_nm"]
                     * unit.nanometer,
+                    useDispersionCorrection=self.sampling_params[0]["dispcorr"],
                     )
             self.potentials = [pots]
             self.topology = [self.topology]
@@ -516,6 +517,7 @@ class ThermodynamicTrainer(BaseTrainer):
                         nonbondedMethod=app.PME,
                         nonbondedCutoff=self.sampling_params[i]["rcut_nm"]
                         * unit.nanometer,
+                        useDispersionCorrection=self.sampling_params[i]["dispcorr"],
                     )
                 self.potentials.append(pots)
                 self.efuncs.append(jit(pots.getPotentialFunc()))
@@ -542,6 +544,7 @@ class ThermodynamicTrainer(BaseTrainer):
         self.anneal_totalsteps = []
         self.relax_steps = []
         self.rc_nm = []
+        self.dispcorr = []
         self.prod_steps = []
         self.nstxout = []
         self.neff = []
@@ -555,6 +558,7 @@ class ThermodynamicTrainer(BaseTrainer):
             self.anneal_totalsteps.append(int(sampling_param["anneal_totalsteps"]))
             self.relax_steps.append(int(sampling_param["relax_steps"]))
             self.rc_nm.append(float(sampling_param["rcut_nm"]))
+            self.dispcorr.append(bool(sampling_param["dispcorr"]))
             self.prod_steps.append(float(sampling_param["prod_steps"]))
             self.nstxout.append(int(sampling_param["nstxout"]))
             self.neff.append(int(sampling_param["neff"]))
@@ -606,6 +610,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 pressure=self.P_bar[i],
                 nonbondedMethod=app.PME,
                 nonbondedCutoff=self.rc_nm[i] * unit.nanometer,
+                useDispersionCorrection=self.dispcorr[i],
             )
             traj = md.load(xtcfile, top=self.pdbfile_vsite[i])
             sample = Sample(traj, state_name)
@@ -707,6 +712,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 pressure=self.P_bar[idx],
                 nonbondedMethod=app.PME,
                 nonbondedCutoff=self.rc_nm[idx] * unit.nanometer,
+                useDispersionCorrection=self.dispcorr[idx],
             )
             sample = Sample(traj, state_name)
             self.target_pred_frame[idx] = get_target_pred_frame(
