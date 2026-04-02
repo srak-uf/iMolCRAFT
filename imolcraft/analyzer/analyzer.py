@@ -5,7 +5,8 @@ import numpy as np
 import mdtraj as md
 
 
-def calc_rdf(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
+def calc_rdf(u: MDAnalysis.Universe, elem1, elem2,
+             rmax=8.0, dr=0.01, start=None, stop=None, step=None):
     """
     Calculate averaged radial distribution function (RDF) between two elements.
 
@@ -21,6 +22,15 @@ def calc_rdf(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
         Maximum distance for RDF calculation (default is 8.0).
     dr : float, optional
         Bin width for RDF calculation (default is 0.01).
+    start : int, optional
+        Starting frame index for RDF calculation
+        (default is None, which means the first frame).
+    stop : int, optional
+        Ending frame index for RDF calculation
+        (default is None, which means the last frame).
+    step : int, optional
+        Step size for frame selection in RDF calculation
+        (default is None, which means every frame).
 
     Returns
     -------
@@ -32,7 +42,7 @@ def calc_rdf(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
     u_select1 = u.select_atoms(f"element {elem1}")
     u_select2 = u.select_atoms(f"element {elem2}")
     rdf = mda.InterRDF(u_select1, u_select2, range=(0, rmax), nbins=int(rmax / dr))
-    rdf.run()
+    rdf.run(start=start, stop=stop, step=step)
     r = rdf.results.bins
     g = rdf.results.rdf
     if g[0] > 1:
@@ -40,7 +50,8 @@ def calc_rdf(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
     return r, g
 
 
-def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
+def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01,
+                   start=None, stop=None, step=None):
     """
     Calculate radial distribution function (RDF) between two elements for each frame.
 
@@ -56,6 +67,16 @@ def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
         Maximum distance for RDF calculation (default is 8.0).
     dr : float, optional
         Bin width for RDF calculation (default is 0.01).
+    start : int, optional
+        Starting frame index for RDF calculation
+        (default is None, which means the first frame).
+    stop : int, optional
+        Ending frame index for RDF calculation
+        (default is None, which means the last frame).
+    step : int, optional
+        Step size for frame selection in RDF calculation
+        (default is None, which means every frame).
+
 
     Returns
     -------
@@ -66,7 +87,13 @@ def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
     u_select2 = u.select_atoms(f"element {elem2}")
     rdf = mda.InterRDF(u_select1, u_select2, range=(0, rmax), nbins=int(rmax / dr))
     rdf_list = []
-    for i_frame in range(len(u.trajectory)):
+    if start is None:
+        start = 0
+    if stop is None:
+        stop = len(u.trajectory)
+    if step is None:
+        step = 1
+    for i_frame in range(start, stop, step):
         rdf.run(frames=[i_frame])
         g = rdf.results.rdf
         if g[0] > 1:
@@ -75,7 +102,8 @@ def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01):
     return np.array(rdf_list)
 
 
-def calc_adf_frame(xtcfile, pdbfile, elem1, elem2, elem3, rcut12=3.0, rcut23=3.0):
+def calc_adf_frame(xtcfile, pdbfile, elem1, elem2, elem3, rcut12=3.0, rcut23=3.0,
+                   start=None, stop=None, step=None):
     """
     Calculate angle distribution function (ADF) between three elements.
     The function calculates the angle formed by three atoms of different types
@@ -100,6 +128,15 @@ def calc_adf_frame(xtcfile, pdbfile, elem1, elem2, elem3, rcut12=3.0, rcut23=3.0
         Cutoff distance for the first pair of elements (default is 3.0).
     rcut23 : float, optional
         Cutoff distance for the second pair of elements (default is 3.0).
+    start : int, optional
+        Starting frame index for ADF calculation
+        (default is None, which means the first frame).
+    stop : int, optional
+        Ending frame index for ADF calculation
+        (default is None, which means the last frame).
+    step : int, optional
+        Step size for frame selection in ADF calculation
+        (default is None, which means every frame).
 
     Returns
     -------
@@ -110,6 +147,7 @@ def calc_adf_frame(xtcfile, pdbfile, elem1, elem2, elem3, rcut12=3.0, rcut23=3.0
     rcut12 /= 10.0
     rcut23 /= 10.0
     t = md.load(xtcfile, top=pdbfile)
+    t = t[start:stop:step]  # select frames
     elem1_idx = t.topology.select(f"element {elem1}")
     elem2_idx = t.topology.select(f"element {elem2}")
     elem3_idx = t.topology.select(f"element {elem3}")
@@ -163,7 +201,8 @@ def calc_adf_frame(xtcfile, pdbfile, elem1, elem2, elem3, rcut12=3.0, rcut23=3.0
     return prob_123
 
 
-def calc_adf(xtcfile, pdbfile, elem1, elem2, elem3, rcut12=3.0, rcut23=3.0):
+def calc_adf(xtcfile, pdbfile, elem1, elem2, elem3, rcut12=3.0, rcut23=3.0,
+             start=None, stop=None, step=None):
     """
     Calculate angle distribution function (ADF) between three elements.
     The function calculates the angle formed by three atoms of different types
@@ -197,7 +236,8 @@ def calc_adf(xtcfile, pdbfile, elem1, elem2, elem3, rcut12=3.0, rcut23=3.0):
         Array of angle distribution function values for each frame.
     """
     prob_123 = calc_adf_frame(
-        xtcfile, pdbfile, elem1, elem2, elem3, rcut12=rcut12, rcut23=rcut23
+        xtcfile, pdbfile, elem1, elem2, elem3, rcut12=rcut12, rcut23=rcut23,
+        start=start, stop=stop, step=step
     )
     bins = np.arange(0, 180 + 0.001, 1)
     deg_123 = bins[:-1]

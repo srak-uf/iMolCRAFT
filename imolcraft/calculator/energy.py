@@ -145,6 +145,7 @@ def get_dmff_potential_energy(pdbfile,
     positions = jnp.array(traj[0].xyz[0, :, :])
     print(jnp.result_type(positions), positions.shape)
     nbobj = NeighborListFreud(box, nonbonded_cutoff, cov_map)
+    nbobj.capacity_multiplier = 1
     pairs = nbobj.allocate(positions)
     pairs = jnp.array(pairs)
     ffparams = ff.getParameters().parameters
