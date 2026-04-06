@@ -544,6 +544,7 @@ class ThermodynamicTrainer(BaseTrainer):
         self.anneal_totalsteps = []
         self.relax_steps = []
         self.rc_nm = []
+        self.nonbondedmethod = []
         self.dispcorr = []
         self.prod_steps = []
         self.nstxout = []
@@ -564,6 +565,13 @@ class ThermodynamicTrainer(BaseTrainer):
             self.neff.append(int(sampling_param["neff"]))
             self.dt_fs.append(float(sampling_param["dt_fs"]))
             self.ensemble.append(sampling_param["ensemble"])
+            self.nonbondedmethod.append(sampling_param["nonbondedmethod"])
+
+        for i in range(len(self.nonbondedmethod)):
+            if self.nonbondedmethod[i] == "PME":
+                self.nonbondedmethod[i] = app.PME
+            elif self.nonbondedmethod[i] == "LJPME":
+                self.nonbondedmethod[i] = app.LJPME
 
         # target
         if isinstance(self.target_params, dict):
@@ -588,19 +596,21 @@ class ThermodynamicTrainer(BaseTrainer):
         for i in range(len(self.sampling_params)):
             state_name = f"sample_{i}"
             xtcfile = md_sample(
-                self.pdbfile[i],
-                self.ffxml,
-                f"{state_name}.xtc",
-                self.rc_nm[i],
-                self.T_K[i],
-                self.anneal_Tmax[i],
-                self.anneal_steps[i],
-                self.anneal_totalsteps[i],
-                self.dt_fs[i],
-                self.nstxout[i],
-                self.relax_steps[i],
-                self.prod_steps[i],
-                self.ensemble[i],
+                initialpdb=self.pdbfile[i],
+                ffxml=self.ffxml,
+                xtcfile=f"{state_name}.xtc",
+                rc=self.rc_nm[i],
+                T=self.T_K[i],
+                anneal_Tmax=self.anneal_Tmax[i],
+                anneal_steps=self.anneal_steps[i],
+                anneal_totalsteps=self.anneal_totalsteps[i],
+                dt=self.dt_fs[i],
+                nstxout=self.nstxout[i],
+                relax_steps=self.relax_steps[i],
+                prod_steps=self.prod_steps[i],
+                ensemble=self.ensemble[i],
+                nonbondedmethod=self.nonbondedmethod[i],
+                useDispersionCorrection=self.dispcorr[i],
             )
             state = OpenMMSampleState(
                 state_name,

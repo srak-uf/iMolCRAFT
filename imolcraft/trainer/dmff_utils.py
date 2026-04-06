@@ -49,6 +49,7 @@ def parser_dmffyaml(yaml_file):
             "anneal_totaltime": 0,
             "nstxout": 100,
             "rcut_nm": 1.2,
+            "nonbondedmethod": "PME",
             "dispcorr": False
         }
     }
@@ -523,16 +524,17 @@ def md_sample(
     initialpdb,
     ffxml,
     trajectory,
-    rc,
-    T,
-    anneal_Tmax,
-    anneal_steps,
-    anneal_totalsteps,
-    dt,
-    nstxout,
-    relax_steps,
-    prod_steps,
-    ensemble,
+    rc=1.2,
+    T=300,
+    anneal_Tmax=300,
+    anneal_steps=0,
+    anneal_totalsteps=0,
+    dt=1.0,
+    nstxout=1000,
+    relax_steps=100000,
+    prod_steps=2000000,
+    ensemble="nvt",
+    nonbondedmethod="PME",
     useDispersionCorrection=False,
     useHbondConstraint=True,
     rigidWater=False,
@@ -569,10 +571,15 @@ def md_sample(
     # modellerをpdbに書き出す
     # app.PDBFile.writeFile(topology, pos, open("modeller.pdb", "w"))
 
+    if nonbondedmethod == "PME":
+        nonbondedmethod = app.PME
+    elif nonbondedmethod == "LJPME":
+        nonbondedmethod = app.LJPME
+
     if useHbondConstraint:
         system = forcefield.createSystem(
             topology,
-            nonbondedMethod=app.PME,
+            nonbondedMethod=nonbondedmethod,
             nonbondedCutoff=rc * unit.nanometer,
             constraints=app.HBonds,
             rigidWater=rigidWater,
@@ -580,7 +587,7 @@ def md_sample(
     else:
         system = forcefield.createSystem(
             topology,
-            nonbondedMethod=app.PME,
+            nonbondedMethod=nonbondedmethod,
             nonbondedCutoff=rc * unit.nanometer,
             rigidWater=rigidWater,
         )
