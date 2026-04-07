@@ -598,7 +598,7 @@ class ThermodynamicTrainer(BaseTrainer):
             xtcfile = md_sample(
                 initialpdb=self.pdbfile[i],
                 ffxml=self.ffxml,
-                xtcfile=f"{state_name}.xtc",
+                trajectory=f"{state_name}.xtc",
                 rc=self.rc_nm[i],
                 T=self.T_K[i],
                 anneal_Tmax=self.anneal_Tmax[i],

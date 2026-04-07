@@ -1,8 +1,9 @@
 sampling:
-    init_structure: merged_supercell_bonds.pdb
+    init_structure: supercell_bonds.pdb
     ensemble: anisonpt
     dt_fs: 1.0
-    rcut_nm: 1.2
+    rcut_nm: 0.85
+    nonbondedmethod: LJPME
     temperature_K: 233.15
     pressure_bar: 1.0
     anneal_steps: 1
@@ -11,17 +12,18 @@ sampling:
     relax_steps: 20000
     prod_steps : 100000
     nstxout: 1000
-    neff: 30
+    neff: 50
+    dispcorr: True
 targets:
     density_gcm3:
         weight: 1.0
         gt: 1.568
     La_A:
         weight: 1.0
-        gt: 36.82
+        gt: 24.188
     Lc_A:
         weight: 1.0
-        gt: 40.2152
+        gt: 20.108
     rdf:
         Li-O:
             weight: 1.0

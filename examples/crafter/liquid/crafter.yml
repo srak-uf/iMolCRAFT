@@ -1,0 +1,22 @@
+charge:
+  basis: 6-31g(d)
+  method: hf
+  software: psi4
+  type: resp
+forcefield:
+  charge_scale_ion: 0.8
+  charge_scale_neutral: 1.0
+  fftype: gaff-2.11
+  iontype: amber/ions/ionsff99_tip3p.xml
+geoopt:
+  basis: 6-311+g(2d,p)
+  method: wb97xd
+  software: psi4
+structure:
+  type: liquid
+  molecules: ["Li.pdb", "BF4.pdb", "SL.pdb"]
+  fixed_property: "density"
+  priority_property: "cell"
+  nmols: [1, 1, 10]
+  density_kgm3: 1304
+  cell_A: [40, 40, 40]
