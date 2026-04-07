@@ -699,19 +699,21 @@ class ThermodynamicTrainer(BaseTrainer):
                 state_name = f"sample_{idx}"
             print(f"Resampling {state_name}... by {self.ffxml}")
             xtcfile = md_sample(
-                self.pdbfile[idx],
-                self.ffxml,
-                f"{state_name}.xtc",
-                self.rc_nm[idx],
-                self.T_K[idx],
-                self.anneal_Tmax[idx],
-                self.anneal_steps[idx],
-                self.anneal_totalsteps[idx],
-                self.dt_fs[idx],
-                self.nstxout[idx],
-                self.relax_steps[idx],
-                self.prod_steps[idx],
-                self.ensemble[idx],
+                initialpdb=self.pdbfile[idx],
+                ffxml=self.ffxml,
+                trajectory=f"{state_name}.xtc",
+                rc=self.rc_nm[idx],
+                T=self.T_K[idx],
+                anneal_Tmax=self.anneal_Tmax[idx],
+                anneal_steps=self.anneal_steps[idx],
+                anneal_totalsteps=self.anneal_totalsteps[idx],
+                dt=self.dt_fs[idx],
+                nstxout=self.nstxout[idx],
+                relax_steps=self.relax_steps[idx],
+                prod_steps=self.prod_steps[idx],
+                ensemble=self.ensemble[idx],
+                nonbondedmethod=self.nonbondedmethod[idx],
+                useDispersionCorrection=self.dispcorr[idx]
             )
             traj = md.load(f"{xtcfile}", top=self.pdbfile_vsite[idx])
             state = OpenMMSampleState(
@@ -720,7 +722,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 self.pdbfile[idx],  # without virtual sites
                 temperature=self.T_K[idx],
                 pressure=self.P_bar[idx],
-                nonbondedMethod=app.PME,
+                nonbondedMethod=self.nonbondedmethod[idx],
                 nonbondedCutoff=self.rc_nm[idx] * unit.nanometer,
                 useDispersionCorrection=self.dispcorr[idx],
             )
