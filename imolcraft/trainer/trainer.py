@@ -440,6 +440,7 @@ class ThermodynamicTrainer(BaseTrainer):
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
+        resample_freq: int = 50,
     ) -> None:
         """
         Initialize the ThermodynamicTrainer.
@@ -472,6 +473,8 @@ class ThermodynamicTrainer(BaseTrainer):
         # params
         self.sampling_params = sampling_params
         self.target_params = target_params
+        self.resample_freq = resample_freq
+        self.resample_counter = 0
 
         super().__init__(
             ffxml_list=ffxml_list,
@@ -679,6 +682,7 @@ class ThermodynamicTrainer(BaseTrainer):
         """
         Resample MD trajectories and update MBAR estimator if needed.
         """
+        self.resample_counter = 0
         if len(self.estimator.states) > 0:
             removedstatename = [
                 self.estimator.states[i].name
@@ -740,6 +744,10 @@ class ThermodynamicTrainer(BaseTrainer):
         optimization step.
         Handles periodic XML output and effective sample size checks.
         """
+        self.resample_counter += 1
+        if self.resample_counter >= self.resample_freq:
+            self.resample = [True for i in range(len(self.sampling_params))]
+
         if True in self.resample:  # i.e., loss is nan
             self._resample()
             self.resample = [False for i in range(len(self.sampling_params))]

@@ -1,0 +1,46 @@
+sampling:
+    init_structure: supercell_bonds.pdb
+    ensemble: anisonpt
+    dt_fs: 1.0
+    rcut_nm: 0.8
+    nonbondedmethod: LJPME
+    temperature_K: 233.15
+    pressure_bar: 1.0
+    anneal_steps: 1
+    anneal_Tmax : 400.0
+    anneal_totalsteps: 0
+    relax_steps: 20000
+    prod_steps : 100000
+    nstxout: 1000
+    neff: 50
+    dispcorr: True
+targets:
+    La_A:
+        weight: 1.0
+        gt: 20.624
+    Lb_A:
+        weight: 1.0
+        gt: 17.707
+    Lc_A:
+        weight: 1.0
+        gt: 18.337
+    rdf:
+        Li-O:
+            weight: 1.0
+            elem1: Li
+            elem2: O
+            rcut12_A: 8.0
+            gt: rdf_Li_O.txt
+        Li-F:
+            weight: 1.0
+            elem1: Li
+            elem2: F
+            rcut12_A: 8.0
+            gt: rdf_Li_F.txt
+        Li-Li:
+            weight: 1.0
+            elem1: Li
+            elem2: Li
+            rcut12_A: 8.0
+            gt: rdf_Li_Li.txt
+
