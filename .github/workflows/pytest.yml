@@ -27,8 +27,6 @@ jobs:
         shell: bash -el {0}
         run: |
           conda install -c conda-forge pytest
-          pip install git+https://github.com/srak-uf/DMFF
-          pip install git+https://github.com/srak-uf/openff-recharge
           pip install .
       
       - name: Run tests
