@@ -15,6 +15,7 @@ from imolcraft.trainer.dmff_utils import (
     get_rescharges_from_residues,
     vsiteinfo_to_params,
 )
+import psutil
 
 
 class BaseTrainer:
@@ -107,8 +108,6 @@ class BaseTrainer:
         self.rescharges, self.natoms_list = get_rescharges_from_residues(
             self.ff, ratio=nums_ffxml
         )
-        if self.num_vsites > 0:
-            ffparams = vsiteinfo_to_params(self.ff, ffparams)
         self.ffparams = get_chgparams_from_rescharges(ffparams, self.rescharges)
 
         self.loss_fn = loss_fn
@@ -123,13 +122,14 @@ class BaseTrainer:
 
         self.lr = lr
         self.clip = clip
+
         multiTrans = MultiTransform(self.ffparams)
         self.optimizer_algo = optimizer_algo
         for i, opt_fftype in enumerate(self.opt_fftypes):
             # multiTrans[opt_fftype] = genOptimizer(
             #     learning_rate=lr, clip=0.001, nonzero=False
             # )
-            if opt_fftype == "NonbondedForce/charges":
+            if opt_fftype == "NonbondedForce/charge":
                 multiTrans[opt_fftype] = genOptimizer(
                     optimizer=self.optimizer_algo,
                     learning_rate=lr[i],
@@ -217,20 +217,24 @@ class BaseTrainer:
         Handles NaN/Inf loss by perturbing parameters.
         """
         self.loss, grads = self.get_loss_gradients()
+        process = psutil.Process(os.getpid())
+        print(f"grad obtained.... Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
         if jnp.isnan(self.loss) or jnp.isinf(self.loss):
             print("Warning: Loss is NaN or Inf. Skipping this step.")
             # self.ffparamsを0.01%ランダムにずらす
-            self.ffparams = jax.tree_util.tree_map(
+            grads = jax.tree_util.tree_map(
                 lambda x: x
                 + 0.0001 * jax.random.normal(jax.random.PRNGKey(1), shape=x.shape),
                 self.ffparams,
             )
-        else:
-            grads = self._do_modify("after_grad", grads)
-            updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
-            # print("Updates: ", updates)
-            self.ffparams = optax.apply_updates(self.ffparams, updates)
-            self.ffparams = self._do_modify("after_update", self.ffparams)
+
+        grads = self._do_modify("after_grad", grads)
+        print(f"grad modify.... Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
+        updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
+        # print("Updates: ", updates)
+        self.ffparams = optax.apply_updates(self.ffparams, updates)
+        self.ffparams = self._do_modify("after_update", self.ffparams)
+        print(f"update finished.... Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
 
     def before_step(self) -> None:
         """
@@ -281,9 +285,12 @@ class BaseTrainer:
             self.losses.append(self.loss)
             if i_epoch % checkpoint_frequency == 0:
                 self.write_checkpoint(checkpoint_frequency)
+                process = psutil.Process(os.getpid())
+                print(
+                    f"Epoch {i_epoch}, Loss: {self.loss}, Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB"
+                )
             self._epoch += 1
             end_time = time.time()
-            print(f"Epoch {i_epoch} completed in {end_time - start_time:.2f} seconds.")
             print("Loss: ", self.loss)
             print(
                 "Best Loss: ",
@@ -291,3 +298,5 @@ class BaseTrainer:
                 "at epoch ",
                 self.epochs[self.losses.index(min(self.losses))],
             )
+            print(f"Epoch {i_epoch} completed in {end_time - start_time:.2f} seconds.")
+            print("----")

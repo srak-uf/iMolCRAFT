@@ -38,14 +38,14 @@ def test_get_target_gt():
 
 
 def test_neutralize():
-    ffparams = {"NonbondedForce": {"charges": jnp.array([1.0, -1.0])}}
+    ffparams = {"NonbondedForce": {"charge": jnp.array([1.0, -1.0])}}
     natoms_list = jnp.array([1, 1])
     result = dmff_utils.neutralize(ffparams, natoms_list, 0.0)
-    assert np.isclose(jnp.dot(result["NonbondedForce"]["charges"], natoms_list), 0.0)
+    assert np.isclose(jnp.dot(result["NonbondedForce"]["charge"], natoms_list), 0.0)
     result = dmff_utils.neutralize(ffparams, natoms_list, 0.1)
-    assert np.isclose(jnp.dot(result["NonbondedForce"]["charges"], natoms_list), 0.1)
+    assert np.isclose(jnp.dot(result["NonbondedForce"]["charge"], natoms_list), 0.1)
 
-    ffparams = {"NonbondedForce": {"charges": jnp.array([1.0, -1.0, 0.5, -0.5, 0.0])}}
+    ffparams = {"NonbondedForce": {"charge": jnp.array([1.0, -1.0, 0.5, -0.5, 0.0])}}
     natoms_list = jnp.array([1, 1, 2, 2, 1])
     nc = 0.4
     target_lists = [[0, 1], [2, 3]]
@@ -54,15 +54,15 @@ def test_neutralize():
         ffparams, natoms_list, nc, target_lists, target_charges
     )
     assert np.isclose(
-        result["NonbondedForce"]["charges"][0] + result["NonbondedForce"]["charges"][1],
+        result["NonbondedForce"]["charge"][0] + result["NonbondedForce"]["charge"][1],
         0.2
     )
     assert np.isclose(
-        result["NonbondedForce"]["charges"][2] +
-        result["NonbondedForce"]["charges"][3],
+        result["NonbondedForce"]["charge"][2] +
+        result["NonbondedForce"]["charge"][3],
         0.1
     )
-    assert np.isclose(jnp.dot(result["NonbondedForce"]["charges"], natoms_list), 0.4)
+    assert np.isclose(jnp.dot(result["NonbondedForce"]["charge"], natoms_list), 0.4)
 
 
 def test_update_ffinfo_from_params_and_rescharges():
@@ -74,7 +74,7 @@ def test_update_ffinfo_from_params_and_rescharges():
                 ]
             }
     ff = DummyFF()
-    params = {"NonbondedForce": {"charges": jnp.array([1.0, 2.0])}}
+    params = {"NonbondedForce": {"charge": jnp.array([1.0, 2.0])}}
     ff2 = dmff_utils.update_ffinfo_from_params(ff, params)
     assert ff2.ffinfo["Residues"][0]["particles"][0]["charge"] == 1.0
     assert ff2.ffinfo["Residues"][0]["particles"][1]["charge"] == 2.0
@@ -91,4 +91,4 @@ def test_vsiteinfo_to_params():
     ff = DummyFF()
     params = {}
     params2 = dmff_utils.vsiteinfo_to_params(ff, params)
-    assert np.allclose(params2["VsiteForce"]["weight"], jnp.array([1.0, 2.0]))
+    assert np.allclose(params2["VirtualSite"]["weight"], jnp.array([1.0, 2.0]))

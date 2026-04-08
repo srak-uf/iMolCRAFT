@@ -1,0 +1,20 @@
+<ForceField>
+  <Info>
+    <DateGenerated>2026-04-08</DateGenerated>
+  </Info>
+  <AtomTypes>
+    <Type element="B" name="B" class="B" mass="10.81"/>
+    <Type element="F" name="f" class="f" mass="19.0"/>
+  </AtomTypes>
+  <HarmonicBondForce>
+    <Bond class1="B" class2="f" length="0.142" k="308026.07999999996"/>
+  </HarmonicBondForce>
+  <HarmonicAngleForce>
+    <Angle class1="f" class2="B" class3="f" angle="1.9484855769264695" k="1005.8336"/>
+  </HarmonicAngleForce>
+  <NonbondedForce coulomb14scale="0.8333333333333334" lj14scale="0.5">
+    <UseAttributeFromResidue name="charge"/>
+    <Atom class="B" sigma="0.3315212309943831" epsilon="0.4133792"/>
+    <Atom class="f" sigma="0.30342228542423677" epsilon="0.3481088"/>
+  </NonbondedForce>
+<Residues><Residue name="[F][B-]([F])([F])[F]"><Atom name="B1" type="B" charge="0.6974789197789092"/><Atom name="F1" type="f" charge="-0.3743697299447273"/><Atom name="F2" type="f" charge="-0.3743697299447273"/><Atom name="F3" type="f" charge="-0.3743697299447273"/><Atom name="F4" type="f" charge="-0.3743697299447273"/><Bond atomName1="F1" atomName2="B1"/><Bond atomName1="F2" atomName2="B1"/><Bond atomName1="F3" atomName2="B1"/><Bond atomName1="F4" atomName2="B1"/></Residue></Residues></ForceField>

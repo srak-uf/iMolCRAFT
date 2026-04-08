@@ -6,8 +6,10 @@ from jax import jit, vmap
 from .dmff_utils import update_ffinfo_from_params
 from openmm import app
 import openmm.unit as unit
-from dmff.mbar import TargetState, buildTrajEnergyFunction
+from dmff.mbar import TargetState, buildTrajEnergyFunction, MBAREstimator, buildInputEnergyFunction
 from dmff import Hamiltonian, DMFFTopology
+import psutil
+import os
 
 
 def mse_energy(
@@ -96,8 +98,7 @@ def jsdivergence(g_ff, g_gt):
 
 def loss_energy(
     ffparams,
-    ff,
-    topology,
+    efunc,
     positions,
     pairs,
     y_gt,
@@ -106,22 +107,7 @@ def loss_energy(
     zeropoint="auto",
     temperature=500,
 ):
-    ff_d = update_ffinfo_from_params(ff, ffparams)
-    ffparams_wo_charge = {}
-    for key in ffparams.keys():
-        if key == "NonbondedForce":
-            ffparams_wo_charge[key] = {}
-            for key2 in ffparams[key].keys():
-                if key2 != "charges":
-                    ffparams_wo_charge[key][key2] = ffparams[key][key2]
-        elif key == "VsiteForce":
-            pass
-        else:
-            ffparams_wo_charge[key] = ffparams[key]
-
-    pots = ff_d.createPotential(topology)  # should be pdb topology wo vsites
-    efunc = pots.getPotentialFunc()
-    batched_efunc = vmap(lambda x: efunc(x, None, pairs[0], ffparams_wo_charge))
+    batched_efunc = vmap(lambda x: efunc(x, None, pairs[0], ffparams))
     e_ff = batched_efunc(positions)
     loss = mse_energy(
         e_ff,
@@ -136,50 +122,41 @@ def loss_energy(
 
 def loss_thermodynamicperturbation(
     ffparams: dict,
-    ff: Hamiltonian,
-    topology: app.Topology | DMFFTopology,
+    efunc: any,
     cov_map,
     rc: float,
     ensemble: str,
     Temperature_K: float,
-    estimator,
+    estimator: MBAREstimator,
     target_gt: dict,
     target_pred: dict,
     pressure: float = 1.0,
-    useDispersionCorrection: bool = False,
     losstype_distribfn: str = "wrightfactor",
 ):
-    ff = update_ffinfo_from_params(ff, ffparams)
-    ffparams_wo_charge = {}
-    for key in ffparams.keys():
-        if key == "NonbondedForce":
-            ffparams_wo_charge[key] = {}
-            for key2 in ffparams[key].keys():
-                if key2 != "charges":
-                    ffparams_wo_charge[key][key2] = ffparams[key][key2]
-        elif key == "VsiteForce":
-            pass
-        else:
-            ffparams_wo_charge[key] = ffparams[key]
-    pots = ff.createPotential(
-        topology,
-        nonbondedMethod=app.PME,
-        nonbondedCutoff=rc * unit.nanometer,
-        useDispersionCorrection=useDispersionCorrection,
-    )
-    efunc = jit(pots.getPotentialFunc())
     if ensemble in ["isonpt", "anisonpt", "trinpt"]:
         ens = "npt"
     else:
         ens = ensemble
-    target_energy_function = buildTrajEnergyFunction(
-        efunc, cov_map, rc, ensemble=ens, useFreud=True, pressure=pressure
-    )
-    target_state = TargetState(Temperature_K, target_energy_function)
-    weight, utarget = estimator.estimate_weight(
-        target_state, parameters=ffparams_wo_charge
-    )
 
+    if estimator._input is None:
+        target_energy_function = buildTrajEnergyFunction(
+            efunc, cov_map, rc, ensemble=ens, useFreud=True, pressure=pressure
+        )
+        target_state = TargetState(Temperature_K, target_energy_function)
+        weight, utarget = estimator.estimate_weight(
+            target_state, parameters=ffparams, return_input=True
+        )
+    else:
+        input_energy_function = buildInputEnergyFunction(
+            efunc, ensemble=ens, pressure=pressure
+        )
+        target_state = TargetState(Temperature_K, input_energy_function)
+        weight, utarget = estimator.estimate_weight(
+            target_state, parameters=ffparams, direct=True
+        )
+
+    process = psutil.Process(os.getpid())
+    print(f"Get weight, Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
     loss = 0.0
     weighted_results = {}
     for key in target_gt.keys():
@@ -204,5 +181,5 @@ def loss_thermodynamicperturbation(
                 elif losstype_distribfn == "jsdivergence":
                     loss_tmp = jsdivergence(rdf_pred, target_gt[key][kind]["gt"])
                 loss += target_gt[key][kind]["weight"] * loss_tmp
-
+    print(f"Finish loss calc Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
     return loss, (utarget, weighted_results)

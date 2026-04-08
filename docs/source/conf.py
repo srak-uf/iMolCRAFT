@@ -23,13 +23,21 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
     'sphinx.ext.mathjax',
-    'myst_parser'
+    # 'myst_parser',
+    'myst_nb',
 ]
+
+# source_suffix = {
+#     '.rst': 'restructuredtext',
+#     '.md': 'markdown',
+# }
 
 source_suffix = {
     '.rst': 'restructuredtext',
-    '.md': 'markdown',
+    '.ipynb': 'myst-nb',
+    '.myst': 'myst-nb',
 }
+
 
 templates_path = ['_templates']
 exclude_patterns = []

@@ -252,7 +252,7 @@ class TestThermodynamicTrainer:
                                            'La_A': {'weight': 1.0, 'gt': 41},
                                            'Lb_A': {'weight': 1.0, 'gt': 41},
                                            'Lc_A': {'weight': 1.0, 'gt': 41}},
-                            opt_fftypes=["NonbondedForce/charges", 'VsiteForce/weight'],
+                            opt_fftypes=["NonbondedForce/charge", 'VirtualSite/weight'],
                             label="test_tp",
                         )
         self.trainer.setup()

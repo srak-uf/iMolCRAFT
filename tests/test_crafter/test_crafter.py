@@ -39,39 +39,76 @@ class TestCrafter_crystal:
         assert structure['repeat'] == [1, 1, 2]
 
     def test_prep_woqm(self, init_crafter):
-        self.crafter.from_yaml(
-            os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "data",
-                "craft_params.yml"
+        import tempfile
+        import shutil
+        
+        # Create a temporary directory for this test
+        test_dir = tempfile.mkdtemp()
+        original_dir = os.getcwd()
+        
+        try:
+            os.chdir(test_dir)
+            
+            self.crafter.from_yaml(
+                os.path.join(
+                    os.path.dirname(__file__),
+                    "..",
+                    "data",
+                    "craft_params.yml"
+                )
             )
-        )
-        self.crafter.prep(do_opt=False, do_charge=False)
-        assert len(self.crafter.molatoms) == 8
-        assert self.crafter.mol_info["MOL_0"]["netcharge"] == -1  # BH4-
-        assert self.crafter.mol_info["MOL_1"]["netcharge"] == 1  # Li+
+            self.crafter.prep(do_opt=False, do_charge=False)
+            assert len(self.crafter.molatoms) == 8
+            assert self.crafter.mol_info["MOL_0"]["netcharge"] == -1  # BH4-
+            assert self.crafter.mol_info["MOL_1"]["netcharge"] == 1  # Li+
+            
+            # Check that PDB files with bonds were created by get_molecule_off() in subdirectories
+            assert os.path.exists("MOL_0/MOL_0_bonds.pdb"), "MOL_0/MOL_0_bonds.pdb was not created"
+            assert os.path.exists("MOL_1/MOL_1_bonds.pdb"), "MOL_1/MOL_1_bonds.pdb was not created"
+            
+        finally:
+            os.chdir(original_dir)
+            shutil.rmtree(test_dir)
 
     @pytest.mark.qm
     def test_prep_and_build(self, init_crafter):
-        self.crafter.from_yaml(
-            os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "data",
-                "craft_params.yml"
+        import tempfile
+        import shutil
+        
+        # Create a temporary directory for this test
+        test_dir = tempfile.mkdtemp()
+        original_dir = os.getcwd()
+        
+        try:
+            os.chdir(test_dir)
+            
+            self.crafter.from_yaml(
+                os.path.join(
+                    os.path.dirname(__file__),
+                    "..",
+                    "data",
+                    "craft_params.yml"
+                )
             )
-        )
-        self.crafter.prep(do_opt=True, do_charge=True)
-        assert len(self.crafter.mol_info["MOL_0"]["partial_charges"]) == 5
-        MOL0_charges = self.crafter.mol_info["MOL_0"]["partial_charges"]
-        assert np.isclose(np.sum(MOL0_charges), -0.8)
-        assert np.isclose(MOL0_charges[0], 0.1108411888503414, atol=1e-4)
-        assert np.isclose(MOL0_charges[1], MOL0_charges[2], atol=1e-4)
-        assert np.isclose(MOL0_charges[1], MOL0_charges[3], atol=1e-4)
-        assert np.isclose(MOL0_charges[1], MOL0_charges[4], atol=1e-4)
+            self.crafter.prep(do_opt=True, do_charge=True)
+            assert len(self.crafter.mol_info["MOL_0"]["partial_charges"]) == 5
+            MOL0_charges = self.crafter.mol_info["MOL_0"]["partial_charges"]
+            assert np.isclose(np.sum(MOL0_charges), -0.8)
+            assert np.isclose(MOL0_charges[0], 0.1108411888503414, atol=1e-4)
+            assert np.isclose(MOL0_charges[1], MOL0_charges[2], atol=1e-4)
+            assert np.isclose(MOL0_charges[1], MOL0_charges[3], atol=1e-4)
+            assert np.isclose(MOL0_charges[1], MOL0_charges[4], atol=1e-4)
 
-        self.crafter.build()
+            self.crafter.build()
+            
+            # Verify that PDB files with bonds were created in subdirectories
+            assert os.path.exists("supercell_bonds.pdb"), "supercell_bonds.pdb was not created"
+            assert os.path.exists("MOL_0/MOL_0_bonds.pdb"), "MOL_0/MOL_0_bonds.pdb was not created"
+            assert os.path.exists("MOL_1/MOL_1_bonds.pdb"), "MOL_1/MOL_1_bonds.pdb was not created"
+            
+        finally:
+            os.chdir(original_dir)
+            shutil.rmtree(test_dir)
 
 
 class TestCrafter_liquid:

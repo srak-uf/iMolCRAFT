@@ -48,6 +48,9 @@ def parser_dmffyaml(yaml_file):
             "anneal_Tmax": 400,
             "anneal_totaltime": 0,
             "nstxout": 100,
+            "rcut_nm": 1.2,
+            "nonbondedmethod": "PME",
+            "dispcorr": False
         }
     }
     necessarykeys_sampling = ["init_structure", "relax_steps", "prod_steps"]
@@ -198,7 +201,7 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
         Updated force field parameters with neutralized charges.
     """
 
-    assert len(ffparams["NonbondedForce"]["charges"]) == len(natoms_list), (
+    assert len(ffparams["NonbondedForce"]["charge"]) == len(natoms_list), (
         "len(ffparams['NonbondedForce']['charges']) != len(natoms_list)"
     )
 
@@ -208,17 +211,17 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
         )
         for i, target_list in enumerate(target_lists):
             net_q = jnp.dot(
-                ffparams["NonbondedForce"]["charges"][jnp.array(target_list)],
+                ffparams["NonbondedForce"]["charge"][jnp.array(target_list)],
                 natoms_list[jnp.array(target_list)],
             )
             desired_q = target_charges[i]
             natoms_list_sum = natoms_list[jnp.array(target_list)].sum()
             charges_mod = (
-                ffparams["NonbondedForce"]["charges"][jnp.array(target_list)]
+                ffparams["NonbondedForce"]["charge"][jnp.array(target_list)]
                 + (desired_q - net_q) / natoms_list_sum
             )
-            ffparams["NonbondedForce"]["charges"] = (
-                ffparams["NonbondedForce"]["charges"]
+            ffparams["NonbondedForce"]["charge"] = (
+                ffparams["NonbondedForce"]["charge"]
                 .at[jnp.array(target_list)]
                 .set(charges_mod)
             )
@@ -240,19 +243,19 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
             )
 
             # Update charges for non-targeted atoms
-            net_q = jnp.dot(ffparams["NonbondedForce"]["charges"], natoms_list)
-            ffparams["NonbondedForce"]["charges"] = (
-                ffparams["NonbondedForce"]["charges"]
+            net_q = jnp.dot(ffparams["NonbondedForce"]["charge"], natoms_list)
+            ffparams["NonbondedForce"]["charge"] = (
+                ffparams["NonbondedForce"]["charge"]
                 .at[nottarget_idx]
                 .set(
-                    ffparams["NonbondedForce"]["charges"][nottarget_idx]
+                    ffparams["NonbondedForce"]["charge"][nottarget_idx]
                     - (net_q - nc) / nottarget_list.sum()
                 )
             )
     elif nc is not None:
-        net_q = jnp.dot(ffparams["NonbondedForce"]["charges"], natoms_list)
-        ffparams["NonbondedForce"]["charges"] = (
-            ffparams["NonbondedForce"]["charges"] - (net_q - nc) / natoms_list.sum()
+        net_q = jnp.dot(ffparams["NonbondedForce"]["charge"], natoms_list)
+        ffparams["NonbondedForce"]["charge"] = (
+            ffparams["NonbondedForce"]["charge"] - (net_q - nc) / natoms_list.sum()
         )
 
     return ffparams
@@ -335,24 +338,59 @@ def update_ffinfo_from_params(ff, params):
         for i, _ in enumerate(ff.ffinfo["Residues"][i_res]["particles"]):
             ff.ffinfo["Residues"][i_res]["particles"][i]["charge"] = params[
                 "NonbondedForce"
-            ]["charges"][idx]
+            ]["charge"][idx]
             idx += 1
 
     idx = 0
-    for i_res in range(len(ff.ffinfo["Residues"])):
-        for i, _ in enumerate(ff.ffinfo["Residues"][i_res]["vsites"]):
-            n_weights = len(
-                [
-                    key
-                    for key in ff.ffinfo["Residues"][i_res]["vsites"][i].keys()
-                    if key.startswith("weight")
-                ]
-            )
-            for i_weight in range(n_weights):
-                ff.ffinfo["Residues"][i_res]["vsites"][i][f"weight{i_weight+1}"] = (
-                    params["VsiteForce"]["weight"][idx]
-                )
-                idx += 1
+    if "VirtualSite" in params:
+        w2_ave2 = params["VirtualSite"]["vsite_w2_type_2"] if "vsite_w2_type_2" in params["VirtualSite"] else []
+        if len(w2_ave2) > 0:
+            w1_ave2 = jnp.ones(w2_ave2.shape) - w2_ave2
+            ave2_idx = 0
+        w2_ave3 = params["VirtualSite"]["vsite_w2_type_3"] if "vsite_w2_type_3" in params["VirtualSite"] else []
+        w3_ave3 = params["VirtualSite"]["vsite_w3_type_3"] if "vsite_w3_type_3" in params["VirtualSite"] else []
+        if len(w2_ave3) > 0 or len(w3_ave3) > 0:
+            w1_ave3 = jnp.ones(w2_ave3.shape) - w2_ave3 - w3_ave3
+            ave3_idx = 0
+
+        # "vsite_w2_type_2, vsite_w2_type_3, vsite_w3_type_3"以外のkeyがあればエラー
+        for key in params["VirtualSite"].keys():
+            if key not in ["vsite_w2_type_2", "vsite_w2_type_3", "vsite_w3_type_3"]:
+                raise ValueError(f"Unknown key in VirtualSite params: {key}")
+
+        for i_res in range(len(ff.ffinfo["Residues"])):
+            for i, _ in enumerate(ff.ffinfo["Residues"][i_res]["vsites"]):
+                if ff.ffinfo["Residues"][i_res]["vsites"][i]["type"] == "average2":
+                    ff.ffinfo["Residues"][i_res]["vsites"][i]["weight1"] = float(
+                        w1_ave2[ave2_idx]
+                    )
+                    ff.ffinfo["Residues"][i_res]["vsites"][i]["weight2"] = float(
+                        w2_ave2[ave2_idx]
+                    )
+                    ave2_idx += 1
+                elif ff.ffinfo["Residues"][i_res]["vsites"][i]["type"] == "average3":
+                    ff.ffinfo["Residues"][i_res]["vsites"][i]["weight1"] = float(
+                        w1_ave3[ave3_idx]
+                    )
+                    ff.ffinfo["Residues"][i_res]["vsites"][i]["weight2"] = float(
+                        w2_ave3[ave3_idx]
+                    )
+                    ff.ffinfo["Residues"][i_res]["vsites"][i]["weight3"] = float(
+                        w3_ave3[ave3_idx]
+                    )
+                    ave3_idx += 1
+                # n_weights = len(
+                #     [
+                #         key
+                #         for key in ff.ffinfo["Residues"][i_res]["vsites"][i].keys()
+                #         if key.startswith("weight")
+                #     ]
+                # )
+                # for i_weight in range(n_weights):
+                #     ff.ffinfo["Residues"][i_res]["vsites"][i][f"weight{i_weight+1}"] = (
+                #         params["VirtualSite"]["weight"][idx]
+                #     )
+                #     idx += 1
 
     return ff
 
@@ -366,15 +404,15 @@ def get_chgparams_from_rescharges(params, rescharges):
             for key2 in rescharges[i_res][key]
         ]
     ).sum()
-    params["NonbondedForce"]["charges"] = jnp.zeros(natoms)
+    params["NonbondedForce"]["charge"] = jnp.zeros(natoms)
     ishift = 0
     for res in rescharges:
         natoms = 0
         for t in res:
             for key in res[t]:
                 for idx in res[t][key]["index"]:
-                    params["NonbondedForce"]["charges"] = (
-                        params["NonbondedForce"]["charges"]
+                    params["NonbondedForce"]["charge"] = (
+                        params["NonbondedForce"]["charge"]
                         .at[idx + ishift]
                         .set(res[t][key]["value"])
                     )
@@ -399,12 +437,12 @@ def vsiteinfo_to_params(ff, params):
             # weights_tmpのすべての要素をweightsに追加
             weights.extend(weights_tmp)
 
-    params["VsiteForce"] = {}
-    params["VsiteForce"]["weight"] = jnp.zeros(len(weights))
-    params["VsiteForce"]["scale"] = jnp.zeros(len(weights))
+    params["VirtualSite"] = {}
+    params["VirtualSite"]["weight"] = jnp.zeros(len(weights))
+    params["VirtualSite"]["scale"] = jnp.zeros(len(weights))
     for i in range(len(weights)):
-        params["VsiteForce"]["weight"] = (
-            params["VsiteForce"]["weight"].at[i].set(weights[i])
+        params["VirtualSite"]["weight"] = (
+            params["VirtualSite"]["weight"].at[i].set(weights[i])
         )
 
     return params
@@ -420,10 +458,10 @@ def update_rescharges_from_params(rescharges, params):
                 for idx in res[t][key]["index"]:
                     natoms += 1
                     charge_forave.append(
-                        params["NonbondedForce"]["charges"][idx + ishift]
+                        params["NonbondedForce"]["charge"][idx + ishift]
                     )
                 res[t][key]["value"] = np.mean(charge_forave)
-                # res[t][key]["value"] = params["NonbondedForce"]["charges"][idx+ishift]
+                # res[t][key]["value"] = params["NonbondedForce"]["charge"][idx+ishift]
         ishift += natoms
     return rescharges
 
@@ -486,16 +524,17 @@ def md_sample(
     initialpdb,
     ffxml,
     trajectory,
-    rc,
-    T,
-    anneal_Tmax,
-    anneal_steps,
-    anneal_totalsteps,
-    dt,
-    nstxout,
-    relax_steps,
-    prod_steps,
-    ensemble,
+    rc=1.2,
+    T=300,
+    anneal_Tmax=300,
+    anneal_steps=0,
+    anneal_totalsteps=0,
+    dt=1.0,
+    nstxout=1000,
+    relax_steps=100000,
+    prod_steps=2000000,
+    ensemble="nvt",
+    nonbondedmethod="PME",
     useDispersionCorrection=False,
     useHbondConstraint=True,
     rigidWater=False,
@@ -532,10 +571,15 @@ def md_sample(
     # modellerをpdbに書き出す
     # app.PDBFile.writeFile(topology, pos, open("modeller.pdb", "w"))
 
+    if nonbondedmethod == "PME":
+        nonbondedmethod = app.PME
+    elif nonbondedmethod == "LJPME":
+        nonbondedmethod = app.LJPME
+
     if useHbondConstraint:
         system = forcefield.createSystem(
             topology,
-            nonbondedMethod=app.PME,
+            nonbondedMethod=nonbondedmethod,
             nonbondedCutoff=rc * unit.nanometer,
             constraints=app.HBonds,
             rigidWater=rigidWater,
@@ -543,7 +587,7 @@ def md_sample(
     else:
         system = forcefield.createSystem(
             topology,
-            nonbondedMethod=app.PME,
+            nonbondedMethod=nonbondedmethod,
             nonbondedCutoff=rc * unit.nanometer,
             rigidWater=rigidWater,
         )
@@ -587,6 +631,7 @@ def md_sample(
         app.StateDataReporter(
             sys.stdout,
             nstxout,
+            potentialEnergy=True,
             density=True,
             step=True,
             remainingTime=True,

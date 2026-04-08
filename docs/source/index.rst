@@ -31,11 +31,13 @@ Overview
    theory.rst
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 3
    :caption: Examples
 
    crystal
-   liquid
+   .. liquid
+   .. dihedral
+   .. thermodyn_perturb
 
 .. toctree::
    :caption: API Reference

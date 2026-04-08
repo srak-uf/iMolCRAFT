@@ -7,7 +7,7 @@ from openmm.app import ForceField, Modeller
 import jax.numpy as jnp
 import os
 import mdtraj as md
-from jax import value_and_grad
+from jax import value_and_grad, jit
 from jax.tree_util import tree_map
 from ..trainer.dmff_utils import (
     update_rescharges_from_params,
@@ -41,7 +41,7 @@ class DistanceTrainer(BaseTrainer):
         loss_fn: Callable[..., float],
         relax_steps: int = 20,
         opt_fftypes: List[str] = [
-            "NonbondedForce/charges",
+            "NonbondedForce/charge",
             "NonbondedForce/sigma",
             "NonbondedForce/epsilon",
         ],
@@ -67,6 +67,7 @@ class DistanceTrainer(BaseTrainer):
         self.relax_steps = relax_steps
         self.inputs = {"positions": [], "pairs": [], "dihed_index": []}
         self.calculator = calculator
+        self.efunc = jit(self.potentials.getPotentialFunc())
 
     def setup(self) -> None:
         """
@@ -118,8 +119,7 @@ class DistanceTrainer(BaseTrainer):
         for i_dihed in range(len(self.inputs["positions"])):
             loss_tmp, grads_tmp = value_and_grad(self.loss_fn, argnums=0)(
                 self.ffparams,
-                self.ff,
-                self.pdb.topology,
+                self.efunc,
                 self.inputs["positions"][i_dihed],
                 self.inputs["pairs"][i_dihed],
                 self.GT_scans[i_dihed],
@@ -141,7 +141,7 @@ class DistanceTrainer(BaseTrainer):
             if key == "NonbondedForce":
                 ffparams_wo_charge[key] = {}
                 for key2 in self.ffparams[key].keys():
-                    if key2 != "charges":
+                    if key2 != "charge":
                         ffparams_wo_charge[key][key2] = self.ffparams[key][key2]
             elif key == "VsiteForce":
                 pass
@@ -320,6 +320,7 @@ class DihedralTrainer(BaseTrainer):
         self.relax_steps = relax_steps
         self.inputs = {"positions": [], "pairs": [], "dihed_index": []}
         self.calculator = calculator
+        self.efunc = jit(self.potentials.getPotentialFunc())
 
     def setup(self) -> None:
         """
@@ -366,8 +367,7 @@ class DihedralTrainer(BaseTrainer):
         for i_dihed in range(len(self.inputs["positions"])):
             loss_tmp, grads_tmp = value_and_grad(self.loss_fn, argnums=0)(
                 self.ffparams,
-                self.ff,
-                self.pdb.topology,
+                self.efunc,
                 self.inputs["positions"][i_dihed],
                 self.inputs["pairs"][i_dihed],
                 self.GT_scans[i_dihed],
@@ -389,7 +389,7 @@ class DihedralTrainer(BaseTrainer):
             if key == "NonbondedForce":
                 ffparams_wo_charge[key] = {}
                 for key2 in self.ffparams[key].keys():
-                    if key2 != "charges":
+                    if key2 != "charge":
                         ffparams_wo_charge[key][key2] = self.ffparams[key][key2]
             elif key == "VsiteForce":
                 pass
@@ -432,7 +432,7 @@ class ThermodynamicTrainer(BaseTrainer):
         sampling_params: List[Any],
         target_params: List[Any],
         opt_fftypes: List[str] = [
-            "NonbondedForce/charges",
+            "NonbondedForce/charge",
             "NonbondedForce/sigma",
             "NonbondedForce/epsilon",
         ],
@@ -440,6 +440,7 @@ class ThermodynamicTrainer(BaseTrainer):
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
+        resample_freq: int = 50,
     ) -> None:
         """
         Initialize the ThermodynamicTrainer.
@@ -472,6 +473,8 @@ class ThermodynamicTrainer(BaseTrainer):
         # params
         self.sampling_params = sampling_params
         self.target_params = target_params
+        self.resample_freq = resample_freq
+        self.resample_counter = 0
 
         super().__init__(
             ffxml_list=ffxml_list,
@@ -490,27 +493,37 @@ class ThermodynamicTrainer(BaseTrainer):
             self.pdb = [self.pdb]
             self.pdbfile = [self.pdbfile]
             self.pdbfile_vsite = [self.pdbfile_vsite]
-            self.potentials = [self.potentials]
-            self.topology = [self.topology]
             self.sampling_params = [self.sampling_params]
+            pots = self.ff.createPotential(
+                    self.pdb[0].topology,
+                    nonbondedMethod=app.PME,
+                    nonbondedCutoff=self.sampling_params[0]["rcut_nm"]
+                    * unit.nanometer,
+                    useDispersionCorrection=self.sampling_params[0]["dispcorr"],
+                    )
+            self.potentials = [pots]
+            self.topology = [self.topology]
+            self.efuncs = [jit(self.potentials[0].getPotentialFunc())]
         elif isinstance(self.sampling_params, list):
             self.pdbfile = []
             self.pdb = []
             self.pdbfile_vsite = []
             self.potentials = []
+            self.efuncs = []
             self.topology = []
             self.T_K = []
             for i, sampling_param in enumerate(self.sampling_params):
                 self.pdbfile.append(sampling_param["init_structure"])
                 self.pdb.append(app.PDBFile(self.pdbfile[i]))
-                self.potentials.append(
-                    self.ff.createPotential(
+                pots = self.ff.createPotential(
                         self.pdb[i].topology,
                         nonbondedMethod=app.PME,
                         nonbondedCutoff=self.sampling_params[i]["rcut_nm"]
                         * unit.nanometer,
+                        useDispersionCorrection=self.sampling_params[i]["dispcorr"],
                     )
-                )
+                self.potentials.append(pots)
+                self.efuncs.append(jit(pots.getPotentialFunc()))
                 self.topology.append(self.pdb[i].topology)
                 if self.num_vsites > 0:
                     modeller = Modeller(self.pdb[i].topology, self.pdb[i].positions)
@@ -534,6 +547,8 @@ class ThermodynamicTrainer(BaseTrainer):
         self.anneal_totalsteps = []
         self.relax_steps = []
         self.rc_nm = []
+        self.nonbondedmethod = []
+        self.dispcorr = []
         self.prod_steps = []
         self.nstxout = []
         self.neff = []
@@ -547,11 +562,19 @@ class ThermodynamicTrainer(BaseTrainer):
             self.anneal_totalsteps.append(int(sampling_param["anneal_totalsteps"]))
             self.relax_steps.append(int(sampling_param["relax_steps"]))
             self.rc_nm.append(float(sampling_param["rcut_nm"]))
+            self.dispcorr.append(bool(sampling_param["dispcorr"]))
             self.prod_steps.append(float(sampling_param["prod_steps"]))
             self.nstxout.append(int(sampling_param["nstxout"]))
             self.neff.append(int(sampling_param["neff"]))
             self.dt_fs.append(float(sampling_param["dt_fs"]))
             self.ensemble.append(sampling_param["ensemble"])
+            self.nonbondedmethod.append(sampling_param["nonbondedmethod"])
+
+        for i in range(len(self.nonbondedmethod)):
+            if self.nonbondedmethod[i] == "PME":
+                self.nonbondedmethod[i] = app.PME
+            elif self.nonbondedmethod[i] == "LJPME":
+                self.nonbondedmethod[i] = app.LJPME
 
         # target
         if isinstance(self.target_params, dict):
@@ -576,19 +599,21 @@ class ThermodynamicTrainer(BaseTrainer):
         for i in range(len(self.sampling_params)):
             state_name = f"sample_{i}"
             xtcfile = md_sample(
-                self.pdbfile[i],
-                self.ffxml,
-                f"{state_name}.xtc",
-                self.rc_nm[i],
-                self.T_K[i],
-                self.anneal_Tmax[i],
-                self.anneal_steps[i],
-                self.anneal_totalsteps[i],
-                self.dt_fs[i],
-                self.nstxout[i],
-                self.relax_steps[i],
-                self.prod_steps[i],
-                self.ensemble[i],
+                initialpdb=self.pdbfile[i],
+                ffxml=self.ffxml,
+                trajectory=f"{state_name}.xtc",
+                rc=self.rc_nm[i],
+                T=self.T_K[i],
+                anneal_Tmax=self.anneal_Tmax[i],
+                anneal_steps=self.anneal_steps[i],
+                anneal_totalsteps=self.anneal_totalsteps[i],
+                dt=self.dt_fs[i],
+                nstxout=self.nstxout[i],
+                relax_steps=self.relax_steps[i],
+                prod_steps=self.prod_steps[i],
+                ensemble=self.ensemble[i],
+                nonbondedmethod=self.nonbondedmethod[i],
+                useDispersionCorrection=self.dispcorr[i],
             )
             state = OpenMMSampleState(
                 state_name,
@@ -598,6 +623,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 pressure=self.P_bar[i],
                 nonbondedMethod=app.PME,
                 nonbondedCutoff=self.rc_nm[i] * unit.nanometer,
+                useDispersionCorrection=self.dispcorr[i],
             )
             traj = md.load(xtcfile, top=self.pdbfile_vsite[i])
             sample = Sample(traj, state_name)
@@ -633,8 +659,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 self.loss_fn[i], argnums=0, has_aux=True
             )(
                 self.ffparams,
-                self.ff,
-                self.pdb[i].topology,  # wo virtual sites
+                self.efuncs[i],
                 self.potentials[i].meta["cov_map"],
                 self.rc_nm[i],
                 self.ensemble[i],
@@ -657,6 +682,7 @@ class ThermodynamicTrainer(BaseTrainer):
         """
         Resample MD trajectories and update MBAR estimator if needed.
         """
+        self.resample_counter = 0
         if len(self.estimator.states) > 0:
             removedstatename = [
                 self.estimator.states[i].name
@@ -666,7 +692,7 @@ class ThermodynamicTrainer(BaseTrainer):
             removedstateidx = [i for i, flag in enumerate(self.resample) if flag]
         else:
             removedstatename = []
-            removedstateidx = [i for i in self.sampling_params]
+            removedstateidx = [i for i in range(len(self.sampling_params))]
 
         for idx in removedstateidx:
             if len(removedstatename) > 0:
@@ -677,19 +703,21 @@ class ThermodynamicTrainer(BaseTrainer):
                 state_name = f"sample_{idx}"
             print(f"Resampling {state_name}... by {self.ffxml}")
             xtcfile = md_sample(
-                self.pdbfile[idx],
-                self.ffxml,
-                f"{state_name}.xtc",
-                self.rc_nm[idx],
-                self.T_K[idx],
-                self.anneal_Tmax[idx],
-                self.anneal_steps[idx],
-                self.anneal_totalsteps[idx],
-                self.dt_fs[idx],
-                self.nstxout[idx],
-                self.relax_steps[idx],
-                self.prod_steps[idx],
-                self.ensemble[idx],
+                initialpdb=self.pdbfile[idx],
+                ffxml=self.ffxml,
+                trajectory=f"{state_name}.xtc",
+                rc=self.rc_nm[idx],
+                T=self.T_K[idx],
+                anneal_Tmax=self.anneal_Tmax[idx],
+                anneal_steps=self.anneal_steps[idx],
+                anneal_totalsteps=self.anneal_totalsteps[idx],
+                dt=self.dt_fs[idx],
+                nstxout=self.nstxout[idx],
+                relax_steps=self.relax_steps[idx],
+                prod_steps=self.prod_steps[idx],
+                ensemble=self.ensemble[idx],
+                nonbondedmethod=self.nonbondedmethod[idx],
+                useDispersionCorrection=self.dispcorr[idx]
             )
             traj = md.load(f"{xtcfile}", top=self.pdbfile_vsite[idx])
             state = OpenMMSampleState(
@@ -698,8 +726,9 @@ class ThermodynamicTrainer(BaseTrainer):
                 self.pdbfile[idx],  # without virtual sites
                 temperature=self.T_K[idx],
                 pressure=self.P_bar[idx],
-                nonbondedMethod=app.PME,
+                nonbondedMethod=self.nonbondedmethod[idx],
                 nonbondedCutoff=self.rc_nm[idx] * unit.nanometer,
+                useDispersionCorrection=self.dispcorr[idx],
             )
             sample = Sample(traj, state_name)
             self.target_pred_frame[idx] = get_target_pred_frame(
@@ -715,6 +744,10 @@ class ThermodynamicTrainer(BaseTrainer):
         optimization step.
         Handles periodic XML output and effective sample size checks.
         """
+        self.resample_counter += 1
+        if self.resample_counter >= self.resample_freq:
+            self.resample = [True for i in range(len(self.sampling_params))]
+
         if True in self.resample:  # i.e., loss is nan
             self._resample()
             self.resample = [False for i in range(len(self.sampling_params))]
@@ -724,18 +757,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 self.rescharges, self.ffparams
             )
             self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
-            ffparams_wo_charge = {}
-            for key in self.ffparams.keys():
-                if key == "NonbondedForce":
-                    ffparams_wo_charge[key] = {}
-                    for key2 in self.ffparams[key].keys():
-                        if key2 != "charges":
-                            ffparams_wo_charge[key][key2] = self.ffparams[key][key2]
-                elif key == "VsiteForce":
-                    pass
-                else:
-                    ffparams_wo_charge[key] = self.ffparams[key]
-            self.ff.getParameters().parameters = ffparams_wo_charge
+            self.ff.getParameters().parameters = self.ffparams
             os.makedirs("xmlfiles", exist_ok=True)
             self.ff.renderXML(f"xmlfiles/epoch-{self._epoch+1}.xml")
             self.ffxml = f"xmlfiles/epoch-{self._epoch+1}.xml"
@@ -752,6 +774,9 @@ class ThermodynamicTrainer(BaseTrainer):
                         if v < self.neff[ii] and k != "Total" and ii == i:
                             self.resample[i] = True
                             print(f"  {i} -> Resample")
+                        else:  # Vsiteのposition update
+                            # self.estimator._input***
+                            pass
                 except Exception:
                     print("Warning: Error in estimating effective sample size")
                     self.estimator.states = []
