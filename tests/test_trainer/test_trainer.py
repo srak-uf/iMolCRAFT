@@ -248,7 +248,7 @@ class TestThermodynamicTrainer:
                                              'nstxout': 20,
                                              'neff': 2,
                                              'anneal_totaltime': 0,
-                                             'dispcorr': True
+                                             'dispcorr': True,
                                              'nonbondedmethod': 'LJPME'},
                             target_params={'density_gcm3': {'weight': 1.0, 'gt': 0.4},
                                            'La_A': {'weight': 1.0, 'gt': 41},
