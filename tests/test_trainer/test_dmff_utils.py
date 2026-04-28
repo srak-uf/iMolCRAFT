@@ -21,7 +21,8 @@ def test_parser_dmffyaml():
     assert set(d["sampling"].keys()) == set([
         'init_structure', 'ensemble', 'dt_fs', 'rcut_nm', 'temperature_K',
         'pressure_bar', 'anneal_steps', 'anneal_Tmax', 'anneal_totalsteps',
-        'relax_steps', 'prod_steps', 'nstxout', 'neff', 'anneal_totaltime'
+        'relax_steps', 'prod_steps', 'nstxout', 'neff', 'anneal_totaltime',
+        'dispcorr', 'nonbondedmethod'
     ])
 
 
