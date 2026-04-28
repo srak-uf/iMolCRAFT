@@ -37,6 +37,7 @@ class BaseTrainer:
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
+        restart_xml: Optional[str] = None
     ) -> None:
 
         """
@@ -64,6 +65,8 @@ class BaseTrainer:
             Learning rate(s) for optimizer (default: 0.0001).
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
+        restart_xml : str, optional
+            Path to the XML file for restarting the training.
         """
         if isinstance(ffxml_list, str):
             ffxml_list = [ffxml_list]
@@ -82,6 +85,10 @@ class BaseTrainer:
             self.label = label
 
         xmlfile = merge_xml(ffxml_list, f"{self.label}.xml")
+
+        if restart_xml is not None:
+            print(f"Restarting training from {restart_xml}...")
+            xmlfile = restart_xml
         self.ffxml = xmlfile
         self.ff = Hamiltonian(self.ffxml)
         self.num_vsites = check_vsite(self.ffxml)
