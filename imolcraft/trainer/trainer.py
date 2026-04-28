@@ -441,6 +441,7 @@ class ThermodynamicTrainer(BaseTrainer):
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
         resample_freq: int = 50,
+        restart_xml: str = None
     ) -> None:
         """
         Initialize the ThermodynamicTrainer.
@@ -469,6 +470,8 @@ class ThermodynamicTrainer(BaseTrainer):
             Learning rate(s) for optimizer (default: 0.0001).
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
+        restart_xml : str, optional
+            Path to the XML file for restarting the training.
         """
         # params
         self.sampling_params = sampling_params
@@ -486,24 +489,34 @@ class ThermodynamicTrainer(BaseTrainer):
             label=label,
             lr=lr,
             clip=clip,
+            restart_xml=restart_xml
         )
 
         # MD + Energy function setup
+        print(self.sampling_params)
         if isinstance(self.sampling_params, dict):
             self.pdb = [self.pdb]
             self.pdbfile = [self.pdbfile]
             self.pdbfile_vsite = [self.pdbfile_vsite]
             self.sampling_params = [self.sampling_params]
+            if self.sampling_params[0]["nonbondedmethod"] == "PME":
+                nonbondedmethod = app.PME
+            elif self.sampling_params[0]["nonbondedmethod"] == "LJPME":
+                nonbondedmethod = app.LJPME
+            else:
+                raise AssertionError("Invalid nonbonded method")
+
             pots = self.ff.createPotential(
                     self.pdb[0].topology,
-                    nonbondedMethod=app.PME,
+                    nonbondedMethod=nonbondedmethod,
                     nonbondedCutoff=self.sampling_params[0]["rcut_nm"]
                     * unit.nanometer,
                     useDispersionCorrection=self.sampling_params[0]["dispcorr"],
                     )
             self.potentials = [pots]
             self.topology = [self.topology]
-            self.efuncs = [jit(self.potentials[0].getPotentialFunc())]
+            # self.efuncs = [jit(self.potentials[0].getPotentialFunc())]
+            self.efuncs = [self.potentials[0].getPotentialFunc()]
         elif isinstance(self.sampling_params, list):
             self.pdbfile = []
             self.pdb = []
@@ -515,9 +528,15 @@ class ThermodynamicTrainer(BaseTrainer):
             for i, sampling_param in enumerate(self.sampling_params):
                 self.pdbfile.append(sampling_param["init_structure"])
                 self.pdb.append(app.PDBFile(self.pdbfile[i]))
+                if self.sampling_params[i]["nonbondedmethod"] == "PME":
+                    nonbondedmethod = app.PME
+                elif self.sampling_params[i]["nonbondedmethod"] == "LJPME":
+                    nonbondedmethod = app.LJPME
+                else:
+                    raise AssertionError("Invalid nonbonded method")
                 pots = self.ff.createPotential(
                         self.pdb[i].topology,
-                        nonbondedMethod=app.PME,
+                        nonbondedMethod=nonbondedmethod,
                         nonbondedCutoff=self.sampling_params[i]["rcut_nm"]
                         * unit.nanometer,
                         useDispersionCorrection=self.sampling_params[i]["dispcorr"],
@@ -532,6 +551,7 @@ class ThermodynamicTrainer(BaseTrainer):
                     self.topology[i] = modeller.topology
                 else:
                     self.topology[i] = self.pdb[i].topology
+                    pos = self.pdb[i].positions
                 # self.pdbfile[i]のbasenameにvs_をつけて保存
                 vs_pdbfile = f"vs_{os.path.basename(self.pdbfile[i])}"
                 app.PDBFile.writeFile(self.topology[i], pos, open(vs_pdbfile, "w"))
@@ -596,6 +616,11 @@ class ThermodynamicTrainer(BaseTrainer):
         Set up the trainer by running MD simulations and preparing MBAR estimator.
         """
         self.estimator = MBAREstimator()
+        if len(self.target_gt) == 0:
+            has_target_gt = False
+        else:
+            has_target_gt = True
+
         for i in range(len(self.sampling_params)):
             state_name = f"sample_{i}"
             xtcfile = md_sample(
@@ -621,7 +646,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 self.pdbfile[i],  # without virtual sites
                 temperature=self.T_K[i],
                 pressure=self.P_bar[i],
-                nonbondedMethod=app.PME,
+                nonbondedMethod=self.nonbondedmethod[i],
                 nonbondedCutoff=self.rc_nm[i] * unit.nanometer,
                 useDispersionCorrection=self.dispcorr[i],
             )
@@ -630,12 +655,13 @@ class ThermodynamicTrainer(BaseTrainer):
             self.estimator.add_state(state)
             self.estimator.add_sample(sample)
 
-            self.target_gt.append(get_target_gt(self.target_params[i]))
-            self.target_pred_frame.append(
-                get_target_pred_frame(
-                    xtcfile, self.pdbfile_vsite[i], self.target_params[i]
+            if has_target_gt is False:
+                self.target_gt.append(get_target_gt(self.target_params[i]))
+                self.target_pred_frame.append(
+                    get_target_pred_frame(
+                        xtcfile, self.pdbfile_vsite[i], self.target_params[i]
+                    )
                 )
-            )
         self.estimator.optimize_mbar()
         self.opt_state = self.optimizer.init(self.ffparams)
 
@@ -797,6 +823,7 @@ class ThermodynamicTrainer(BaseTrainer):
             Frequency (in epochs) to write checkpoints.
         """
         if self._epoch % checkpoint_frequency == 0:
+            self.ff.renderXML("chkpoint.xml")
             with open("train_state.pkl", "wb") as f:
                 dump_dict = {
                     "ffparams": self.ffparams,
@@ -847,6 +874,14 @@ class ThermodynamicTrainer(BaseTrainer):
             fig.savefig(f"{self.label}_learning_curve.png")
             plt.close(fig)
 
+            fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
+            ax.set_yscale("log")
+            ax.plot(self.epochs, self.losses)
+            plt.tight_layout()
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            fig.savefig(f"logy_{self.label}_learning_curve.png")
+            plt.close(fig)
+
     @classmethod
     def from_checkpoint(
         cls,
@@ -890,6 +925,7 @@ class ThermodynamicTrainer(BaseTrainer):
             label=dump_dict["label"],
             lr=lr,
             clip=clip,
+            restart_xml=initial_ffxml,
         )
 
         for key, value in dump_dict.items():
@@ -898,5 +934,6 @@ class ThermodynamicTrainer(BaseTrainer):
         # order is important
         trainer.ffxml = initial_ffxml
         trainer.opt_state = dump_dict["opt_state"]
+        trainer._epoch = dump_dict["epoch"]
 
         return trainer
