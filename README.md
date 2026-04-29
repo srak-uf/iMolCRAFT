@@ -1,4 +1,4 @@
-# Installation of stable version
+# Installation
 ```
 git clone git@github.com:srak-uf/iMolCRAFT.git
 cd iMolCRAFT
