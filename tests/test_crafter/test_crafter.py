@@ -135,7 +135,7 @@ class TestCrafter_liquid:
 
     @pytest.mark.qm
     def test_prep_liq(self, init_crafter):
-        self.crafter.structure["fixed_property"] = "num_mols"
+        self.crafter.structure["fixed_property"] = "nmols"
         self.crafter.structure["priority_property"] = "cell"
         self.crafter.structure["nmols"] = [5]
         self.crafter.structure["density_kgm3"] = 0.5
