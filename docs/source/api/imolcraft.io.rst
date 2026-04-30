@@ -1,37 +1,37 @@
-imolcryff.io package
+imolcraft.io package
 ====================
 
 Submodules
 ----------
 
-imolcryff.io.exporter\_gmx module
+imolcraft.io.exporter\_gmx module
 ---------------------------------
 
-.. automodule:: imolcryff.io.exporter_gmx
+.. automodule:: imolcraft.io.exporter_gmx
    :members:
    :show-inheritance:
    :undoc-members:
 
-imolcryff.io.exporter\_lmp module
+imolcraft.io.exporter\_lmp module
 ---------------------------------
 
-.. automodule:: imolcryff.io.exporter_lmp
+.. automodule:: imolcraft.io.exporter_lmp
    :members:
    :show-inheritance:
    :undoc-members:
 
-imolcryff.io.mol2 module
+imolcraft.io.mol2 module
 ------------------------
 
-.. automodule:: imolcryff.io.mol2
+.. automodule:: imolcraft.io.mol2
    :members:
    :show-inheritance:
    :undoc-members:
 
-imolcryff.io.rdkit module
+imolcraft.io.rdkit module
 -------------------------
 
-.. automodule:: imolcryff.io.rdkit
+.. automodule:: imolcraft.io.rdkit
    :members:
    :show-inheritance:
    :undoc-members:
@@ -39,7 +39,7 @@ imolcryff.io.rdkit module
 Module contents
 ---------------
 
-.. automodule:: imolcryff.io
+.. automodule:: imolcraft.io
    :members:
    :show-inheritance:
    :undoc-members:

@@ -1,13 +1,13 @@
-imolcryff.analyzer package
+imolcraft.analyzer package
 ==========================
 
 Submodules
 ----------
 
-imolcryff.analyzer.analyzer module
+imolcraft.analyzer.analyzer module
 ----------------------------------
 
-.. automodule:: imolcryff.analyzer.analyzer
+.. automodule:: imolcraft.analyzer.analyzer
    :members:
    :show-inheritance:
    :undoc-members:
@@ -15,7 +15,7 @@ imolcryff.analyzer.analyzer module
 Module contents
 ---------------
 
-.. automodule:: imolcryff.analyzer
+.. automodule:: imolcraft.analyzer
    :members:
    :show-inheritance:
    :undoc-members:

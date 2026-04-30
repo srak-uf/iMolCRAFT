@@ -1,7 +1,7 @@
-imolcryff
+imolcraft
 =========
 
 .. toctree::
    :maxdepth: 4
 
-   imolcryff
+   imolcraft

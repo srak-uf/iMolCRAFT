@@ -493,7 +493,6 @@ class ThermodynamicTrainer(BaseTrainer):
         )
 
         # MD + Energy function setup
-        print(self.sampling_params)
         if isinstance(self.sampling_params, dict):
             self.pdb = [self.pdb]
             self.pdbfile = [self.pdbfile]
@@ -882,6 +881,14 @@ class ThermodynamicTrainer(BaseTrainer):
             fig.savefig(f"logy_{self.label}_learning_curve.png")
             plt.close(fig)
 
+            fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
+            ax.set_yscale("log")
+            ax.set_xscale("log")
+            ax.plot(self.epochs, self.losses)
+            plt.tight_layout()
+            fig.savefig(f"logylogx_{self.label}_learning_curve.png")
+            plt.close(fig)
+
     @classmethod
     def from_checkpoint(
         cls,
@@ -891,6 +898,8 @@ class ThermodynamicTrainer(BaseTrainer):
         pdbfile: str,
         initial_ffxml: str,
         loss_fn: Optional[Callable[..., float]] = None,
+        sampling_params: Optional[List[Any]] = None,
+        target_params: Optional[List[Any]] = None,
         opt_fftypes: Optional[List[str]] = None,
         optimizer_algo: Optional[str] = None,
         lr: Optional[Union[float, List[float]]] = None,
@@ -912,14 +921,20 @@ class ThermodynamicTrainer(BaseTrainer):
         if opt_fftypes is None:
             opt_fftypes = dump_dict["opt_fftypes"]
             del dump_dict["opt_fftypes"]
-
+        if sampling_params is None:
+            sampling_params = dump_dict["sampling_params"]
+            del dump_dict["sampling_params"]
+        if target_params is None:
+            target_params = dump_dict["target_params"]
+            del dump_dict["target_params"]
+        
         trainer = cls(
             ffxml_list=ffxml_list,
             nums_ffxml=nums_ffxml,
             pdbfile=pdbfile,
             loss_fn=loss_fn,
-            sampling_params=dump_dict["sampling_params"],
-            target_params=dump_dict["target_params"],
+            sampling_params=sampling_params,
+            target_params=target_params,
             opt_fftypes=opt_fftypes,
             optimizer_algo=optimizer_algo,
             label=dump_dict["label"],
@@ -928,8 +943,10 @@ class ThermodynamicTrainer(BaseTrainer):
             restart_xml=initial_ffxml,
         )
 
+        attr_lists = ["epoch", "epochs", "losses", "ff_info"]
         for key, value in dump_dict.items():
-            setattr(trainer, key, value)
+            if key in attr_lists:
+                setattr(trainer, key, value)
 
         # order is important
         trainer.ffxml = initial_ffxml

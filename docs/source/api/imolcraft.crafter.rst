@@ -1,37 +1,37 @@
-imolcryff.crafter package
+imolcraft.crafter package
 =========================
 
 Submodules
 ----------
 
-imolcryff.crafter.asemol module
+imolcraft.crafter.asemol module
 -------------------------------
 
-.. automodule:: imolcryff.crafter.asemol
+.. automodule:: imolcraft.crafter.asemol
    :members:
    :show-inheritance:
    :undoc-members:
 
-imolcryff.crafter.ffxml module
+imolcraft.crafter.ffxml module
 ------------------------------
 
-.. automodule:: imolcryff.crafter.ffxml
+.. automodule:: imolcraft.crafter.ffxml
    :members:
    :show-inheritance:
    :undoc-members:
 
-imolcryff.crafter.gaffil\_generators module
+imolcraft.crafter.gaffil\_generators module
 -------------------------------------------
 
-.. automodule:: imolcryff.crafter.gaffil_generators
+.. automodule:: imolcraft.crafter.gaffil_generators
    :members:
    :show-inheritance:
    :undoc-members:
 
-imolcryff.crafter.molinfo module
+imolcraft.crafter.molinfo module
 --------------------------------
 
-.. automodule:: imolcryff.crafter.molinfo
+.. automodule:: imolcraft.crafter.molinfo
    :members:
    :show-inheritance:
    :undoc-members:
@@ -39,7 +39,7 @@ imolcryff.crafter.molinfo module
 Module contents
 ---------------
 
-.. automodule:: imolcryff.crafter
+.. automodule:: imolcraft.crafter
    :members:
    :show-inheritance:
    :undoc-members:

@@ -28,16 +28,16 @@ Overview
    :caption: Main
 
    installation
-   theory.rst
+   methods
 
 .. toctree::
-   :maxdepth: 3
-   :caption: Examples
+   :maxdepth: 2
+   :caption: How to use
 
    crystal
-   .. liquid
-   .. dihedral
-   .. thermodyn_perturb
+   liquid
+   dihedral
+   thermodyn_perturb
 
 .. toctree::
    :caption: API Reference

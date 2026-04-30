@@ -1,7 +1,4 @@
-```{toctree}
----
-maxdepth: 2
-caption: Contents:
----
-../examples/crafter/crystal/crystal.ipynb
-```
+# Crystal system
+hoge
+## aaaa
+fuga
