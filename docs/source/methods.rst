@@ -11,6 +11,8 @@ iMolCRAFT uses classical force fields to perform molecular dynamics simulations 
 1. GAFF (General AMBER Force Field)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 .. math::
+    :nowrap:
+
     \begin{align}
     U(\mathbf{r}) &= \sum_{\mathrm{bonds}} K_{r}(r - r_{\mathrm{eq}})^2 + \sum_{\mathrm{bonds}} K_{\theta}(\theta - \theta_{\mathrm{eq}})^2 +  \\ 
     & \sum_{\mathrm{dihedrals}} K_{\mathrm{d}} [1+\mathrm{cos}(n\phi - \gamma)] + \sum_{i<j} 4\epsilon_{ij} \left[\left(\frac{\sigma_{ij}}{r_{ij}} \right)^{12} - \left(\frac{\sigma_{ij}}{r_{ij}} \right)^{6}\right] +\\
