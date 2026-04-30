@@ -246,7 +246,7 @@ class Crafter:
                 molstructures,
                 fixed_property=self.structure.get("fixed_property", "cell"),
                 priority_property=self.structure.get("priority_property", "density"),
-                num_mols=self.structure.get("nmols", None),
+                nmols=self.structure.get("nmols", None),
                 density=self.structure.get("density_kgm3", None),
                 cell=self.structure.get("cell_A", None),
                 outfile="supercell.pdb",

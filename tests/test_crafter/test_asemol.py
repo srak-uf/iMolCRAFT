@@ -36,8 +36,8 @@ def test_ase_atoms_to_nx(mol2file, n_edge, n_node):
 @pytest.mark.parametrize(
     "fixed_property, priority_property",
     [
-        ("num_mols", "cell"),
-        ("num_mols", "density"),
+        ("nmols", "cell"),
+        ("nmols", "density"),
         ("density", "cell"),
         ("cell", "density")
     ]
@@ -56,7 +56,7 @@ def test_pdb2packmol(fixed_property, priority_property):
             ["CH4.pdb"],
             fixed_property=fixed_property,
             priority_property=priority_property,
-            num_mols=[6],
+            nmols=[6],
             cell=[10, 10, 10],
             density=500,
             outfile=outfile

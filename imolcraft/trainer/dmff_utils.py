@@ -175,6 +175,7 @@ def get_target_gt(target_params: dict):
 def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=None):
     """
     Neutralize the system by adjusting the charges.
+
     Parameters
     ----------
     ffparams : dict
@@ -665,6 +666,7 @@ def get_target_pred_frame(xtcfile, pdbfile, target_params: dict):
     """
     Get the predicted values for the targets from the parameters obtained by
     parser_dmffyaml().
+
     Parameters
     ----------
     xtcfile : str

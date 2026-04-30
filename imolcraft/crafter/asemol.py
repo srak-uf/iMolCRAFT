@@ -739,7 +739,7 @@ def pdb2packmol(
     pdbfiles,
     fixed_property,
     priority_property,
-    num_mols,
+    nmols,
     cell=None,
     density=None,
     outfile="packmol_tmp.xyz",
@@ -753,12 +753,12 @@ def pdb2packmol(
     pdbfiles : list
         List of PDB files to be packed.
     fixed_property: str
-        Property to be fixed during packing: num_mols, cell, or density.
+        Property to be fixed during packing: nmols, cell, or density.
     priority_property: str
         Property to be prioritized during packing: cell, or density.
-    num_mols : list
+    nmols : list
         List of number / ratio of molecules for PDB files.
-        If num_mols is not specified as a fixed_property, it is treated as a ratio.
+        If nmols is not specified as a fixed_property, it is treated as a ratio.
     cell : list, optional
         List of cell dimensions [a, b, c]. If None, a default cell size is used.
     density : float, optional
@@ -776,7 +776,7 @@ def pdb2packmol(
     molecule_list : list
         List of molecule indices in the packed system.
     """
-    valid_fixed_property = ["num_mols", "cell", "density"]
+    valid_fixed_property = ["nmols", "cell", "density"]
     valid_priority_property = ["cell", "density"]
 
     if fixed_property not in valid_fixed_property:
@@ -790,45 +790,45 @@ def pdb2packmol(
             f"Must be one of {valid_priority_property}."
         )
 
-    if fixed_property == "num_mols" and priority_property == "cell":
+    if fixed_property == "nmols" and priority_property == "cell":
         pass
-    elif fixed_property == "num_mols" and priority_property == "density":
+    elif fixed_property == "nmols" and priority_property == "density":
         M = 0.0
         for i, pdb in enumerate(pdbfiles):
             atoms = read(pdb)
-            M += atoms.get_masses().sum() * num_mols[i]
+            M += atoms.get_masses().sum() * nmols[i]
         cell = [0.0, 0.0, 0.0]
         cell[0] = (M / (density / (units.m**3/units.kg)))**(1/3)
         cell[1] = (M / (density / (units.m**3/units.kg)))**(1/3)
         cell[2] = (M / (density / (units.m**3/units.kg)))**(1/3)
     elif fixed_property == "cell" and priority_property == "density":
-        gcd_value = math.gcd(*num_mols)
-        num_mols = [n // gcd_value for n in num_mols]
+        gcd_value = math.gcd(*nmols)
+        nmols = [n // gcd_value for n in nmols]
         M = 0.0
         for i, pdb in enumerate(pdbfiles):
             atoms = read(pdb)
-            M += atoms.get_masses().sum() * num_mols[i]
+            M += atoms.get_masses().sum() * nmols[i]
         Nset = int(
             density
             / (M / (cell[0] * cell[1] * cell[2]) * units.m**3 / units.kg)
         )
-        num_mols = [n * Nset for n in num_mols]
+        nmols = [n * Nset for n in nmols]
     elif fixed_property == "density" and priority_property == "cell":
-        gcd_value = math.gcd(*num_mols)
-        num_mols = [n // gcd_value for n in num_mols]
+        gcd_value = math.gcd(*nmols)
+        nmols = [n // gcd_value for n in nmols]
         M = 0.0
         for i, pdb in enumerate(pdbfiles):
             atoms = read(pdb)
-            M += atoms.get_masses().sum() * num_mols[i]
+            M += atoms.get_masses().sum() * nmols[i]
         Nset = int(
             density
             / (M / (cell[0] * cell[1] * cell[2]) * units.m**3 / units.kg)
         )
-        num_mols = [n * Nset for n in num_mols]
+        nmols = [n * Nset for n in nmols]
         M = 0.0
         for i, pdb in enumerate(pdbfiles):
             atoms = read(pdb)
-            M += atoms.get_masses().sum() * num_mols[i]
+            M += atoms.get_masses().sum() * nmols[i]
         cell[0] = (M / (density / (units.m**3/units.kg)))**(1/3)
         cell[1] = (M / (density / (units.m**3/units.kg)))**(1/3)
         cell[2] = (M / (density / (units.m**3/units.kg)))**(1/3)
@@ -857,14 +857,14 @@ def pdb2packmol(
             write(f"atoms_{i}.pdb", atoms_pdb)
             atomslist_mols.append(atoms_pdb)
             molecule_list.append([i])
-            for _ in range(num_mols[i]):
+            for _ in range(nmols[i]):
                 bonds = asemol_wrapper(read(pdbfiles[i])).get_bonds()
                 bonds = [(b[0] + ntot_atoms, b[1] + ntot_atoms) for b in bonds]
                 ntot_atoms += n_atoms
                 for b in bonds:
                     bonds_top.append(b)
             f.write(f"structure  atoms_{i}.pdb \n")
-            f.write(f"  number  {num_mols[i]} \n")
+            f.write(f"  number  {nmols[i]} \n")
             f.write("end structure \n")
     _ = os.system("packmol < " + "pack_tmp.inp")
     atoms_packtmp = read("packmol_tmp.pdb")
