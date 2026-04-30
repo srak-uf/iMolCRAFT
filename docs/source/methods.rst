@@ -60,5 +60,3 @@ Key advantages of this approach include:
 * **Molecular symmetry consideration**: Automatically identifies equivalent atoms and dihedrals, reducing parameter space while ensuring chemical consistency.
 * **Optimal charge scaling**: Determines the optimal charge scaling factors for different molecule types through gradient-based optimization, crucial for electrolyte systems.
 * **Multi-state efficiency**: Avoids re-simulation for each parameter change by reweighting configurations from reference trajectories.
-
-For detailed information, see :ref:`thermodyn_perturb`.
