@@ -87,12 +87,6 @@ structure:
   fixed_property: "density"   # Which property is fixed during packing
   priority_property: "cell"   # Which property takes priority if conflict exists
 ```
-| fixed_property | priority_property | Process |
-|--------   |---------|---------|
-| `nmols`   | `cell` | `nmols` of molecules are packed in `cell_A`. |
-| `nmols`   | `density` | `cell_A` is determined by `nmols` and `density_kgm3`|
-| `cell`    | `density` | `nmol` is adjusted to approach the `density_kgm3` while maintaining the ratio. |
-| `density` | `cell` | `nmol` is adjusted while maintaining the ratio, and the value of `cell_A` is also adjusted so that it equals `density_kgm3`.
 
 
 ### Exporter Function
@@ -160,6 +154,14 @@ exporter(
 | `cell_A` | list | `[x, y, z]` | Simulation box dimensions in Ångströms |
 | `fixed_property` | str | `nmols`, `density`, `volume` | Which property is fixed during packing |
 | `priority_property` | str | `cell`, `density` | Which property takes priority if conflict exists |
+
+#### Kewword of `fixed_property` and `priority_property` 
+| fixed_property | priority_property | Process |
+|--------   |---------|---------|
+| `nmols`   | `cell` | `nmols` of molecules are packed in `cell_A`. |
+| `nmols`   | `density` | `cell_A` is determined by `nmols` and `density_kgm3`|
+| `cell`    | `density` | `nmol` is adjusted to approach the `density_kgm3` while maintaining the ratio. |
+| `density` | `cell` | `nmol` is adjusted while maintaining the ratio, and the value of `cell_A` is also adjusted so that it equals `density_kgm3`.|
 
 ## Usage Example: Liquid System to MD Simulation
 

@@ -121,11 +121,7 @@ exporter(
 | `software` | str | `psi4`, `g16` | QM software |
 
 ### Force Field (`forcefield`)
-"gaff-1.4",
-        "gaff-1.8",
-        "gaff-1.81",
-        "gaff-2.1",
-        "gaff-2.11",
+
 | Parameter | Type | Options | Description |
 |-----------|------|---------|-------------|
 | `fftype` | str | `gaff-2.11`, `gaff-2.1`, `gaff-1.81`, `gaff-1.8`, `gaff-1.4` | Force field type |
