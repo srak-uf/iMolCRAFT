@@ -131,3 +131,12 @@ examples/trainer/2rdf_1adf_density/loss_wrightfactor/xtcfiles/.sample_0.xtc_offs
 examples/trainer/2rdf_1adf_density/loss_wrightfactor/xtcfiles/sample_0.xtc
 tests/test_trainer/test_tp_learning_curve.png
 docs/timer.dat
+tests/sn.cif
+tests/gaffxml_0.xml
+tests/sample_0.png
+tests/data/dmff_parsed.yaml
+tests/test_trainer/sn.cif
+tests/test_trainer/supercell_bonds.pdb
+tests/test_trainer/system.xml
+tests/test_trainer/test_tp_best.xml
+tests/test_trainer/vs_supercell_bonds.pdb
