@@ -6,7 +6,8 @@ import mdtraj as md
 
 
 def calc_rdf(u: MDAnalysis.Universe, elem1, elem2,
-             rmax=8.0, dr=0.01, start=None, stop=None, step=None):
+             rmax=8.0, dr=0.01, only_intermolecular=False,
+             start=None, stop=None, step=None):
     """
     Calculate averaged radial distribution function (RDF) between two elements.
 
@@ -22,6 +23,9 @@ def calc_rdf(u: MDAnalysis.Universe, elem1, elem2,
         Maximum distance for RDF calculation (default is 8.0).
     dr : float, optional
         Bin width for RDF calculation (default is 0.01).
+    only_intermolecular : bool, optional
+        If True, calculate RDF only for intermolecular pairs (default is False).
+        (exclude pairs of atoms in the same residue)
     start : int, optional
         Starting frame index for RDF calculation
         (default is None, which means the first frame).
@@ -41,7 +45,13 @@ def calc_rdf(u: MDAnalysis.Universe, elem1, elem2,
     """
     u_select1 = u.select_atoms(f"element {elem1}")
     u_select2 = u.select_atoms(f"element {elem2}")
-    rdf = mda.InterRDF(u_select1, u_select2, range=(0, rmax), nbins=int(rmax / dr))
+    if only_intermolecular:
+        rdf = mda.InterRDF(u_select1, u_select2, 
+                        range=(0, rmax), nbins=int(rmax / dr),
+                        exclude_same="residue"
+                        )
+    else:
+        rdf = mda.InterRDF(u_select1, u_select2, range=(0, rmax), nbins=int(rmax / dr))
     rdf.run(start=start, stop=stop, step=step)
     r = rdf.results.bins
     g = rdf.results.rdf

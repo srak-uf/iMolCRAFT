@@ -140,3 +140,12 @@ tests/test_trainer/supercell_bonds.pdb
 tests/test_trainer/system.xml
 tests/test_trainer/test_tp_best.xml
 tests/test_trainer/vs_supercell_bonds.pdb
+docs/timer.dat
+examples/trainer/dihedral/dmc/vs_dmc.pdb
+examples/trainer/distance/testtest.pdb
+tests/chkpoint.xml
+tests/ethane1_best.xml
+tests/logy_test_tp_learning_curve.png
+tests/logylogx_test_tp_learning_curve.png
+tests/data/dmff_parsed.yaml
+tests/data/dmff_parsed.yaml

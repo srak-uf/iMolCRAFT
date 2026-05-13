@@ -185,6 +185,8 @@ plt.tight_layout()
 plt.show()
 ```
 
+![Dihedral Profile](_static/Dihedral_profile.png)
+
 ## Key Parameters
 
 ### DihedralTrainer Configuration
