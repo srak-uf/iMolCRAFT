@@ -444,13 +444,6 @@ class SumTrainer(BaseTrainer):
             grads2,
         )
 
-        self.trainer1.epochs.append(self._epoch)
-        self.trainer2.epochs.append(self._epoch)
-        self.trainer1.losses.append(self.loss1)
-        self.trainer2.losses.append(self.loss2)
-        self.trainer1._epoch += 1
-        self.trainer2._epoch += 1
-
         return loss, grad
 
     def training_step(self):
@@ -488,6 +481,13 @@ class SumTrainer(BaseTrainer):
 
         self.trainer1.after_step()
         self.trainer2.after_step()
+
+        self.trainer1.epochs.append(self._epoch)
+        self.trainer2.epochs.append(self._epoch)
+        self.trainer1.losses.append(self.loss1)
+        self.trainer2.losses.append(self.loss2)
+        self.trainer1._epoch += 1
+        self.trainer2._epoch += 1
     
     def write_checkpoint(self, checkpoint_frequency: int) -> None:
         """
