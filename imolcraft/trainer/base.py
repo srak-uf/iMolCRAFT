@@ -14,8 +14,13 @@ from imolcraft.trainer.dmff_utils import (
     get_chgparams_from_rescharges,
     get_rescharges_from_residues,
     vsiteinfo_to_params,
+    update_ffinfo_from_params,
+    update_ffinfo_from_rescharges,
+    update_rescharges_from_params,
 )
 import psutil
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 
 
 class BaseTrainer:
@@ -342,6 +347,12 @@ class SumTrainer(BaseTrainer):
         xmlfile = merge_xml(self.ffxml_list, f"{self.label}.xml")
         self.ffxml = xmlfile
         self.ff = Hamiltonian(self.ffxml)
+
+        ffparams = self.ff.getParameters().parameters
+        self.rescharges, self.natoms_list = get_rescharges_from_residues(
+            self.ff, ratio=self.nums_ffxml
+        )
+        self.ffparams = get_chgparams_from_rescharges(ffparams, self.rescharges)
         
         self._epoch = 0
         self.losses = []
@@ -488,6 +499,17 @@ class SumTrainer(BaseTrainer):
         self.trainer2.losses.append(self.loss2)
         self.trainer1._epoch += 1
         self.trainer2._epoch += 1
+
+    def after_step(self) -> None:
+        self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
+        self.rescharges = update_rescharges_from_params(
+            self.rescharges, self.ffparams
+        )
+        self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
+        self.ff.getParameters().parameters = self.ffparams
+        os.makedirs("xmlfiles", exist_ok=True)
+        self.ff.renderXML(f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml")
+        self.ffxml = f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml"
     
     def write_checkpoint(self, checkpoint_frequency: int) -> None:
         """
@@ -514,3 +536,32 @@ class SumTrainer(BaseTrainer):
                     "lr": self.lr,
                     "clip": self.clip,
                 }
+            
+            fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
+            ax.plot(self.epochs, self.losses)
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("Loss")
+            plt.tight_layout()
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            fig.savefig(f"{self.label}_learning_curve.png")
+            plt.close(fig)
+
+            fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
+            ax.set_yscale("log")
+            ax.plot(self.epochs, self.losses)
+            plt.tight_layout()
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            fig.savefig(f"logy_{self.label}_learning_curve.png")
+            plt.close(fig)
+
+            fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
+            ax.set_yscale("log")
+            ax.set_xscale("log")
+            ax.plot(self.epochs, self.losses)
+            plt.tight_layout()
+            fig.savefig(f"logylogx_{self.label}_learning_curve.png")
+            plt.close(fig)
+
+            self.trainer1.write_checkpoint(checkpoint_frequency)
+            self.trainer2.write_checkpoint(checkpoint_frequency)
+
