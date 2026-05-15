@@ -784,8 +784,8 @@ class ThermodynamicTrainer(BaseTrainer):
             self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
             self.ff.getParameters().parameters = self.ffparams
             os.makedirs("xmlfiles", exist_ok=True)
-            self.ff.renderXML(f"xmlfiles/epoch-{self._epoch+1}.xml")
-            self.ffxml = f"xmlfiles/epoch-{self._epoch+1}.xml"
+            self.ff.renderXML(f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml")
+            self.ffxml = f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml"
 
             print("Effective sample sizes:")
             for ii in range(len(self.sampling_params)):
@@ -822,8 +822,8 @@ class ThermodynamicTrainer(BaseTrainer):
             Frequency (in epochs) to write checkpoints.
         """
         if self._epoch % checkpoint_frequency == 0:
-            self.ff.renderXML("chkpoint.xml")
-            with open("train_state.pkl", "wb") as f:
+            self.ff.renderXML(f"chkpoint_{self.label}.xml")
+            with open(f"train_state_{self.label}.pkl", "wb") as f:
                 dump_dict = {
                     "ffparams": self.ffparams,
                     "opt_state": self.opt_state,
@@ -861,7 +861,8 @@ class ThermodynamicTrainer(BaseTrainer):
             # plotter
             for i in range(len(self.target_gt)):
                 plot_compare(
-                    self.target_gt[i], self.target_pred_frame[i], label=f"sample_{i}"
+                    self.target_gt[i], self.target_pred_frame[i],
+                    label=f"sample_{self.label}_{i}"
                 )
 
             fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
