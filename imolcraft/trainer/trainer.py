@@ -749,7 +749,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 ensemble=self.ensemble[idx],
                 nonbondedmethod=self.nonbondedmethod[idx],
                 useDispersionCorrection=self.dispcorr[idx],
-                platform=self.device
+                device=self.device
             )
             traj = md.load(f"{xtcfile}", top=self.pdbfile_vsite[idx])
             state = OpenMMSampleState(
