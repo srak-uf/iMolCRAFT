@@ -403,7 +403,6 @@ class SumTrainer(BaseTrainer):
         )
         self.optimizer = optax.masked(self.grad_transform, mask)
 
-    
     def setup(self) -> None:
         self.trainer1.setup()
         self.trainer2.setup()
@@ -421,8 +420,8 @@ class SumTrainer(BaseTrainer):
             )
         grads1 = self.trainer1._do_modify("after_grad", grads1)
         updates, self.trainer1.opt_state = self.trainer1.optimizer.update(grads1, self.trainer1.opt_state)
-        self.trainer1.ffparams = optax.apply_updates(self.trainer1.ffparams, updates)
-        self.trainer1.ffparams = self.trainer1._do_modify("after_update", self.trainer1.ffparams)
+        # self.trainer1.ffparams = optax.apply_updates(self.trainer1.ffparams, updates)
+        # self.trainer1.ffparams = self.trainer1._do_modify("after_update", self.trainer1.ffparams)
 
         self.loss2, grads2 = self.trainer2.get_loss_gradients()
         print(f"Loss2: {self.loss2}")
@@ -436,8 +435,8 @@ class SumTrainer(BaseTrainer):
             )
         grads2 = self.trainer2._do_modify("after_grad", grads2)
         updates2, self.trainer2.opt_state = self.trainer2.optimizer.update(grads2, self.trainer2.opt_state)
-        self.trainer2.ffparams = optax.apply_updates(self.trainer2.ffparams, updates2)
-        self.trainer2.ffparams = self.trainer2._do_modify("after_update", self.trainer2.ffparams)
+        # self.trainer2.ffparams = optax.apply_updates(self.trainer2.ffparams, updates2)
+        # self.trainer2.ffparams = self.trainer2._do_modify("after_update", self.trainer2.ffparams)
         
         # merge trainer1 and trainer2 ffparams
         loss = self.weight[0] * self.loss1 + self.weight[1] * self.loss2
@@ -456,6 +455,10 @@ class SumTrainer(BaseTrainer):
         )
 
         return loss, grad
+    
+    def before_step(self):
+        self.trainer1.before_step()
+        self.trainer2.before_step()
 
     def training_step(self):
         """
@@ -475,10 +478,7 @@ class SumTrainer(BaseTrainer):
         grads = self._do_modify("after_grad", grads)
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
         self.ffparams = optax.apply_updates(self.ffparams, updates)
-        self.ffparams = self._do_modify("after_update", self.ffparams)
 
-        self.trainer1.before_step()
-        self.trainer2.before_step()
         self.trainer1.ffparams = jax.tree_util.tree_map(
             lambda params, mapping: params[mapping == 0],
             self.ffparams,
@@ -490,6 +490,27 @@ class SumTrainer(BaseTrainer):
             self.ffparams_mapping
         )
 
+        self.trainer1._do_modify("after_update", self.trainer1.ffparams)
+        self.trainer2._do_modify("after_update", self.trainer2.ffparams)
+        self.ffparams = jax.tree_util.tree_map(
+                    lambda x, y: jnp.concatenate((x, y), axis=0),
+                    self.trainer1.ffparams,
+                    self.trainer2.ffparams,
+                )
+
+        self.ffparams = self._do_modify("after_update", self.ffparams)
+        self.trainer1.ffparams = jax.tree_util.tree_map(
+            lambda params, mapping: params[mapping == 0],
+            self.ffparams,
+            self.ffparams_mapping
+        )
+        self.trainer2.ffparams = jax.tree_util.tree_map(
+            lambda params, mapping: params[mapping == 1],
+            self.ffparams,
+            self.ffparams_mapping
+        )
+
+        # save xml files for trainer1 and trainer2
         self.trainer1.after_step()
         self.trainer2.after_step()
 
