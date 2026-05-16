@@ -441,7 +441,8 @@ class ThermodynamicTrainer(BaseTrainer):
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
         resample_freq: int = 50,
-        restart_xml: str = None
+        restart_xml: str = None,
+        device: str = "CPU"
     ) -> None:
         """
         Initialize the ThermodynamicTrainer.
@@ -478,6 +479,8 @@ class ThermodynamicTrainer(BaseTrainer):
         self.target_params = target_params
         self.resample_freq = resample_freq
         self.resample_counter = 0
+
+        self.device = device
 
         super().__init__(
             ffxml_list=ffxml_list,
@@ -638,6 +641,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 ensemble=self.ensemble[i],
                 nonbondedmethod=self.nonbondedmethod[i],
                 useDispersionCorrection=self.dispcorr[i],
+                device=self.device
             )
             state = OpenMMSampleState(
                 state_name,
@@ -648,6 +652,8 @@ class ThermodynamicTrainer(BaseTrainer):
                 nonbondedMethod=self.nonbondedmethod[i],
                 nonbondedCutoff=self.rc_nm[i] * unit.nanometer,
                 useDispersionCorrection=self.dispcorr[i],
+                platform=self.device
+
             )
             traj = md.load(xtcfile, top=self.pdbfile_vsite[i])
             sample = Sample(traj, state_name)
@@ -742,7 +748,8 @@ class ThermodynamicTrainer(BaseTrainer):
                 prod_steps=self.prod_steps[idx],
                 ensemble=self.ensemble[idx],
                 nonbondedmethod=self.nonbondedmethod[idx],
-                useDispersionCorrection=self.dispcorr[idx]
+                useDispersionCorrection=self.dispcorr[idx],
+                platform=self.device
             )
             traj = md.load(f"{xtcfile}", top=self.pdbfile_vsite[idx])
             state = OpenMMSampleState(
@@ -754,6 +761,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 nonbondedMethod=self.nonbondedmethod[idx],
                 nonbondedCutoff=self.rc_nm[idx] * unit.nanometer,
                 useDispersionCorrection=self.dispcorr[idx],
+                platform=self.device
             )
             sample = Sample(traj, state_name)
             self.target_pred_frame[idx] = get_target_pred_frame(
