@@ -441,7 +441,8 @@ class ThermodynamicTrainer(BaseTrainer):
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
         resample_freq: int = 50,
-        restart_xml: str = None
+        restart_xml: str = None,
+        device: str = "CPU"
     ) -> None:
         """
         Initialize the ThermodynamicTrainer.
@@ -478,6 +479,8 @@ class ThermodynamicTrainer(BaseTrainer):
         self.target_params = target_params
         self.resample_freq = resample_freq
         self.resample_counter = 0
+
+        self.device = device
 
         super().__init__(
             ffxml_list=ffxml_list,
@@ -638,6 +641,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 ensemble=self.ensemble[i],
                 nonbondedmethod=self.nonbondedmethod[i],
                 useDispersionCorrection=self.dispcorr[i],
+                device=self.device
             )
             state = OpenMMSampleState(
                 state_name,
@@ -648,6 +652,8 @@ class ThermodynamicTrainer(BaseTrainer):
                 nonbondedMethod=self.nonbondedmethod[i],
                 nonbondedCutoff=self.rc_nm[i] * unit.nanometer,
                 useDispersionCorrection=self.dispcorr[i],
+                platform=self.device
+
             )
             traj = md.load(xtcfile, top=self.pdbfile_vsite[i])
             sample = Sample(traj, state_name)
@@ -742,7 +748,8 @@ class ThermodynamicTrainer(BaseTrainer):
                 prod_steps=self.prod_steps[idx],
                 ensemble=self.ensemble[idx],
                 nonbondedmethod=self.nonbondedmethod[idx],
-                useDispersionCorrection=self.dispcorr[idx]
+                useDispersionCorrection=self.dispcorr[idx],
+                device=self.device
             )
             traj = md.load(f"{xtcfile}", top=self.pdbfile_vsite[idx])
             state = OpenMMSampleState(
@@ -754,6 +761,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 nonbondedMethod=self.nonbondedmethod[idx],
                 nonbondedCutoff=self.rc_nm[idx] * unit.nanometer,
                 useDispersionCorrection=self.dispcorr[idx],
+                platform=self.device
             )
             sample = Sample(traj, state_name)
             self.target_pred_frame[idx] = get_target_pred_frame(
@@ -784,8 +792,8 @@ class ThermodynamicTrainer(BaseTrainer):
             self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
             self.ff.getParameters().parameters = self.ffparams
             os.makedirs("xmlfiles", exist_ok=True)
-            self.ff.renderXML(f"xmlfiles/epoch-{self._epoch+1}.xml")
-            self.ffxml = f"xmlfiles/epoch-{self._epoch+1}.xml"
+            self.ff.renderXML(f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml")
+            self.ffxml = f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml"
 
             print("Effective sample sizes:")
             for ii in range(len(self.sampling_params)):
@@ -822,8 +830,8 @@ class ThermodynamicTrainer(BaseTrainer):
             Frequency (in epochs) to write checkpoints.
         """
         if self._epoch % checkpoint_frequency == 0:
-            self.ff.renderXML("chkpoint.xml")
-            with open("train_state.pkl", "wb") as f:
+            self.ff.renderXML(f"chkpoint_{self.label}.xml")
+            with open(f"train_state_{self.label}.pkl", "wb") as f:
                 dump_dict = {
                     "ffparams": self.ffparams,
                     "opt_state": self.opt_state,
@@ -861,7 +869,8 @@ class ThermodynamicTrainer(BaseTrainer):
             # plotter
             for i in range(len(self.target_gt)):
                 plot_compare(
-                    self.target_gt[i], self.target_pred_frame[i], label=f"sample_{i}"
+                    self.target_gt[i], self.target_pred_frame[i],
+                    label=f"sample_{self.label}_{i}"
                 )
 
             fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))

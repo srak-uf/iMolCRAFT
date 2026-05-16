@@ -539,6 +539,7 @@ def md_sample(
     useDispersionCorrection=False,
     useHbondConstraint=True,
     rigidWater=False,
+    device="CPU"
 ):
     """
     Run MD simulation with OpenMM
@@ -617,7 +618,10 @@ def md_sample(
     integrator = openmm.LangevinIntegrator(
         T * unit.kelvin, 5 / unit.picosecond, dt * unit.femtosecond
     )
-    simulation = app.Simulation(topology, system, integrator)
+
+    platform = openmm.Platform.getPlatformByName(device)
+
+    simulation = app.Simulation(topology, system, integrator, platform)
     xtcfile = os.path.join("xtcfiles", trajectory)
     try:
         os.remove(xtcfile)

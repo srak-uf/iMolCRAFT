@@ -1,4 +1,4 @@
-name: imc_cpu
+name: imc
 channels:
   - conda-forge
   - conda-forge/label/libint_dev 
@@ -6,6 +6,7 @@ dependencies:
   - ambertools=23.3
   - ase=3.23.0
   - cclib=1.8.1
+  - cuda-version=12
   - geometric
   - gromacs=2023.4
   - jupyter=1.0.0
@@ -22,7 +23,7 @@ dependencies:
   - pip=24.2
   - pip:
     - rdkit==2024.3.2
-    - jax==0.5.0
+    - jax[cuda12]==0.5.0
     - https://github.com/jax-md/jax-md/archive/main.zip
     - jaxopt==0.8.5
     - optax==0.2.3
