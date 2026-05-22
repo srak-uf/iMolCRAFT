@@ -1,6 +1,6 @@
 # About iMolCRAFT
 
-**iMolCRAFT** (**I**onic **Mol**ecular **CR**ystal **A**utomatic **F**orcefield **T**ool) is a Python package for automated force field development and optimization, with a specialization in electrolytic solutions and molecular crystal electrolytes. It is designed to streamline the entire workflow from crystal structure analysis to force field parameterization and validation for molecular dynamics simulations.
+**iMolCRAFT** (**I**onic **Mol**ecular **CR**ystal **A**utomatic **F**orcefield **T**ool) is a Python package for automated force field development and optimization, with a specialization in liquid elecrtolytes and molecular crystal electrolytes. It is designed to streamline the entire workflow from crystal structure analysis to force field parameterization and validation for molecular dynamics simulations.
 
 iMolCRAFT leverages [DMFF](https://github.com/deepmodeling/DMFF) (Differentiable Molecular Force Field) as its computational backend, enabling automatic differentiation-based parameter optimization from highly accurate calculations and experimental data.
 
@@ -17,14 +17,14 @@ The package automates and accelerates the force field development process throug
 
 ## Specialization
 
-iMolCRAFT is particularly optimized for **electrolytic solutions** and **molecular crystal electrolytes**, where accurate representation of electrostatic interactions and ion dynamics is critical. The framework enables researchers to systematically develop transferable force fields for these complex systems by bridging QM accuracy and classical MD efficiency.
+iMolCRAFT is particularly optimized for **liquid electrolytes** and **molecular crystal electrolytes**, where accurate representation of electrostatic interactions and ion dynamics is critical. The framework enables researchers to systematically develop transferable force fields for these complex systems by bridging QM accuracy and classical MD efficiency.
 
 # Installation
 ```
 git clone git@github.com:srak-uf/iMolCRAFT.git
 cd iMolCRAFT
 conda env create -f env.yml # this script can be used in linux and mac
-conda activate imc
+conda activate imc_cpu
 pip install .
 
 # make document (Optional)
