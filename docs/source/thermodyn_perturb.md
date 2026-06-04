@@ -130,7 +130,7 @@ Supported distribution observables:
 - **Angular Distribution Functions (ADF)**: Angle distributions in molecular systems
 
 #### Usage Examples
-
+You can find the [example](https://github.com/srak-uf/iMolCRAFT/tree/dev/examples/trainer/LiSLBF4)
 **Basic Example: Scalar Properties and Distributions**
 
 ```python
@@ -149,18 +149,23 @@ lossfn = partial(loss_thermodynamicperturbation,
 # Combine scalar properties and distribution functions
 target_params = [{
     # Scalar properties
-    "density_gcm3": {"gt": 1.2, "weight": 0.01},
-    "lattice_a_nm": {"gt": 0.5, "weight": 0.01},
+    "density_gcm3": {"gt": 1.2, "weight": 0.1},
+    "La_A": {"gt": 20.624, "weight": 0.1},
+    "Lb_A": {"gt": 17.707, "weight": 0.1},
+    "Lc_A": {"gt": 18.337, "weight": 0.1},
     
     # Distribution functions (reference data stored in txt files)
     "rdf": {
-        "Na-Cl": {"gt": "data/rdf_nacl.txt", "weight": 1.0},
-        "Cl-Cl": {"gt": "data/rdf_clcl.txt", "weight": 1.0},
+        "Li-O": {"gt": "rdf_Li_O.txt", "elem1": "Li", "elem2": "O", "weight": 1.0, "rcut12_A": 8.0},
+        "Li-F": {"gt": "rdf_Li_F.txt", "elem1": "Li", "elem2": "F", "weight": 1.0, "rcut12_A": 8.0},
+        "Li-Li": {"gt": "rdf_Li_Li.txt", "elem1": "Li", "elem2": "Li", "weight": 1.0, "rcut12_A": 8.0},
     },
-    "adf": {
-        "Na-Cl-Cl": {"gt": "data/adf_nacl.txt", "weight": 0.5},
-    }
 }]
+```
+
+iMolCRAFT provides the parser from the [yml file](https://github.com/srak-uf/iMolCRAFT/blob/dev/examples/trainer/LiSLBF4/dmff.yml). 
+```
+params = parser_dmffyaml("dmff.yml")
 ```
 
 File format for RDF/ADF data (space or tab-separated, 2 columns):
@@ -189,7 +194,7 @@ Adaptive resampling is triggered when:
 This ensures the method remains stable across the optimization landscape.
 
 ## Usage Example
-
+### 1. Parameter optimization
 ```python
 from imolcraft.trainer import ThermodynamicTrainer
 from imolcraft.trainer.loss import loss_thermodynamicperturbation
@@ -205,26 +210,46 @@ lossfn = partial(loss_thermodynamicperturbation,
 trainer = ThermodynamicTrainer(
     ffxml_list=["Li.xml", "BF4.xml", "SL.xml"],
     nums_ffxml=[1],
-    pdbfile="system.pdb",
+    pdbfile="supercell_bonds.pdb",
     loss_fn=lossfn,
     sampling_params=[{
-        "init_structure": "liquid.pdb",
+        "init_structure": "supercell_bonds.pdb",
         "temperature_K": 300.0,
         "pressure_bar": 1.0,
-        "rcut_nm": 0.9,
-        "ensemble": "npt",
+        "rcut_nm": 0.8,
+        "ensemble": "anisonpt",
+        "relax_steps": 20000
         "prod_steps": 100000,
-        "nstxout": 100,
+        "nstxout": 1000,
+        "neff": 50,
+        "dispcorr": True
     }],
     target_params=[{
         "density_gcm3": {"gt": 0.8, "weight": 0.01},
-        "rdf": {...}
+        "La_A":{...},
+        "rdf": {...},
     }],
     opt_fftypes=["NonbondedForce/charge", 
                  "NonbondedForce/epsilon",
                  "NonbondedForce/sigma"],
-    label="ff_opt"
+    label="ff_opt",
+    lr=1e-4
 )
+
+# If you use parser_dmffyaml,
+# trainer = ThermodynamicTrainer(
+#     ffxml_list=["BF4_bond.xml", "SL.xml", "Li.xml"],
+#     nums_ffxml=[1, 1, 1],
+#     pdbfile="supercell_bonds.pdb",
+#     loss_fn=lossfn,
+#     sampling_params=params["sampling"],
+#     target_params=params["targets"],
+#     opt_fftypes=["NonbondedForce/charge",
+#                  "NonbondedForce/epsilon",
+#                  "NonbondedForce/sigma"],
+#     label="lbs_opt",
+#     lr=1e-4
+# )
 
 # Optional: Define custom charge scaling with gradient and parameter modification
 def grad_modify(grads):
@@ -253,7 +278,7 @@ trainer.setup()
 trainer.fit(num_epochs=100, checkpoint_freq=10)
 ```
 
-### Gradient and Parameter Modification Functions
+#### Gradient and Parameter Modification Functions
 
 The example above demonstrates two key custom modification functions that enable advanced charge scaling strategies:
 
@@ -296,6 +321,43 @@ This method registers custom modification functions at specific points in the op
 - **Multiple modifications**: You can register multiple functions for the same hook point; they will be called in order of registration
 
 This approach enables sophisticated parameter optimization strategies while maintaining chemical validity throughout training.
+
+### 2. Results and restarts
+The optimization results are stored in the `train_state_....pkl` file.  
+For example, you can plot the training curve by the following script.
+```
+import pickle
+import matplotlib.pyplot as plt
+
+with open("train_state_2rdf_1adf.pkl", mode="rb") as f:
+    l = pickle.load(f)
+
+plt.plot(l["epochs"], l["losses"])
+plt.xlabel("Epochs")
+plt.ylabel("Loss")
+```
+
+You can restart the calculation by using the `train_state_....pkl` and `chkpoint....xml` files.  
+```
+params = parser_dmffyaml("dmff_prod.yml")
+lossfn = partial(loss_thermodynamicperturbation, losstype_distribfn="wrightfactor")
+
+trainer = ThermodynamicTrainer.from_checkpoint(trainer_checkpoint="train_state.pkl",
+                                     ffxml_list=["BF4_bond.xml", "SL.xml", "Li.xml"],
+                                     nums_ffxml=[1,1,1],
+                                     pdbfile="supercell_bonds.pdb",
+                                     initial_ffxml="chkpoint.xml",
+                                     loss_fn=lossfn,
+                                     sampling_params=params["sampling"],
+                                     target_params=params["targets"],
+                                     lr=lr_prod,
+)
+
+trainer.add_modifyfn("after_grad", grad_modify)
+trainer.add_modifyfn("after_update", ffparams_modify)
+trainer.setup()
+trainer.fit(100, 2)
+```
 
 ## Advantages
 
