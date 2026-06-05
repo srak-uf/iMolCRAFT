@@ -11,6 +11,7 @@ from collections import defaultdict
 import math
 import os
 import random
+from openmm.app import PDBFile
 
 # -------------------------------
 # Future implementation
@@ -685,6 +686,23 @@ def aseatoms2pdb(filename, atoms):
                 atomname += 1
             f.write(atomline + "\n")
         f.write("ENDMDL\n")
+
+
+def aseatoms2pdb_bonded(filename, atoms):
+    aw = asemol_wrapper(atoms)
+    [atoms], _, [G] = aw.get_ase_molecules(out_nX=True)
+    bonds = aw.get_bonds()
+
+    aseatoms2pdb(filename, atoms)
+    pdb_omm = PDBFile(filename)
+    atomlist_openmm = [a for a in pdb_omm.topology.atoms()]
+    for b in bonds:
+        a1 = atomlist_openmm[b[0]]
+        a2 = atomlist_openmm[b[1]]
+        pdb_omm.topology.addBond(a1, a2)
+    PDBFile.writeFile(
+        pdb_omm.topology, pdb_omm.positions, open(filename, "w")
+    )
 
 
 def merge_asemols(asemols):
