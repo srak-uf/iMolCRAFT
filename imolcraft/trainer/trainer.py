@@ -399,8 +399,9 @@ class DihedralTrainer(BaseTrainer):
 
         epoch = self._epoch + 1
         if epoch % self.relax_steps == 0:
-            self.ff.renderXML(f"loop-{epoch}.xml")
-            self.calculator.do_ffscan(f"loop-{epoch}.xml", angles="QM", ini_geom="FF")
+            os.makedirs("xmlfiles", exist_ok=True)
+            self.ff.renderXML(f"xmlfiles/loop-{epoch}.xml")
+            self.calculator.do_ffscan(f"xmlfiles/loop-{epoch}.xml", angles="QM", ini_geom="FF")
             positions_list = []
             for i in range(len(self.calculator.ff_scan)):
                 positions = [
