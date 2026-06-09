@@ -1,4 +1,4 @@
-# Crafter Feature: Crystal Systems for MD Simulations
+# Crafter: Crystal Systems for MD Simulations
 
 ## Overview
 
@@ -98,7 +98,6 @@ exporter(
 
 - **LAMMPS** (`format="lmp"`):
   - `crystal.data`: Data file
-  - `crystal.in`: Input script template
 
 
 ## Key Parameters Reference

@@ -1,4 +1,4 @@
-# Dihedral Parameter Optimization
+# Trainer: Dihedral Parameter Optimization
 
 ## Overview
 
