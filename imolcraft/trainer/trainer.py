@@ -788,39 +788,39 @@ class ThermodynamicTrainer(BaseTrainer):
             print("Warning: Loss is NaN or Inf. Resampling with the last valid force field XML.")
             self.resample = [True for i in range(len(self.sampling_params))]
 
-            self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
+        self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
         self.rescharges = update_rescharges_from_params(self.rescharges, self.ffparams)
-            self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
-            self.ff.getParameters().parameters = self.ffparams
-            os.makedirs("xmlfiles", exist_ok=True)
-            self.ff.renderXML(f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml")
-            self.ffxml = f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml"
+        self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
+        self.ff.getParameters().parameters = self.ffparams
+        os.makedirs("xmlfiles", exist_ok=True)
+        self.ff.renderXML(f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml")
+        self.ffxml = f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml"
         self.ffparams = get_chgparams_from_rescharges(self.ffparams, self.rescharges)
 
-            print("Effective sample sizes:")
-            for ii in range(len(self.sampling_params)):
-                try:
-                    ieff = self.estimator.estimate_effective_sample(
-                        self.utarget[ii], decompose=True
-                    )
-                    for k, v in ieff.items():
-                        print(f"  {k}: {v}")
-                    for i, (k, v) in enumerate(ieff.items()):
-                        if v < self.neff[ii] and k != "Total" and ii == i:
-                            self.resample[i] = True
-                            print(f"  {i} -> Resample")
-                        else:  # Vsiteのposition update
-                            # self.estimator._input***
-                            pass
-                except Exception:
-                    print("Warning: Error in estimating effective sample size")
-                    self.estimator.states = []
-                    self.estimator.samples = []
-                    self.resample = [True for i in range(len(self.sampling_params))]
+        print("Effective sample sizes:")
+        for ii in range(len(self.sampling_params)):
+            try:
+                ieff = self.estimator.estimate_effective_sample(
+                    self.utarget[ii], decompose=True
+                )
+                for k, v in ieff.items():
+                    print(f"  {k}: {v}")
+                for i, (k, v) in enumerate(ieff.items()):
+                    if v < self.neff[ii] and k != "Total" and ii == i:
+                        self.resample[i] = True
+                        print(f"  {i} -> Resample")
+                    else:  # Vsiteのposition update
+                        # self.estimator._input***
+                        pass
+            except Exception:
+                print("Warning: Error in estimating effective sample size")
+                self.estimator.states = []
+                self.estimator.samples = []
+                self.resample = [True for i in range(len(self.sampling_params))]
 
-            if True in self.resample:
-                self._resample()
-                self.resample = [False for i in range(len(self.sampling_params))]
+        if True in self.resample:
+            self._resample()
+            self.resample = [False for i in range(len(self.sampling_params))]
 
     def write_checkpoint(self, checkpoint_frequency: int) -> None:
         """
