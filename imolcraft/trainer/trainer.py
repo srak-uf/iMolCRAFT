@@ -780,6 +780,8 @@ class ThermodynamicTrainer(BaseTrainer):
         Handles periodic XML output and effective sample size checks.
         """
         self.resample_counter += 1
+        if self.resample_counter >= self.resample_freq:
+            self.resample = [True for i in range(len(self.sampling_params))]
         loss_value = getattr(self, "loss", None)
         loss_is_invalid = loss_value is not None and (
             bool(jnp.isnan(loss_value)) or bool(jnp.isinf(loss_value))
