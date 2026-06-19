@@ -690,10 +690,14 @@ def aseatoms2pdb(filename, atoms):
 
 def aseatoms2pdb_bonded(filename, atoms):
     aw = asemol_wrapper(atoms)
-    [atoms], _, [G] = aw.get_ase_molecules(out_nX=True)
+    molatoms, _, _ = aw.get_ase_molecules(out_nX=True)
+    unit_cell_atoms = merge_asemols(molatoms)
+    aseatoms2pdb(filename, unit_cell_atoms)
+
+    aw = asemol_wrapper(read(filename))
+    _, _, _ = aw.get_ase_molecules(out_nX=True)
     bonds = aw.get_bonds()
 
-    aseatoms2pdb(filename, atoms)
     pdb_omm = PDBFile(filename)
     atomlist_openmm = [a for a in pdb_omm.topology.atoms()]
     for b in bonds:
