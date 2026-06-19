@@ -17,6 +17,7 @@ from ..trainer.dmff_utils import (
     get_target_pred_frame,
     get_target_gt,
     plot_compare,
+    get_chgparams_from_rescharges
 )
 from .base import BaseTrainer
 from ..calculator import DihedralCalculator, DistanceCalculator
@@ -779,22 +780,22 @@ class ThermodynamicTrainer(BaseTrainer):
         Handles periodic XML output and effective sample size checks.
         """
         self.resample_counter += 1
-        if self.resample_counter >= self.resample_freq:
+        loss_value = getattr(self, "loss", None)
+        loss_is_invalid = loss_value is not None and (
+            bool(jnp.isnan(loss_value)) or bool(jnp.isinf(loss_value))
+        )
+        if loss_is_invalid:
+            print("Warning: Loss is NaN or Inf. Resampling with the last valid force field XML.")
             self.resample = [True for i in range(len(self.sampling_params))]
 
-        if True in self.resample:  # i.e., loss is nan
-            self._resample()
-            self.resample = [False for i in range(len(self.sampling_params))]
-        else:
             self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
-            self.rescharges = update_rescharges_from_params(
-                self.rescharges, self.ffparams
-            )
+        self.rescharges = update_rescharges_from_params(self.rescharges, self.ffparams)
             self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
             self.ff.getParameters().parameters = self.ffparams
             os.makedirs("xmlfiles", exist_ok=True)
             self.ff.renderXML(f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml")
             self.ffxml = f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml"
+        self.ffparams = get_chgparams_from_rescharges(self.ffparams, self.rescharges)
 
             print("Effective sample sizes:")
             for ii in range(len(self.sampling_params)):
