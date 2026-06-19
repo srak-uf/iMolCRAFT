@@ -116,6 +116,8 @@ def parser_dmffyaml(yaml_file):
                     raise KeyError(f"Missing elem2 for target {target_name}: {key}.")
                 if "rcut12_A" not in data["targets"][target_name][key]:
                     raise KeyError(f"Missing rcut12_A for target {target_name}: {key}.")
+                if "dr_A" not in data["targets"][target_name][key]:
+                    data["targets"][target_name][key]["dr_A"] = 0.01  # set default dr_A if not provided
         if target_name in ["adf"]:
             for key in data["targets"][target_name].keys():
                 if "elem1" not in data["targets"][target_name][key]:
@@ -700,8 +702,9 @@ def get_target_pred_frame(xtcfile, pdbfile, target_params: dict):
                 elem1 = target_params[target_name][key]["elem1"]
                 elem2 = target_params[target_name][key]["elem2"]
                 rcut12_A = target_params[target_name][key]["rcut12_A"]
+                dr_A = target_params[target_name][key]["dr_A"]
                 target_pred[target_name][key] = calc_rdf_frame(
-                    u, elem1, elem2, rmax=rcut12_A
+                    u, elem1, elem2, rmax=rcut12_A, dr=dr_A
                 )
         elif target_name == "adf":
             target_pred[target_name] = {}
