@@ -30,6 +30,7 @@ jobs:
         shell: bash -el {0}
         run: |
           mamba install -c conda-forge pytest
+          pip install importlib-resources
           pip install .
       
       - name: Run tests
