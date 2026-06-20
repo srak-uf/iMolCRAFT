@@ -60,8 +60,8 @@ def calc_rdf(u: MDAnalysis.Universe, elem1, elem2,
     return r, g
 
 
-def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01,
-                   start=None, stop=None, step=None):
+def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01, 
+                   only_intermolecular=False, start=None, stop=None, step=None):
     """
     Calculate radial distribution function (RDF) between two elements for each frame.
 
@@ -95,7 +95,13 @@ def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01,
     """
     u_select1 = u.select_atoms(f"element {elem1}")
     u_select2 = u.select_atoms(f"element {elem2}")
-    rdf = mda.InterRDF(u_select1, u_select2, range=(0, rmax), nbins=int(rmax / dr))
+    if only_intermolecular:
+        rdf = mda.InterRDF(u_select1, u_select2, 
+                        range=(0, rmax), nbins=int(rmax / dr),
+                        exclude_same="residue"
+                        )
+    else:
+        rdf = mda.InterRDF(u_select1, u_select2, range=(0, rmax), nbins=int(rmax / dr))
     rdf_list = []
     if start is None:
         start = 0

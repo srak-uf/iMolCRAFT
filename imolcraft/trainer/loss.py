@@ -140,7 +140,8 @@ def loss_thermodynamicperturbation(
 
     if estimator._input is None:
         target_energy_function = buildTrajEnergyFunction(
-            efunc, cov_map, rc, ensemble=ens, useFreud=True, pressure=pressure
+            # efunc, cov_map, rc, ensemble=ens, useFreud=True, pressure=pressure
+            efunc, cov_map, rc, ensemble=ens, useFreud=False, useRS=True, pressure=pressure
         )
         target_state = TargetState(Temperature_K, target_energy_function)
         weight, utarget = estimator.estimate_weight(

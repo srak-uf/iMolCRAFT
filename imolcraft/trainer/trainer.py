@@ -883,7 +883,7 @@ class ThermodynamicTrainer(BaseTrainer):
             ax.set_ylabel("Loss")
             plt.tight_layout()
             ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-            fig.savefig(f"{self.label}_learning_curve.png")
+            fig.savefig(f"{self.label}_learning_curve.png", bbox_inches="tight")
             plt.close(fig)
 
             fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
@@ -891,7 +891,7 @@ class ThermodynamicTrainer(BaseTrainer):
             ax.plot(self.epochs, self.losses)
             plt.tight_layout()
             ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-            fig.savefig(f"logy_{self.label}_learning_curve.png")
+            fig.savefig(f"logy_{self.label}_learning_curve.png", bbox_inches="tight")
             plt.close(fig)
 
             fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
@@ -899,7 +899,7 @@ class ThermodynamicTrainer(BaseTrainer):
             ax.set_xscale("log")
             ax.plot(self.epochs, self.losses)
             plt.tight_layout()
-            fig.savefig(f"logylogx_{self.label}_learning_curve.png")
+            fig.savefig(f"logylogx_{self.label}_learning_curve.png", bbox_inches="tight")
             plt.close(fig)
 
     @classmethod
