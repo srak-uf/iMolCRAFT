@@ -17,6 +17,7 @@ from ..trainer.dmff_utils import (
     get_target_pred_frame,
     get_target_gt,
     plot_compare,
+    get_chgparams_from_rescharges
 )
 from .base import BaseTrainer
 from ..calculator import DihedralCalculator, DistanceCalculator
@@ -781,45 +782,47 @@ class ThermodynamicTrainer(BaseTrainer):
         self.resample_counter += 1
         if self.resample_counter >= self.resample_freq:
             self.resample = [True for i in range(len(self.sampling_params))]
+        loss_value = getattr(self, "loss", None)
+        loss_is_invalid = loss_value is not None and (
+            bool(jnp.isnan(loss_value)) or bool(jnp.isinf(loss_value))
+        )
+        if loss_is_invalid:
+            print("Warning: Loss is NaN or Inf. Resampling with the last valid force field XML.")
+            self.resample = [True for i in range(len(self.sampling_params))]
 
-        if True in self.resample:  # i.e., loss is nan
+        self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
+        self.rescharges = update_rescharges_from_params(self.rescharges, self.ffparams)
+        self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
+        self.ff.getParameters().parameters = self.ffparams
+        os.makedirs("xmlfiles", exist_ok=True)
+        self.ff.renderXML(f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml")
+        self.ffxml = f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml"
+        self.ffparams = get_chgparams_from_rescharges(self.ffparams, self.rescharges)
+
+        print("Effective sample sizes:")
+        for ii in range(len(self.sampling_params)):
+            try:
+                ieff = self.estimator.estimate_effective_sample(
+                    self.utarget[ii], decompose=True
+                )
+                for k, v in ieff.items():
+                    print(f"  {k}: {v}")
+                for i, (k, v) in enumerate(ieff.items()):
+                    if v < self.neff[ii] and k != "Total" and ii == i:
+                        self.resample[i] = True
+                        print(f"  {i} -> Resample")
+                    else:  # Vsiteのposition update
+                        # self.estimator._input***
+                        pass
+            except Exception:
+                print("Warning: Error in estimating effective sample size")
+                self.estimator.states = []
+                self.estimator.samples = []
+                self.resample = [True for i in range(len(self.sampling_params))]
+
+        if True in self.resample:
             self._resample()
             self.resample = [False for i in range(len(self.sampling_params))]
-        else:
-            self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
-            self.rescharges = update_rescharges_from_params(
-                self.rescharges, self.ffparams
-            )
-            self.ff = update_ffinfo_from_rescharges(self.ff, self.rescharges)
-            self.ff.getParameters().parameters = self.ffparams
-            os.makedirs("xmlfiles", exist_ok=True)
-            self.ff.renderXML(f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml")
-            self.ffxml = f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml"
-
-            print("Effective sample sizes:")
-            for ii in range(len(self.sampling_params)):
-                try:
-                    ieff = self.estimator.estimate_effective_sample(
-                        self.utarget[ii], decompose=True
-                    )
-                    for k, v in ieff.items():
-                        print(f"  {k}: {v}")
-                    for i, (k, v) in enumerate(ieff.items()):
-                        if v < self.neff[ii] and k != "Total" and ii == i:
-                            self.resample[i] = True
-                            print(f"  {i} -> Resample")
-                        else:  # Vsiteのposition update
-                            # self.estimator._input***
-                            pass
-                except Exception:
-                    print("Warning: Error in estimating effective sample size")
-                    self.estimator.states = []
-                    self.estimator.samples = []
-                    self.resample = [True for i in range(len(self.sampling_params))]
-
-            if True in self.resample:
-                self._resample()
-                self.resample = [False for i in range(len(self.sampling_params))]
 
     def write_checkpoint(self, checkpoint_frequency: int) -> None:
         """
@@ -880,7 +883,7 @@ class ThermodynamicTrainer(BaseTrainer):
             ax.set_ylabel("Loss")
             plt.tight_layout()
             ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-            fig.savefig(f"{self.label}_learning_curve.png")
+            fig.savefig(f"{self.label}_learning_curve.png", bbox_inches="tight")
             plt.close(fig)
 
             fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
@@ -888,7 +891,7 @@ class ThermodynamicTrainer(BaseTrainer):
             ax.plot(self.epochs, self.losses)
             plt.tight_layout()
             ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-            fig.savefig(f"logy_{self.label}_learning_curve.png")
+            fig.savefig(f"logy_{self.label}_learning_curve.png", bbox_inches="tight")
             plt.close(fig)
 
             fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
@@ -896,7 +899,7 @@ class ThermodynamicTrainer(BaseTrainer):
             ax.set_xscale("log")
             ax.plot(self.epochs, self.losses)
             plt.tight_layout()
-            fig.savefig(f"logylogx_{self.label}_learning_curve.png")
+            fig.savefig(f"logylogx_{self.label}_learning_curve.png", bbox_inches="tight")
             plt.close(fig)
 
     @classmethod

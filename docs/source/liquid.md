@@ -1,4 +1,4 @@
-# Crafter Feature: Liquid Systems for MD Simulations
+# Crafter: Liquid Systems for MD Simulations
 
 ## Overview
 
@@ -113,7 +113,6 @@ exporter(
 
 - **LAMMPS** (`format="lmp"`):
   - `liquid.data`: Data file
-  - `liquid.in`: Input script template
 
 ## Key Parameters Reference
 

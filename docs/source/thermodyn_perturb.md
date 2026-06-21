@@ -1,4 +1,4 @@
-# Thermodynamic Gradient
+# Trainer: Thermodynamic Gradient
 ## Overview
 
 The **Thermodynamic Trainer** is a specialized trainer class in iMolCRAFT designed to optimize force field parameters by directly matching thermodynamic properties computed from molecular dynamics (MD) simulations. Unlike conventional force field fitting approaches that rely on isolated geometries or single-state calculations, the thermodynamic gradient method leverages ensemble reweighting techniques to efficiently compute gradients with respect to force field parameters for multiple thermodynamic states simultaneously.
