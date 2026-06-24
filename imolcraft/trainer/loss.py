@@ -132,6 +132,7 @@ def loss_thermodynamicperturbation(
     target_pred: dict,
     pressure: float = 1.0,
     losstype_distribfn: str = "wrightfactor",
+    charge_penalty: dict = {"index": [None], "weight": [0.0], "initial": [0.0], "valance": [1.0]},
 ):
     if ensemble in ["isonpt", "anisonpt", "trinpt"]:
         ens = "npt"
@@ -182,5 +183,11 @@ def loss_thermodynamicperturbation(
                 elif losstype_distribfn == "jsdivergence":
                     loss_tmp = jsdivergence(rdf_pred, target_gt[key][kind]["gt"])
                 loss += target_gt[key][kind]["weight"] * loss_tmp
+    
+    if charge_penalty["index"] is not [None]:
+        for i_loop, idx in enumerate(charge_penalty["index"]):
+            penalty = charge_penalty["weight"][i_loop] * jnp.abs(ffparams["NonbondedForce"]["charge"][idx] - charge_penalty["initial"][i_loop]) / charge_penalty["valence"][i_loop]
+            loss += penalty
+
     print(f"Finish loss calc Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
     return loss, (utarget, weighted_results)
