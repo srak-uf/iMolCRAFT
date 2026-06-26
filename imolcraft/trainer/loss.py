@@ -186,7 +186,7 @@ def loss_thermodynamicperturbation(
     
     if not charge_penalty["index"] == [None]:
         for i_loop, idx in enumerate(charge_penalty["index"]):
-            penalty = charge_penalty["weight"][i_loop] * jnp.abs(ffparams["NonbondedForce"]["charge"][idx] - charge_penalty["initial"][i_loop]) / charge_penalty["valence"][i_loop]
+            penalty = charge_penalty["weight"][i_loop] * jnp.abs(ffparams["NonbondedForce"]["charge"][idx] - charge_penalty["initial"][i_loop]) / jnp.abs(charge_penalty["valence"][i_loop])
             loss += penalty
 
     print(f"Finish loss calc Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
