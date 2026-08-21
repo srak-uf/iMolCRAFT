@@ -189,3 +189,26 @@ fftype / software / charge_type）。`charge_type` の許容値はマジック�
   どちらも同じく捕捉するため挙動不変。
 - `python -O` で 6 箇所すべてが `ValueError` を送出することを実測で確認。
   旧実装は `-O` 下で不正値をそのまま通していた。
+
+## 追記: run_antech の原子順の前提（2026-08-21、io リファクタ中に判明）
+
+`GAFFilTemplateGenerator.run_antech` は `molecule.atoms`（OpenFF の原子順）から得た FSA の
+metadata index を、mol2 ファイルの**行番号**としてそのまま使って GAFF 型を上書きする。
+
+```python
+for i, atom in enumerate(molecule.atoms):
+    for meta_key, elem_key in _FSA_METADATA_KEYS:
+        if atom.metadata.get(meta_key) is True:
+            gaff_atoms[i][5] = fsa_types[elem_key]
+```
+
+つまり「OpenFF 分子の原子順 == mol2 ファイルの原子順」を暗黙に仮定している。通常の Crafter の
+パイプラインでは mol2 を同じ OpenFF 分子から書き出すので成立するが、成立しない組み合わせでは
+エラーにならず別の原子へ型が付く。`tests/data/fsa_resp.mol2.gaff` はまさにその状態で、
+1 番目の原子（名前 `S`）に酸素の型 `o` が、2 番目（名前 `F`）に硫黄の型 `s6` が付いている。
+これは SMILES から作った分子と無関係な RESP mol2 を組み合わせる
+`tests/test_crafter/test_gaffilgenerator.py` の産物。
+
+修正するなら、index ではなく原子名か元素で対応付けるか、少なくとも
+`len(molecule.atoms) == len(gaff_atoms)` と元素の一致を検証して食い違いを検出すべき。
+詳細は `docs/refactoring_io.md` の「補足」節を参照。

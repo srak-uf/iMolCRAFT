@@ -18,7 +18,9 @@ def exporter_gmx(pdb, system, filename):
         The filename of the output file (filename.top, filename.gro).
     """
     pdb_omm = PDBFile(pdb)
-    system_omm = XmlSerializer.deserialize(open(system).read())
+    with open(system) as f:
+        system_omm = XmlSerializer.deserialize(f.read())
+
     parm_top = load_topology(
         topology=pdb_omm.topology, system=system_omm, xyz=pdb_omm.positions
     )
