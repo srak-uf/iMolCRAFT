@@ -79,7 +79,7 @@ def _il_assign(mol, nc, mol2d=None):
             atoms2d = mol2d.GetAtoms()
 
         Cl_atom_list = []
-        for atom in mol2d.GetAtoms():
+        for atom in mol.GetAtoms():
             if atom.GetSymbol() == "Cl":
                 Cl_atom_list.append(atom)
 
