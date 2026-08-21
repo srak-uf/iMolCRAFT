@@ -1,21 +1,87 @@
+import os
+import subprocess
+import tempfile
+
+import networkx as nx
+import numpy as np
+from ase import units
+from ase.calculators.gaussian import Gaussian
+from ase.io import read
 from openmm import HarmonicBondForce, LangevinMiddleIntegrator
+from openmm.app import ForceField, Modeller, NoCutoff, PDBFile, Simulation
+from openmm.openmm import XmlSerializer
 from openmm.unit import (
+    angstrom,
     kelvin,
+    kilojoules_per_mole,
     picosecond,
     picoseconds,
-    kilojoules_per_mole,
-    angstrom,
 )
-from openmm.app import NoCutoff, Simulation, PDBFile, ForceField, Modeller
-from openmm.openmm import XmlSerializer
-import numpy as np
-from ase.io import read
-from ase.calculators.gaussian import Gaussian
-from ase import units
-import os
-import tempfile
-import subprocess
-import networkx as nx
+
+#: Default Gaussian settings of a relaxed distance scan.
+_DEFAULT_QMPARAMS = {
+    "method": "wb97xd",
+    "basis": "6-311+g(2d,p)",
+    "opt": "modredundant",
+}
+
+#: Force constant restraining the scanned distance during the FF minimization.
+_RESTRAINT_K = 100000000 * kilojoules_per_mole / angstrom**2
+
+#: Largest distance of the automatically generated scan range, in angstrom.
+_SCAN_RMAX_A = 6.0
+
+
+def _make_integrator():
+    return LangevinMiddleIntegrator(300 * kelvin, 1 / picosecond, 0.004 * picoseconds)
+
+
+def _write_pdb(topology, positions, path):
+    """Write an OpenMM topology to a PDB file, closing it afterwards."""
+    with open(path, "w") as f:
+        PDBFile.writeFile(topology, positions, f)
+
+
+def _add_bonds(pdb_omm, bonds):
+    """Add the given (index1, index2) bonds to a PDB topology."""
+    atomlist_openmm = [a for a in pdb_omm.topology.atoms()]
+    for bond in bonds:
+        pdb_omm.topology.addBond(atomlist_openmm[bond[0]], atomlist_openmm[bond[1]])
+
+
+def _real_atom_positions_in_angstrom(topology, state):
+    """
+    Positions of the atoms carrying an element, in angstrom.
+
+    Virtual sites are left out so that the result can be assigned back to an
+    ``ase.Atoms``, which only holds the real atoms.
+    """
+    positions = state.getPositions()
+    return [
+        [float(c.value_in_unit(angstrom)) for c in np.array(positions[i])]
+        for i, atom in enumerate(topology.atoms())
+        if atom.element is not None
+    ]
+
+
+def _energies_by_force_group(topology, system, positions):
+    """
+    Potential energy of every force of the system, evaluated separately.
+
+    Each force is moved to its own group so that its contribution can be read
+    back on its own.
+    """
+    for i, force in enumerate(system.getForces()):
+        force.setForceGroup(i)
+
+    simulation = Simulation(topology, system, _make_integrator())
+    simulation.context.setPositions(positions)
+    return [
+        simulation.context.getState(getEnergy=True, groups={i})
+        .getPotentialEnergy()
+        .real
+        for i in range(system.getNumForces())
+    ]
 
 
 class DistanceCalculator:
@@ -28,10 +94,14 @@ class DistanceCalculator:
     ----------
     atoms: ase.Atoms
         ASE Atoms object of the molecule.
-    rdkitmol: rdkit.Chem.rdchem.Mol
-        RDKit molecule object.
+    nc: int
+        Net charge of the molecule.
     label: str
         Label for the calculation.
+    scan_idx: list of list of int
+        List of pairs of atom indices for distance scans.
+    scan_ranges: list of np.ndarray
+        List of ranges for the distances to scan.
     directory: str
         Directory to save the calculation files.
     qmparams: dict
@@ -39,18 +109,6 @@ class DistanceCalculator:
 
     Attributes
     ----------
-    atoms: ase.Atoms
-        ASE Atoms object of the molecule.
-    rdmol: rdkit.Chem.rdchem.Mol
-        RDKit molecule object.
-    nc: int
-        Net charge of the molecule.
-    label: str
-        Label for the calculation.
-    directory: str
-        Directory to save the calculation files.
-    qmparams: dict
-        Parameters for the quantum mechanical calculation.
     scan_idx: list
         List of pairs of atom indices for distance scans.
     qm_calculators: list
@@ -74,37 +132,12 @@ class DistanceCalculator:
         directory=None,
         qmparams=None,
     ):
-        """
-        Parameters
-        ----------
-        atoms: ase.Atoms
-            ASE Atoms object of the molecule.
-        nc: int
-            Net charge of the molecule.
-        label: str
-            Label for the calculation.
-        scan_idx: list of list of int
-            List of pairs of atom indices for distance scans.
-        scan_ranges: list of np.ndarray
-            List of ranges for the distances to scan.
-        directory: str
-            Directory to save the calculation files.
-        qmparams: dict
-            Parameters for the quantum mechanical calculation.
-        """
         self.atoms = atoms.copy()
         self.atoms.pbc = False
         self.atoms.cell = None
         self.nc = nc
         self.label = label
-        if qmparams is None:
-            self.qmparams = {
-                "method": "wb97xd",
-                "basis": "6-311+g(2d,p)",
-                "opt": "modredundant",
-            }
-        else:
-            self.qmparams = qmparams
+        self.qmparams = dict(_DEFAULT_QMPARAMS) if qmparams is None else qmparams
 
         if directory is None:
             self.directory = os.getcwd()
@@ -116,33 +149,27 @@ class DistanceCalculator:
         # scan_idx: [[d1_1, d1_2], [d2_1, d2_2],...]
         self.scan_idx = scan_idx
 
-        self.rmin = []
-        self.dr = []
-        for d in self.scan_idx:
-            rmin = self.atoms.get_distance(d[0], d[1]) * 0.8
-            rmin = float("%.1f" % rmin)
-            self.rmin.append(rmin)
-            dr = self.atoms.get_distance(d[0], d[1]) * 0.1
-            dr = float("%.1f" % dr)
-            self.dr.append(dr)
+        # start the scan at 80% of the current distance and step by 10% of it
+        distances = [self.atoms.get_distance(d[0], d[1]) for d in self.scan_idx]
+        self.rmin = [float("%.1f" % (d * 0.8)) for d in distances]
+        self.dr = [float("%.1f" % (d * 0.1)) for d in distances]
 
         if scan_ranges is None:
             self.scan_ranges = [
-                np.concatenate([np.arange(self.rmin[i], 6.0, self.dr[i])])
-                for i in range(len(scan_idx))
+                np.arange(rmin, _SCAN_RMAX_A, dr)
+                for rmin, dr in zip(self.rmin, self.dr)
             ]
         else:
             self.scan_ranges = scan_ranges
 
-        self.qm_calculators = [None for _ in range(len(self.scan_idx))]
-        self.ff_calculators = [None for _ in range(len(self.scan_idx))]
+        n_scans = len(self.scan_idx)
+        self.qm_calculators = [None for _ in range(n_scans)]
+        self.ff_calculators = [None for _ in range(n_scans)]
         self.qm_scan = [
-            {"distance_A": [], "energy_kjmol": [], "atoms": []}
-            for _ in range(len(self.scan_idx))
+            {"distance_A": [], "energy_kjmol": [], "atoms": []} for _ in range(n_scans)
         ]
         self.ff_scan = [
-            {"distance_A": [], "energy_kjmol": [], "atoms": []}
-            for _ in range(len(self.scan_idx))
+            {"distance_A": [], "energy_kjmol": [], "atoms": []} for _ in range(n_scans)
         ]
 
     def do_qmscan(self, dist_idx=None, do_calc=True):
@@ -163,46 +190,55 @@ class DistanceCalculator:
         for di in dist_idx:
             for distance in self.scan_ranges[di]:
                 label = f"{self.label}_dist_{di}__{distance:.2f}"
-                d0 = self.scan_idx[di][0] + 1  # +1 for 0-indexing
-                d1 = self.scan_idx[di][1] + 1
-                g16_addsec = f"B {d0} {d1} F"
-                params = self.qmparams.copy()
-                params["addsec"] = g16_addsec
+                g16 = self._write_g16_input(di, distance, label)
+                self.qm_calculators[di] = g16
 
-                g16 = Gaussian(label=label, charge=int(self.nc), **params)
-                g16.directory = os.path.abspath(self.directory)
+                if not do_calc:
+                    continue
 
-                if len(self.qm_scan[di]["atoms"]) > 0:
-                    atoms = self.qm_scan[di]["atoms"][-1].copy()
-                else:
-                    atoms = self.atoms.copy()
-
-                atoms = change_distance(atoms, self.scan_idx[di], distance)
-                g16.write_input(atoms, system_changes=0)
                 comfile = os.path.join(self.directory, f"{label}.com")
                 logfile = os.path.join(self.directory, f"{label}.log")
+                cmd = f"g16 < {comfile}  > {logfile}"
+                output = subprocess.getoutput(cmd)
+                print(f"g16distance -- {g16.label}")
+                print(cmd)
+                print(output)
 
-                with open(comfile) as f:
-                    lines = f.readlines()
-                del lines[-3]  # to cope with bug of ase
-                with open(comfile, mode="w") as f:
-                    f.writelines(lines)
+                self.qm_scan[di]["distance_A"].append(distance)
+                self.qm_scan[di]["atoms"].append(read(logfile))
+                self.qm_scan[di]["energy_kjmol"].append(
+                    read(logfile).get_potential_energy() / (units.kJ / units.mol)
+                )
 
-                self.qm_calculators[di] = g16
-                if do_calc:
-                    cmd = f"g16 < {comfile}  > {logfile}"
-                    output = subprocess.getoutput(cmd)
-                    print(f"g16distance -- {g16.label}")
-                    print(cmd)
-                    print(output)
+    def _write_g16_input(self, di, distance, label):
+        """
+        Write the Gaussian input of one scan point, restraining the scanned
+        distance, and return the calculator.
+        """
+        # +1 because Gaussian numbers atoms from one
+        d0 = self.scan_idx[di][0] + 1  # +1 for 0-indexing
+        d1 = self.scan_idx[di][1] + 1
+        params = self.qmparams.copy()
+        params["addsec"] = f"B {d0} {d1} F"
 
-                    atoms = read(logfile)
-                    self.qm_scan[di]["distance_A"].append(distance)
-                    self.qm_scan[di]["atoms"].append(atoms)
-                    energy = read(logfile).get_potential_energy() / (
-                        units.kJ / units.mol
-                    )
-                    self.qm_scan[di]["energy_kjmol"].append(energy)
+        g16 = Gaussian(label=label, charge=int(self.nc), **params)
+        g16.directory = os.path.abspath(self.directory)
+
+        # continue from the previous scan point when there is one
+        if len(self.qm_scan[di]["atoms"]) > 0:
+            atoms = self.qm_scan[di]["atoms"][-1].copy()
+        else:
+            atoms = self.atoms.copy()
+        g16.write_input(change_distance(atoms, self.scan_idx[di], distance),
+                        system_changes=0)
+
+        comfile = os.path.join(self.directory, f"{label}.com")
+        with open(comfile) as f:
+            lines = f.readlines()
+        del lines[-3]  # to cope with bug of ase
+        with open(comfile, mode="w") as f:
+            f.writelines(lines)
+        return g16
 
     def do_ffscan(self, ffxml, dist_idx=None, ini_geom="QM"):
         """
@@ -226,29 +262,25 @@ class DistanceCalculator:
             dist_idx = [int(dist_idx)]
 
         for di in dist_idx:
-            label = f"{self.label}_dihed_{di}"
-            d1 = self.scan_idx[di][0]
-            d2 = self.scan_idx[di][1]
             if ini_geom == "QM":
-                (
-                    self.ff_scan[di]["distance_A"],
-                    self.ff_scan[di]["energy_kjmol"],
-                    self.ff_scan[di]["atoms"],
-                ) = scan_ff_distance(
-                    ffxml,
-                    self.qm_scan[di]["distance_A"],
-                    self.scan_idx[di],
-                    atoms=self.atoms,
-                    atoms_list=self.qm_scan[di]["atoms"],
-                )
+                # walk the geometries the QM scan relaxed into
+                distances = self.qm_scan[di]["distance_A"]
+                atoms_list = self.qm_scan[di]["atoms"]
             else:
-                (
-                    self.ff_scan[di]["distance_A"],
-                    self.ff_scan[di]["energy_kjmol"],
-                    self.ff_scan[di]["atoms"],
-                ) = scan_ff_distance(
-                    ffxml, self.scan_ranges[di], self.scan_idx[di], atoms=self.atoms
-                )
+                distances = self.scan_ranges[di]
+                atoms_list = None
+
+            (
+                self.ff_scan[di]["distance_A"],
+                self.ff_scan[di]["energy_kjmol"],
+                self.ff_scan[di]["atoms"],
+            ) = scan_ff_distance(
+                ffxml,
+                distances,
+                self.scan_idx[di],
+                atoms=self.atoms,
+                atoms_list=atoms_list,
+            )
 
 
 def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds=None):
@@ -273,27 +305,29 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
 
     Returns
     -------
-    ff_pot_kjmol: numpy.ndarray
-        Array of potential energies in kJ/mol for each distance.
-    ff_distanceatoms: list of ase.Atoms
-        List of ASE Atoms objects for each distance.
+    distances: tuple of float
+        Scanned distances, sorted ascending.
+    ff_pot_kjmol: tuple of float
+        Potential energies in kJ/mol for each distance.
+    ff_distanceatoms: tuple of ase.Atoms
+        ASE Atoms objects for each distance.
     """
     from ..crafter.asemol import aseatoms2pdb, asemol_wrapper, merge_asemols
     from ..crafter.ffxml import check_vsite, delvsite_pdb
 
     distance_ff_energy = []
     ff_distance_atoms = []
-    d1 = dist_atidx[0]
-    d2 = dist_atidx[1]
+    d1, d2 = dist_atidx
 
     if bonds is None:
         aw = asemol_wrapper(atoms)
-        molatoms, molecule_list, G_list = aw.get_ase_molecules(out_nX=True)
+        molatoms, _, _ = aw.get_ase_molecules(out_nX=True)
         atoms = merge_asemols(molatoms)
-        if bonds is None:
-            bonds = aw.get_bonds()
+        bonds = aw.get_bonds()
 
     pos_prev = atoms.get_positions()
+    num_vsites = check_vsite(ffxml)
+    forcefield = ForceField(ffxml)
 
     with tempfile.TemporaryDirectory() as td:
         for i in range(len(distances)):
@@ -304,27 +338,20 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
                 pdb_ase.arrays["atomtypes"] = [i for i in range(len(pdb_ase))]
                 temppdb = os.path.join(td, f"temp_dist_{i}.pdb")
                 aseatoms2pdb(temppdb, pdb_ase)
-                # aseatoms2pdb("wovsite.pdb", pdb_ase)
-
             else:
                 # Set the positions for the distance calculation
                 temppdb = os.path.join(td, f"temp_distance_{i}.pdb")
                 atoms.cell = None
                 atoms.pbc = False
                 atoms.positions = pos_prev
-                atoms_desireddistance = change_distance(atoms, dist_atidx, distances[i])
-                aseatoms2pdb(temppdb, atoms_desireddistance)
-                # aseatoms2pdb("wovsite.pdb", atoms_desireddistance)
+                aseatoms2pdb(
+                    temppdb, change_distance(atoms, dist_atidx, distances[i])
+                )
 
             pdb_omm = PDBFile(temppdb)
-            atomlist_openmm = [a for a in pdb_omm.topology.atoms()]
-            for b in bonds:
-                a1 = atomlist_openmm[b[0]]
-                a2 = atomlist_openmm[b[1]]
-                pdb_omm.topology.addBond(a1, a2)
+            _add_bonds(pdb_omm, bonds)
             pos = pdb_omm.getPositions()
             topology = pdb_omm.topology
-            num_vsites = check_vsite(ffxml)
 
             if num_vsites > 0:
                 modeller = Modeller(pdb_omm.topology, pdb_omm.positions)
@@ -332,62 +359,38 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
                 pos = modeller.getPositions()
                 topology = modeller.topology
 
-            PDBFile.writeFile(topology, pos, open(temppdb, "w"))
+            _write_pdb(topology, pos, temppdb)
 
             # relaxed scan
-            forcefield = ForceField(ffxml)
             system = forcefield.createSystem(topology, nonbondedMethod=NoCutoff)
             tempsysxml = os.path.join(td, "system.xml")
             with open(tempsysxml, "w") as output:
                 output.write(XmlSerializer.serialize(system))
-            restraint = HarmonicBondForce()
-            map_idx_wovsite2vsite = [
-                i for i, atom in enumerate(topology.atoms()) if atom.element is not None
-            ]
-            d1_wv = map_idx_wovsite2vsite[d1]
-            d2_wv = map_idx_wovsite2vsite[d2]
-            restraint.addBond(
-                d1_wv,
-                d2_wv,
-                distances[i] * angstrom,
-                100000000 * kilojoules_per_mole / angstrom**2,
+
+            system.addForce(
+                _distance_restraint(topology, d1, d2, distances[i])
             )
-            system.addForce(restraint)
-            integrator = LangevinMiddleIntegrator(
-                300 * kelvin, 1 / picosecond, 0.004 * picoseconds
-            )
-            simulation = Simulation(topology, system, integrator)
+            simulation = Simulation(topology, system, _make_integrator())
             simulation.context.setPositions(pos)
             simulation.minimizeEnergy()
             state = simulation.context.getState(getPositions=True, getEnergy=True)
-            crd = simulation.context.getState(getPositions=True).getPositions()
-            PDBFile.writeFile(topology, crd, open(temppdb, "w"))
-            # PDBFile.writeFile(topology, crd, open("hoge.pdb", "w"))
+            _write_pdb(topology, state.getPositions(), temppdb)
 
-            pos_prev = []
-            for p in state.getPositions():
-                p = np.array(p)
-                xx = p[0].value_in_unit(angstrom)
-                yy = p[1].value_in_unit(angstrom)
-                zz = p[2].value_in_unit(angstrom)
-                pos_prev.append([xx, yy, zz])
+            pos_prev = _real_atom_positions_in_angstrom(topology, state)
 
+            # energy of the relaxed geometry without the restraint
             pdb_omm = PDBFile(temppdb)
-            system = forcefield.createSystem(pdb_omm.topology, nonbondedMethod=NoCutoff)
-            for j, f in enumerate(system.getForces()):
-                f.setForceGroup(j)
-                integrator = LangevinMiddleIntegrator(
-                    300 * kelvin, 1 / picosecond, 0.004 * picoseconds
+            distance_ff_energy.append(
+                sum(
+                    _energies_by_force_group(
+                        pdb_omm.topology,
+                        forcefield.createSystem(
+                            pdb_omm.topology, nonbondedMethod=NoCutoff
+                        ),
+                        pdb_omm.positions,
+                    )
                 )
-                simulation = Simulation(pdb_omm.topology, system, integrator)
-                simulation.context.setPositions(pdb_omm.positions)
-
-            potential_energies = []
-            for gi, f in enumerate(system.getForces()):
-                state = simulation.context.getState(getEnergy=True, groups={gi})
-                potential_energies.append(state.getPotentialEnergy().real)
-
-            distance_ff_energy.append(sum(potential_energies))
+            )
 
             if num_vsites > 0:
                 # Remove virtual sites from the PDB file
@@ -397,21 +400,41 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
             atoms.pbc = False
             ff_distance_atoms.append(atoms)
 
-    ff_pot = np.array(distance_ff_energy)
-    ff_pot_kjmol = ff_pot  # (ff_pot - ff_pot.min())
+    ff_pot_kjmol = np.array(distance_ff_energy)  # (ff_pot - ff_pot.min())
     # distancesを小さい順にソート
-    zip_lists = zip(distances, ff_pot_kjmol, ff_distance_atoms)
-    # 昇順でソート
-    zip_sort = sorted(zip_lists)
-    # zipを解除
+    zip_sort = sorted(zip(distances, ff_pot_kjmol, ff_distance_atoms))
     distances, ff_pot_kjmol, ff_distance_atoms = zip(*zip_sort)
 
     return distances, ff_pot_kjmol, ff_distance_atoms
 
 
+def _distance_restraint(topology, d1, d2, distance):
+    """
+    Harmonic restraint holding one atom pair at ``distance``.
+
+    Virtual sites shift the atom numbering of the topology, so the indices are
+    mapped through the atoms that carry an element.
+    """
+    map_idx_wovsite2vsite = [
+        i for i, atom in enumerate(topology.atoms()) if atom.element is not None
+    ]
+    restraint = HarmonicBondForce()
+    restraint.addBond(
+        map_idx_wovsite2vsite[d1],
+        map_idx_wovsite2vsite[d2],
+        distance * angstrom,
+        _RESTRAINT_K,
+    )
+    return restraint
+
+
 def change_distance(atoms, dist_atidx, desired_distance):
     """
     Change the distance between two atoms in an ASE Atoms object.
+
+    The bond between the two atoms is cut in the connectivity graph and the
+    fragment carrying the second atom is translated along the bond, so that the
+    rest of the molecule keeps its internal geometry.
 
     Parameters
     ----------
@@ -419,7 +442,7 @@ def change_distance(atoms, dist_atidx, desired_distance):
         ASE Atoms object of the molecule.
     dist_atidx: list of int
         Indices of the atoms involved in the distance calculation.
-    distance: float
+    desired_distance: float
         Desired distance between the two atoms.
 
     Returns
@@ -429,39 +452,20 @@ def change_distance(atoms, dist_atidx, desired_distance):
     """
     from ..crafter.asemol import ase_atoms_to_nx
 
-    d1 = dist_atidx[0]
-    d2 = dist_atidx[1]
-    pos1 = atoms.positions[d1]
-    pos2 = atoms.positions[d2]
-    bondvec = pos2 - pos1
+    d1, d2 = dist_atidx
+    bondvec = atoms.positions[d2] - atoms.positions[d1]
     abs_bondvec = np.linalg.norm(bondvec)
-    unit_bondvec = bondvec / np.linalg.norm(bondvec)
+    unit_bondvec = bondvec / abs_bondvec
 
-    # aw = asemol_wrapper(atoms)
-    # try:
-    #     [atoms1, atoms2], _, [G1, G2] = aw.get_ase_molecules(out_nX=True)
-    # except:
-    #     write("error.pdb", atoms1)
-    #     assert False, "Failed to get ASE molecules. Please check the input."
-    G = ase_atoms_to_nx(atoms)
+    graph = ase_atoms_to_nx(atoms)
+    # when the two atoms are not bonded the graph stays connected and the whole
+    # molecule is translated, which is what the original code did as well
+    if graph.has_edge(d1, d2):
+        graph.remove_edge(d1, d2)
+    moved = next(c for c in nx.connected_components(graph) if d2 in c)
 
-    for e in G.edges():
-        if (e[0] == d1 and e[1] == d2) or (e[0] == d2 and e[1] == d1):
-            G.remove_edge(e[0], e[1])
-            break
-    S_list = [G.subgraph(c).copy() for c in nx.connected_components(G)]
-    for i, s in enumerate(S_list):
-        # d2が属するかどうか
-        if d2 in s.nodes():
-            # d2が属するグラフのidを取得
-            id = i
-            break
-
-    d2Graph = S_list[id]
-    elong_idx = list(d2Graph.nodes.keys())
     pos = atoms.positions
-    for idx in elong_idx:
-        # diff_vec = pos[idx] - pos2
+    for idx in moved:
         pos[idx] += unit_bondvec * (desired_distance - abs_bondvec)
 
     atoms_desireddistance = atoms.copy()
