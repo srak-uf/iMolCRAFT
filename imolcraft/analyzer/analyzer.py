@@ -6,6 +6,19 @@ import MDAnalysis.analysis.rdf as mda
 import mdtraj as md
 import numpy as np
 
+#: Public API re-exported by ``imolcraft.analyzer``. Without it the wildcard
+#: import in ``__init__.py`` would also leak the imported modules.
+__all__ = [
+    "CELLPAR_INDICES",
+    "calc_adf",
+    "calc_adf_frame",
+    "calc_cellpar_frame",
+    "calc_density",
+    "calc_density_frame",
+    "calc_rdf",
+    "calc_rdf_frame",
+]
+
 #: Mass of one atomic mass unit in gram.
 _AMU_TO_G = 1.66053886e-24
 
@@ -59,16 +72,21 @@ def _build_interrdf(u, elem1, elem2, rmax, dr, only_intermolecular):
     )
 
 
-def _drop_spurious_first_bin(g):
+def _zero_first_bin(g):
     """
-    Zero the first RDF bin when it is unphysically large.
+    Zero the first RDF bin, which stands for r = 0 and must vanish there.
 
-    The innermost bin covers r ~ 0, where the shell volume vanishes and the
-    normalisation blows up, so a non-zero count there produces a spike rather
-    than a meaningful value. The array is modified in place and returned.
+    The innermost bin starts at r = 0, where the shell volume goes to zero and
+    the normalisation blows up, so whatever lands in it is a spike rather than
+    a meaningful value.
+
+    Note that this assumes the bin is narrow enough to really represent r ~ 0.
+    With a coarse ``dr`` the first bin reaches out to genuine coordination
+    shells and zeroing it discards a real peak.
+
+    The array is modified in place and returned.
     """
-    if g[0] > 1:
-        g[0] = 0.0
+    g[0] = 0.0
     return g
 
 
@@ -112,7 +130,7 @@ def calc_rdf(u: MDAnalysis.Universe, elem1, elem2,
     """
     rdf = _build_interrdf(u, elem1, elem2, rmax, dr, only_intermolecular)
     rdf.run(start=start, stop=stop, step=step)
-    return rdf.results.bins, _drop_spurious_first_bin(rdf.results.rdf)
+    return rdf.results.bins, _zero_first_bin(rdf.results.rdf)
 
 
 def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01,
@@ -163,7 +181,10 @@ def calc_rdf_frame(u: MDAnalysis.Universe, elem1, elem2, rmax=8.0, dr=0.01,
     rdf_list = []
     for i_frame in range(start, stop, step):
         rdf.run(frames=[i_frame])
-        rdf_list.append(_drop_spurious_first_bin(rdf.results.rdf))
+        # copy: the analysis object is reused across frames, so keeping a
+        # reference to results.rdf would tie every entry to whatever the last
+        # run left there
+        rdf_list.append(_zero_first_bin(np.array(rdf.results.rdf)))
     return np.array(rdf_list)
 
 
@@ -240,8 +261,8 @@ def calc_adf_frame(xtcfile, pdbfile, elem1, elem2, elem3, rcut12=3.0, rcut23=3.0
     """
     # angle elem1-elem2-elem3
     # mdtraj works in nm, the cutoffs are given in angstrom
-    rcut12 /= 10.0
-    rcut23 /= 10.0
+    rcut12_nm = rcut12 / 10.0
+    rcut23_nm = rcut23 / 10.0
 
     t = md.load(xtcfile, top=pdbfile)
     t = t[start:stop:step]  # select frames
@@ -260,7 +281,7 @@ def calc_adf_frame(xtcfile, pdbfile, elem1, elem2, elem3, rcut12=3.0, rcut23=3.0
     arr_1_2 = np.array(pairs_1_2)
     arr_2_3 = np.array(pairs_2_3)
     triplets = [
-        _join_on_center(arr_1_2[d_1_2 < rcut12], arr_2_3[d_2_3 < rcut23])
+        _join_on_center(arr_1_2[d_1_2 < rcut12_nm], arr_2_3[d_2_3 < rcut23_nm])
         for d_1_2, d_2_3 in zip(dists_1_2, dists_2_3)
     ]
 
@@ -320,6 +341,10 @@ def calc_adf(xtcfile, pdbfile, elem1, elem2, elem3, rcut12=3.0, rcut23=3.0,
         xtcfile, pdbfile, elem1, elem2, elem3, rcut12=rcut12, rcut23=rcut23,
         start=start, stop=stop, step=step
     )
+    # calc_adf_frame normalises every frame on its own, so each frame carries
+    # the same weight here regardless of how many triplets it contained. This
+    # is deliberate: the result is the mean of the per-frame distributions,
+    # not the distribution of all triplets pooled together.
     return _ADF_BINS[:-1], np.mean(prob_123, axis=0)
 
 
@@ -341,7 +366,7 @@ def calc_density_frame(u: MDAnalysis.Universe):
     density : numpy.ndarray
         Array of density values for each frame.
     """
-    total_mass = sum(u.atoms.masses)
+    total_mass = u.atoms.masses.sum()
     return np.array(
         [
             (total_mass * _AMU_TO_G) / (ts.volume * _ANG3_TO_CM3)
