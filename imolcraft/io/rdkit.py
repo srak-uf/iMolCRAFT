@@ -70,6 +70,57 @@ def atoms2rdkit(atoms: Atoms, nc: int = 0, il_assign: bool = True):
 
 
 def _il_assign(mol, nc, mol2d=None):
+    def assign_clo4(mol, nc, mol2d=None):
+        """
+        Check if the molecule is PF6
+        """
+        atoms = mol.GetAtoms()
+        if mol2d is not None:
+            atoms2d = mol2d.GetAtoms()
+
+        Cl_atom_list = []
+        for atom in mol2d.GetAtoms():
+            if atom.GetSymbol() == "Cl":
+                Cl_atom_list.append(atom)
+
+        Cl_nbond_list = [len(atom.GetNeighbors()) for atom in Cl_atom_list]
+        Cl_highvalence_list = [atom for atom, nbond in zip(Cl_atom_list, Cl_nbond_list) if nbond > 3]
+
+        ClO4_Clindex = []
+        ClO4_Oindex = []
+        il_dict = {}
+
+        ClO4_flag = False
+        Cl_flag = False
+
+        if nc < 0:
+            for atom in atoms:
+                if atom.GetSymbol() == "Cl":
+                    if len(atom.GetNeighbors()) == 4:
+                        Cl_flag = True
+
+            if Cl_flag:
+                for i, atom in enumerate(atoms):
+                    if atom.GetSymbol() == "O":
+                        atom.SetFormalCharge(-1)
+                        if mol2d is not None:
+                            atoms2d[i].SetFormalCharge(-1)
+                        ClO4_Oindex.append(i)
+                    elif atom.GetSymbol() == "Cl":
+                        atom.SetFormalCharge(3)
+                        if mol2d is not None:
+                            atoms2d[i].SetFormalCharge(3)
+                        ClO4_Clindex.append(i)
+
+            if len(ClO4_Oindex) == 4 and len(ClO4_Clindex) == 1:
+                ClO4_flag = True
+            if not ClO4_flag:
+                return None
+            else:
+                il_dict["ClO4_Cl"] = ClO4_Clindex
+                il_dict["ClO4_O"] = ClO4_Oindex
+                return il_dict
+            
     def assign_pf6(mol, nc, mol2d=None):
         """
         Check if the molecule is PF6
@@ -201,6 +252,11 @@ def _il_assign(mol, nc, mol2d=None):
     il_dict = assign_pf6(mol, nc, mol2d)
     if il_dict is not None:
         print("PF6-like molecule detected during rdkit conversion.")
+        return il_dict
+
+    il_dict = assign_clo4(mol, nc, mol2d)
+    if il_dict is not None:
+        print("ClO4-like molecule detected during rdkit conversion.")
         return il_dict
 
     il_dict = assign_fsalike(mol, nc, mol2d)
