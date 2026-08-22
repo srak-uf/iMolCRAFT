@@ -13,7 +13,6 @@ from imolcraft.crafter.ffxml import merge_xml
 from imolcraft.trainer.dmff_utils import (
     get_chgparams_from_rescharges,
     get_rescharges_from_residues,
-    vsiteinfo_to_params,
     update_ffinfo_from_params,
     update_ffinfo_from_rescharges,
     update_rescharges_from_params,
@@ -21,6 +20,91 @@ from imolcraft.trainer.dmff_utils import (
 import psutil
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
+
+
+#: Relative size of the random nudge applied when the loss turns NaN or Inf.
+_NAN_RECOVERY_SCALE = 0.0001
+
+
+def _print_memory(tag: str) -> None:
+    """Report the resident set size of this process, for tracking JAX leaks."""
+    process = psutil.Process(os.getpid())
+    print(f"{tag} Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
+
+
+def _broadcast_lr_clip(lr, clip, opt_fftypes):
+    """
+    Give every optimized parameter type its own learning rate and clip value.
+
+    A single number is shared by all of them; a list has to line up with
+    ``opt_fftypes``.
+    """
+    if isinstance(lr, list):
+        if len(lr) != len(opt_fftypes):
+            raise ValueError("Length of lr must match length of opt_fftypes.")
+        if len(lr) != len(clip):
+            raise ValueError("Length of lr must match length of clip.")
+        return lr, clip
+    return [lr] * len(opt_fftypes), [clip] * len(opt_fftypes)
+
+
+def _build_optimizer(ffparams, opt_fftypes, optimizer_algo, lr, clip):
+    """
+    Build the masked optimizer updating only the requested parameter types.
+
+    Integer parameters (periodicities and the like) are masked out, since they
+    are not continuous and must not be moved by the gradient step.
+    """
+    multiTrans = MultiTransform(ffparams)
+    for i, opt_fftype in enumerate(opt_fftypes):
+        multiTrans[opt_fftype] = genOptimizer(
+            optimizer=optimizer_algo,
+            learning_rate=lr[i],
+            clip=clip[i],
+            nonzero=False,  # Should be True
+        )
+    multiTrans.finalize()
+
+    grad_transform = optax.multi_transform(multiTrans.transforms, multiTrans.labels)
+    mask = jax.tree_util.tree_map(
+        lambda x: x.dtype != jnp.int32 and x.dtype != int, ffparams
+    )
+    return grad_transform, optax.masked(grad_transform, mask)
+
+
+def _nan_recovery_gradients(ffparams):
+    """
+    Replace the gradients by a small random nudge.
+
+    Used when the loss came out NaN or Inf: rather than stopping, the
+    parameters are jittered so the next step starts from a different point.
+    """
+    return jax.tree_util.tree_map(
+        lambda x: x
+        + _NAN_RECOVERY_SCALE * jax.random.normal(jax.random.PRNGKey(1), shape=x.shape),
+        ffparams,
+    )
+
+
+def plot_learning_curve(epochs, losses, label: str) -> None:
+    """Write the loss history on linear, log-y and log-log axes."""
+    for prefix, xscale, yscale in (
+        ("", "linear", "linear"),
+        ("logy_", "linear", "log"),
+        ("logylogx_", "log", "log"),
+    ):
+        fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
+        ax.set_xscale(xscale)
+        ax.set_yscale(yscale)
+        ax.plot(epochs, losses)
+        if prefix == "":
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("Loss")
+        plt.tight_layout()
+        if xscale == "linear":
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        fig.savefig(f"{prefix}{label}_learning_curve.png", bbox_inches="tight")
+        plt.close(fig)
 
 
 class BaseTrainer:
@@ -79,9 +163,8 @@ class BaseTrainer:
             self.ffxml_list = ffxml_list
 
         self.nums_ffxml = nums_ffxml
-        assert len(self.ffxml_list) == len(
-            self.nums_ffxml
-        ), "Length of ffxml_list and nums_ffxml must be the same."
+        if len(self.ffxml_list) != len(self.nums_ffxml):
+            raise ValueError("Length of ffxml_list and nums_ffxml must be the same.")
 
         if label is None:
             label = [
@@ -115,7 +198,8 @@ class BaseTrainer:
             pos = self.pdb.positions
 
         vs_pdbfile = f"vs_{os.path.basename(self.pdbfile)}"
-        app.PDBFile.writeFile(self.topology, pos, open(vs_pdbfile, "w"))
+        with open(vs_pdbfile, "w") as f:
+            app.PDBFile.writeFile(self.topology, pos, f)
         self.pdbfile_vsite = vs_pdbfile
         self.opt_fftypes = opt_fftypes
 
@@ -126,47 +210,11 @@ class BaseTrainer:
         self.ffparams = get_chgparams_from_rescharges(ffparams, self.rescharges)
 
         self.loss_fn = loss_fn
-        if isinstance(lr, list):
-            assert len(lr) == len(
-                opt_fftypes
-            ), "Length of lr must match length of opt_fftypes."
-            assert len(lr) == len(clip), "Length of lr must match length of clip."
-        else:
-            lr = [lr] * len(opt_fftypes)
-            clip = [clip] * len(opt_fftypes)
-
-        self.lr = lr
-        self.clip = clip
-
-        multiTrans = MultiTransform(self.ffparams)
+        self.lr, self.clip = _broadcast_lr_clip(lr, clip, opt_fftypes)
         self.optimizer_algo = optimizer_algo
-        for i, opt_fftype in enumerate(self.opt_fftypes):
-            # multiTrans[opt_fftype] = genOptimizer(
-            #     learning_rate=lr, clip=0.001, nonzero=False
-            # )
-            if opt_fftype == "NonbondedForce/charge":
-                multiTrans[opt_fftype] = genOptimizer(
-                    optimizer=self.optimizer_algo,
-                    learning_rate=lr[i],
-                    clip=self.clip[i],
-                    nonzero=False,
-                )
-            else:
-                multiTrans[opt_fftype] = genOptimizer(
-                    optimizer=self.optimizer_algo,
-                    learning_rate=lr[i],
-                    clip=self.clip[i],
-                    nonzero=False,
-                )  # Should be True
-
-        multiTrans.finalize()
-        self.grad_transform = optax.multi_transform(
-            multiTrans.transforms, multiTrans.labels
+        self.grad_transform, self.optimizer = _build_optimizer(
+            self.ffparams, self.opt_fftypes, optimizer_algo, self.lr, self.clip
         )
-        mask = jax.tree_util.tree_map(
-            lambda x: x.dtype != jnp.int32 and x.dtype != int, self.ffparams
-        )
-        self.optimizer = optax.masked(self.grad_transform, mask)
 
         self.losses = []
         self.epochs = []
@@ -232,24 +280,18 @@ class BaseTrainer:
         Handles NaN/Inf loss by perturbing parameters.
         """
         self.loss, grads = self.get_loss_gradients()
-        process = psutil.Process(os.getpid())
-        print(f"grad obtained.... Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
+        _print_memory("grad obtained....")
         if jnp.isnan(self.loss) or jnp.isinf(self.loss):
             print("Warning: Loss is NaN or Inf. Skipping this step.")
             # self.ffparamsを0.01%ランダムにずらす
-            grads = jax.tree_util.tree_map(
-                lambda x: x
-                + 0.0001 * jax.random.normal(jax.random.PRNGKey(1), shape=x.shape),
-                self.ffparams,
-            )
+            grads = _nan_recovery_gradients(self.ffparams)
 
         grads = self._do_modify("after_grad", grads)
-        print(f"grad modify.... Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
+        _print_memory("grad modify....")
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
-        # print("Updates: ", updates)
         self.ffparams = optax.apply_updates(self.ffparams, updates)
         self.ffparams = self._do_modify("after_update", self.ffparams)
-        print(f"update finished.... Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB")
+        _print_memory("update finished....")
 
     def before_step(self) -> None:
         """
@@ -300,10 +342,7 @@ class BaseTrainer:
             self.losses.append(self.loss)
             if i_epoch % checkpoint_frequency == 0:
                 self.write_checkpoint(checkpoint_frequency)
-                process = psutil.Process(os.getpid())
-                print(
-                    f"Epoch {i_epoch}, Loss: {self.loss}, Memory Usage: {process.memory_info().rss / 1024**2:.2f} MB"
-                )
+                _print_memory(f"Epoch {i_epoch}, Loss: {self.loss},")
             self._epoch += 1
             end_time = time.time()
             print("Loss: ", self.loss)
@@ -335,7 +374,9 @@ class SumTrainer(BaseTrainer):
                         )
 
         self.ffparams_mapping = jax.tree_util.tree_map(
-            lambda x, y: jnp.concatenate((jnp.zeros_like(x, dtype=int), jnp.ones_like(y, dtype=int)), axis=0),
+            lambda x, y: jnp.concatenate(
+                (jnp.zeros_like(x, dtype=int), jnp.ones_like(y, dtype=int)), axis=0
+            ),
             self.trainer1.ffparams,
             self.trainer2.ffparams,
         )
@@ -361,99 +402,48 @@ class SumTrainer(BaseTrainer):
         self._modifyfns["after_grad"] = lambda grads: grads
         self._modifyfns["after_update"] = lambda ffparams: ffparams
 
-        if isinstance(lr, list):
-            assert len(lr) == len(
-                opt_fftypes
-            ), "Length of lr must match length of opt_fftypes."
-            assert len(lr) == len(clip), "Length of lr must match length of clip."
-        else:
-            lr = [lr] * len(opt_fftypes)
-            clip = [clip] * len(opt_fftypes)
-        
         self.opt_fftypes = opt_fftypes
-        self.lr = lr
-        self.clip = clip
-
-        multiTrans = MultiTransform(self.ffparams)
+        self.lr, self.clip = _broadcast_lr_clip(lr, clip, opt_fftypes)
         self.optimizer_algo = optimizer_algo
-        for i, opt_fftype in enumerate(self.opt_fftypes):
-            # multiTrans[opt_fftype] = genOptimizer(
-            #     learning_rate=lr, clip=0.001, nonzero=False
-            # )
-            if opt_fftype == "NonbondedForce/charge":
-                multiTrans[opt_fftype] = genOptimizer(
-                    optimizer=self.optimizer_algo,
-                    learning_rate=lr[i],
-                    clip=self.clip[i],
-                    nonzero=False,
-                )
-            else:
-                multiTrans[opt_fftype] = genOptimizer(
-                    optimizer=self.optimizer_algo,
-                    learning_rate=lr[i],
-                    clip=self.clip[i],
-                    nonzero=False,
-                )  # Should be True
-        multiTrans.finalize()
-        self.grad_transform = optax.multi_transform(
-            multiTrans.transforms, multiTrans.labels
+        self.grad_transform, self.optimizer = _build_optimizer(
+            self.ffparams, self.opt_fftypes, optimizer_algo, self.lr, self.clip
         )
-        mask = jax.tree_util.tree_map(
-            lambda x: x.dtype != jnp.int32 and x.dtype != int, self.ffparams
-        )
-        self.optimizer = optax.masked(self.grad_transform, mask)
 
     def setup(self) -> None:
         self.trainer1.setup()
         self.trainer2.setup()
         self.opt_state = self.optimizer.init(self.ffparams)
     
-    def get_loss_gradients(self):
-        self.loss1, grads1 = self.trainer1.get_loss_gradients()
-        print(f"Loss1: {self.loss1}")
-        if jnp.isnan(self.loss1) or jnp.isinf(self.loss1):
-            print("Warning: Loss is NaN or Inf. Skipping this step.")
-            grads1 = jax.tree_util.tree_map(
-                lambda x: x
-                + 0.0001 * jax.random.normal(jax.random.PRNGKey(1), shape=x.shape),
-                self.trainer1.ffparams,
-            )
-        grads1 = self.trainer1._do_modify("after_grad", grads1)
-        updates, self.trainer1.opt_state = self.trainer1.optimizer.update(grads1, self.trainer1.opt_state)
-        # self.trainer1.ffparams = optax.apply_updates(self.trainer1.ffparams, updates)
-        # self.trainer1.ffparams = self.trainer1._do_modify("after_update", self.trainer1.ffparams)
+    @staticmethod
+    def _substep(trainer, name):
+        """
+        Loss and gradients of one sub-trainer, with its own hooks applied and
+        its optimizer state advanced.
 
-        self.loss2, grads2 = self.trainer2.get_loss_gradients()
-        print(f"Loss2: {self.loss2}")
-        if jnp.isnan(self.loss2) or jnp.isinf(self.loss2):
+        The updates themselves are dropped: the parameters are updated by
+        :meth:`training_step` from the concatenated gradients instead.
+        """
+        loss, grads = trainer.get_loss_gradients()
+        print(f"{name}: {loss}")
+        if jnp.isnan(loss) or jnp.isinf(loss):
             print("Warning: Loss is NaN or Inf. Skipping this step.")
-            # self.ffparamsを0.01%ランダムにずらす
-            grads2 = jax.tree_util.tree_map(
-                lambda x: x
-                + 0.0001 * jax.random.normal(jax.random.PRNGKey(1), shape=x.shape),
-                self.trainer2.ffparams,
-            )
-        grads2 = self.trainer2._do_modify("after_grad", grads2)
-        updates2, self.trainer2.opt_state = self.trainer2.optimizer.update(grads2, self.trainer2.opt_state)
-        # self.trainer2.ffparams = optax.apply_updates(self.trainer2.ffparams, updates2)
-        # self.trainer2.ffparams = self.trainer2._do_modify("after_update", self.trainer2.ffparams)
-        
+            grads = _nan_recovery_gradients(trainer.ffparams)
+
+        grads = trainer._do_modify("after_grad", grads)
+        _, trainer.opt_state = trainer.optimizer.update(grads, trainer.opt_state)
+        return loss, grads
+
+    def get_loss_gradients(self):
+        self.loss1, grads1 = self._substep(self.trainer1, "Loss1")
+        self.loss2, grads2 = self._substep(self.trainer2, "Loss2")
+
         # merge trainer1 and trainer2 ffparams
         loss = self.weight[0] * self.loss1 + self.weight[1] * self.loss2
-
-        grads1 = jax.tree_util.tree_map(
-            lambda x: x * self.weight[0],
-            grads1)
-        grads2 = jax.tree_util.tree_map(
-            lambda x: x * self.weight[1],
-            grads2)
-
+        grads1 = jax.tree_util.tree_map(lambda x: x * self.weight[0], grads1)
+        grads2 = jax.tree_util.tree_map(lambda x: x * self.weight[1], grads2)
         grad = jax.tree_util.tree_map(
-            lambda x, y: jnp.concatenate((x, y), axis=0),
-            grads1,
-            grads2,
+            lambda x, y: jnp.concatenate((x, y), axis=0), grads1, grads2
         )
-
         return loss, grad
     
     def before_step(self):
@@ -469,46 +459,21 @@ class SumTrainer(BaseTrainer):
         if jnp.isnan(self.loss) or jnp.isinf(self.loss):
             print("Warning: Loss is NaN or Inf. Skipping this step.")
             # self.ffparamsを0.01%ランダムにずらす
-            grads = jax.tree_util.tree_map(
-                lambda x: x
-                + 0.0001 * jax.random.normal(jax.random.PRNGKey(1), shape=x.shape),
-                self.ffparams,
-            )
+            grads = _nan_recovery_gradients(self.ffparams)
 
         grads = self._do_modify("after_grad", grads)
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
         self.ffparams = optax.apply_updates(self.ffparams, updates)
 
-        self.trainer1.ffparams = jax.tree_util.tree_map(
-            lambda params, mapping: params[mapping == 0],
-            self.ffparams,
-            self.ffparams_mapping
-        )
-        self.trainer2.ffparams = jax.tree_util.tree_map(
-            lambda params, mapping: params[mapping == 1],
-            self.ffparams,
-            self.ffparams_mapping
-        )
-
+        self._scatter_to_subtrainers()
+        # NOTE: the return values of the sub-hooks are dropped, so an
+        # "after_update" hook on a sub-trainer has no effect.
         self.trainer1._do_modify("after_update", self.trainer1.ffparams)
         self.trainer2._do_modify("after_update", self.trainer2.ffparams)
-        self.ffparams = jax.tree_util.tree_map(
-                    lambda x, y: jnp.concatenate((x, y), axis=0),
-                    self.trainer1.ffparams,
-                    self.trainer2.ffparams,
-                )
+        self.ffparams = self._gather_from_subtrainers()
 
         self.ffparams = self._do_modify("after_update", self.ffparams)
-        self.trainer1.ffparams = jax.tree_util.tree_map(
-            lambda params, mapping: params[mapping == 0],
-            self.ffparams,
-            self.ffparams_mapping
-        )
-        self.trainer2.ffparams = jax.tree_util.tree_map(
-            lambda params, mapping: params[mapping == 1],
-            self.ffparams,
-            self.ffparams_mapping
-        )
+        self._scatter_to_subtrainers()
 
         # save xml files for trainer1 and trainer2
         self.trainer1.after_step()
@@ -520,6 +485,23 @@ class SumTrainer(BaseTrainer):
         self.trainer2.losses.append(self.loss2)
         self.trainer1._epoch += 1
         self.trainer2._epoch += 1
+
+    def _scatter_to_subtrainers(self) -> None:
+        """Split the joined parameter vector back into the two sub-trainers."""
+        for value, trainer in ((0, self.trainer1), (1, self.trainer2)):
+            trainer.ffparams = jax.tree_util.tree_map(
+                lambda params, mapping, v=value: params[mapping == v],
+                self.ffparams,
+                self.ffparams_mapping,
+            )
+
+    def _gather_from_subtrainers(self):
+        """Join the parameters of the two sub-trainers into one vector."""
+        return jax.tree_util.tree_map(
+            lambda x, y: jnp.concatenate((x, y), axis=0),
+            self.trainer1.ffparams,
+            self.trainer2.ffparams,
+        )
 
     def after_step(self) -> None:
         self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
@@ -543,6 +525,7 @@ class SumTrainer(BaseTrainer):
         """
         if self._epoch % checkpoint_frequency == 0:
             self.ff.renderXML(f"chkpoint_{self.label}.xml")
+            # NOTE: dump_dict is never written; the pkl ends up empty.
             with open(f"train_state_{self.label}.pkl", "wb") as f:
                 dump_dict = {
                     "ffparams": self.ffparams,
@@ -558,30 +541,7 @@ class SumTrainer(BaseTrainer):
                     "clip": self.clip,
                 }
             
-            fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
-            ax.plot(self.epochs, self.losses)
-            ax.set_xlabel("Epoch")
-            ax.set_ylabel("Loss")
-            plt.tight_layout()
-            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-            fig.savefig(f"{self.label}_learning_curve.png", bbox_inches="tight")
-            plt.close(fig)
-
-            fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
-            ax.set_yscale("log")
-            ax.plot(self.epochs, self.losses)
-            plt.tight_layout()
-            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-            fig.savefig(f"logy_{self.label}_learning_curve.png", bbox_inches="tight")
-            plt.close(fig)
-
-            fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.5))
-            ax.set_yscale("log")
-            ax.set_xscale("log")
-            ax.plot(self.epochs, self.losses)
-            plt.tight_layout()
-            fig.savefig(f"logylogx_{self.label}_learning_curve.png", bbox_inches="tight")
-            plt.close(fig)
+            plot_learning_curve(self.epochs, self.losses, self.label)
 
             self.trainer1.write_checkpoint(checkpoint_frequency)
             self.trainer2.write_checkpoint(checkpoint_frequency)

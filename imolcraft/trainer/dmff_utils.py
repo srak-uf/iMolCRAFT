@@ -25,6 +25,24 @@ from ..analyzer.analyzer import (
 )
 
 
+#: Targets given as a single reference number.
+SCALAR_TARGETS = ("density_gcm3", "La_A", "Lb_A", "Lc_A")
+
+#: Keys every target must provide. Scalar targets carry them directly, while
+#: rdf / adf carry one such block per named pair or triplet.
+REQUIRED_TARGET_KEYS = {
+    "density_gcm3": ("gt", "weight"),
+    "La_A": ("gt", "weight"),
+    "Lb_A": ("gt", "weight"),
+    "Lc_A": ("gt", "weight"),
+    "rdf": ("elem1", "elem2", "rcut12_A"),
+    "adf": ("elem1", "elem2", "elem3", "rcut12_A", "rcut23_A"),
+}
+
+#: Ensembles md_sample knows how to set up.
+VALID_ENSEMBLES = ("nve", "nvt", "isonpt", "anisonpt", "trinpt")
+
+
 def parser_dmffyaml(yaml_file):
     """
     Parse the YAML file for DMFF to extract relevant information.
@@ -87,47 +105,33 @@ def parser_dmffyaml(yaml_file):
             )
 
     # Check for valid ensemble
-    valid_ensembles = ["nve", "nvt", "isonpt", "anisonpt", "trinpt"]
-    if data["sampling"]["ensemble"] not in valid_ensembles:
+    if data["sampling"]["ensemble"] not in VALID_ENSEMBLES:
         raise ValueError(
             f"Invalid ensemble {data['sampling']['ensemble']}. Must be one of "
-            f"{valid_ensembles}."
+            f"{list(VALID_ENSEMBLES)}."
         )
 
     # check for valid target_types
-    valid_targets = ["density_gcm3", "La_A", "Lb_A", "Lc_A", "rdf", "adf"]
     if "targets" not in data:
         raise KeyError("Missing necessary key in data: targets")
     for target_name in data["targets"]:
-        if target_name not in valid_targets:
+        if target_name not in REQUIRED_TARGET_KEYS:
             raise ValueError(
-                f"Invalid target type {target_name}. Must be one of {valid_targets}."
+                f"Invalid target type {target_name}. Must be one of "
+                f"{list(REQUIRED_TARGET_KEYS)}."
             )
-        if target_name in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
-            if "gt" not in data["targets"][target_name]:
-                raise KeyError(f"Missing ground truth for target {target_name}.")
-            if "weight" not in data["targets"][target_name]:
-                raise KeyError(f"Missing weight for target {target_name}.")
-        if target_name in ["rdf"]:
+        required = REQUIRED_TARGET_KEYS[target_name]
+        if target_name in SCALAR_TARGETS:
+            for key in required:
+                if key not in data["targets"][target_name]:
+                    raise KeyError(f"Missing {key} for target {target_name}.")
+        else:
             for key in data["targets"][target_name].keys():
-                if "elem1" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing elem1 for target {target_name}: {key}.")
-                if "elem2" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing elem2 for target {target_name}: {key}.")
-                if "rcut12_A" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing rcut12_A for target {target_name}: {key}.")
-        if target_name in ["adf"]:
-            for key in data["targets"][target_name].keys():
-                if "elem1" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing elem1 for target {target_name}: {key}.")
-                if "elem2" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing elem2 for target {target_name}: {key}.")
-                if "elem3" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing elem3 for target {target_name}: {key}.")
-                if "rcut12_A" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing rcut12_A for target {target_name}: {key}.")
-                if "rcut23_A" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing rcut23_A for target {target_name}: {key}.")
+                for required_key in required:
+                    if required_key not in data["targets"][target_name][key]:
+                        raise KeyError(
+                            f"Missing {required_key} for target {target_name}: {key}."
+                        )
 
     # output parsed data as yaml, the filename is added with "_parsed"
     yaml_file = os.path.splitext(yaml_file)[0] + "_parsed.yaml"
@@ -155,7 +159,7 @@ def get_target_gt(target_params: dict):
     """
     target_gt = {}
     for target_name in target_params.keys():
-        if target_name not in ["rdf", "adf"]:
+        if target_name in SCALAR_TARGETS:
             target_gt[target_name] = {}
             target_gt[target_name]["gt"] = float(target_params[target_name]["gt"])
             target_gt[target_name]["weight"] = float(
@@ -202,14 +206,18 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
         Updated force field parameters with neutralized charges.
     """
 
-    assert len(ffparams["NonbondedForce"]["charge"]) == len(natoms_list), (
-        "len(ffparams['NonbondedForce']['charges']) != len(natoms_list)"
-    )
+    if len(ffparams["NonbondedForce"]["charge"]) != len(natoms_list):
+        raise ValueError(
+            "len(ffparams['NonbondedForce']['charge']) != len(natoms_list): "
+            f"{len(ffparams['NonbondedForce']['charge'])} != {len(natoms_list)}"
+        )
 
     if target_lists is not None and target_charges is not None:
-        assert len(target_lists) == len(target_charges), (
-            "len(target_lists) != len(target_charges)"
-        )
+        if len(target_lists) != len(target_charges):
+            raise ValueError(
+                "len(target_lists) != len(target_charges): "
+                f"{len(target_lists)} != {len(target_charges)}"
+            )
         for i, target_list in enumerate(target_lists):
             net_q = jnp.dot(
                 ffparams["NonbondedForce"]["charge"][jnp.array(target_list)],
@@ -239,9 +247,8 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
                 [i for i in range(len(natoms_list)) if i not in target_all]
             )
 
-            assert nottarget_list.sum() > 0, (
-                "All atoms are constrained. Cannot neutralize."
-            )
+            if nottarget_list.sum() <= 0:
+                raise ValueError("All atoms are constrained. Cannot neutralize.")
 
             # Update charges for non-targeted atoms
             net_q = jnp.dot(ffparams["NonbondedForce"]["charge"], natoms_list)
@@ -344,12 +351,13 @@ def update_ffinfo_from_params(ff, params):
 
     idx = 0
     if "VirtualSite" in params:
-        w2_ave2 = params["VirtualSite"]["vsite_w2_type_2"] if "vsite_w2_type_2" in params["VirtualSite"] else []
+        vs = params["VirtualSite"]
+        w2_ave2 = vs["vsite_w2_type_2"] if "vsite_w2_type_2" in vs else []
         if len(w2_ave2) > 0:
             w1_ave2 = jnp.ones(w2_ave2.shape) - w2_ave2
             ave2_idx = 0
-        w2_ave3 = params["VirtualSite"]["vsite_w2_type_3"] if "vsite_w2_type_3" in params["VirtualSite"] else []
-        w3_ave3 = params["VirtualSite"]["vsite_w3_type_3"] if "vsite_w3_type_3" in params["VirtualSite"] else []
+        w2_ave3 = vs["vsite_w2_type_3"] if "vsite_w2_type_3" in vs else []
+        w3_ave3 = vs["vsite_w3_type_3"] if "vsite_w3_type_3" in vs else []
         if len(w2_ave3) > 0 or len(w3_ave3) > 0:
             w1_ave3 = jnp.ones(w2_ave3.shape) - w2_ave3 - w3_ave3
             ave3_idx = 0
@@ -488,7 +496,10 @@ def get_rescharges_from_residues(ff, ratio=None):
     rescharges = []
 
     if ratio is not None:
-        assert len(residues) == len(ratio), "len(residues) != len(ratio)"
+        if len(residues) != len(ratio):
+            raise ValueError(
+                f"len(residues) != len(ratio): {len(residues)} != {len(ratio)}"
+            )
         natoms_list = []
 
     for i_res in range(len(residues)):
@@ -519,6 +530,26 @@ def get_rescharges_from_residues(ff, ratio=None):
         return rescharges, jnp.array(natoms_list)
     else:
         return rescharges
+
+
+def _make_barostat(ensemble, T):
+    """
+    Barostat matching the requested NPT flavour, or None for a fixed volume.
+
+    The three NPT ensembles differ in how much of the box shape they let move:
+    isotropic scaling, independent axes, or a fully flexible triclinic cell.
+    """
+    if ensemble == "isonpt":
+        print("Isotropic pressure control")
+        return openmm.MonteCarloBarostat(1.0 * unit.bar, T * unit.kelvin)
+    if ensemble == "anisonpt":
+        print("Anisotropic pressure control")
+        return openmm.MonteCarloAnisotropicBarostat(
+            [1.0 * unit.bar] * 3, T * unit.kelvin
+        )
+    if ensemble == "trinpt":
+        return openmm.MonteCarloFlexibleBarostat(1.0 * unit.bar, T * unit.kelvin)
+    return None
 
 
 def md_sample(
@@ -578,42 +609,23 @@ def md_sample(
     elif nonbondedmethod == "LJPME":
         nonbondedmethod = app.LJPME
 
-    if useHbondConstraint:
-        system = forcefield.createSystem(
-            topology,
-            nonbondedMethod=nonbondedmethod,
-            nonbondedCutoff=rc * unit.nanometer,
-            constraints=app.HBonds,
-            rigidWater=rigidWater,
-        )
-    else:
-        system = forcefield.createSystem(
-            topology,
-            nonbondedMethod=nonbondedmethod,
-            nonbondedCutoff=rc * unit.nanometer,
-            rigidWater=rigidWater,
-        )
+    constraints = {"constraints": app.HBonds} if useHbondConstraint else {}
+    system = forcefield.createSystem(
+        topology,
+        nonbondedMethod=nonbondedmethod,
+        nonbondedCutoff=rc * unit.nanometer,
+        rigidWater=rigidWater,
+        **constraints,
+    )
 
     for force in system.getForces():
         if isinstance(force, openmm.NonbondedForce):
-            if useDispersionCorrection:
-                force.setUseDispersionCorrection(True)
-            else:
-                force.setUseDispersionCorrection(False)
+            force.setUseDispersionCorrection(useDispersionCorrection)
 
     print(f"Using {ensemble} ensemble")
-    if ensemble == "isonpt":
-        print("Isotropic pressure control")
-        system.addForce(openmm.MonteCarloBarostat(1.0 * unit.bar, T * unit.kelvin))
-    elif ensemble == "anisonpt":
-        print("Anisotropic pressure control")
-        system.addForce(
-            openmm.MonteCarloAnisotropicBarostat([1.0 * unit.bar] * 3, T * unit.kelvin)
-        )
-    elif ensemble == "trinpt":
-        system.addForce(
-            openmm.MonteCarloFlexibleBarostat(1.0 * unit.bar, T * unit.kelvin)
-        )
+    barostat = _make_barostat(ensemble, T)
+    if barostat is not None:
+        system.addForce(barostat)
 
     integrator = openmm.LangevinIntegrator(
         T * unit.kelvin, 5 / unit.picosecond, dt * unit.femtosecond
@@ -701,9 +713,12 @@ def get_target_pred_frame(xtcfile, pdbfile, target_params: dict):
                 elem2 = target_params[target_name][key]["elem2"]
                 rcut12_A = target_params[target_name][key]["rcut12_A"]
                 dr_A = target_params[target_name][key].get("dr_A", 0.01)
-                inter_molecular_flag = target_params[target_name][key].get("intermolecular", False)
+                inter_molecular_flag = target_params[target_name][key].get(
+                    "intermolecular", False
+                )
                 target_pred[target_name][key] = calc_rdf_frame(
-                    u, elem1, elem2, rmax=rcut12_A, dr=dr_A, only_intermolecular=inter_molecular_flag
+                    u, elem1, elem2, rmax=rcut12_A, dr=dr_A,
+                    only_intermolecular=inter_molecular_flag,
                 )
         elif target_name == "adf":
             target_pred[target_name] = {}
@@ -728,7 +743,7 @@ def get_target_pred_frame(xtcfile, pdbfile, target_params: dict):
 def plot_compare(target_gt, target_pred_frame, label="sample"):
     num_plots = 0
     for key in target_gt.keys():
-        if key in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
+        if key in SCALAR_TARGETS:
             num_plots += 1
         elif key in ["rdf", "adf"]:
             for kind in target_gt[key].keys():
@@ -737,24 +752,23 @@ def plot_compare(target_gt, target_pred_frame, label="sample"):
     fig, ax = plt.subplots(num_raw, 2, figsize=(6.5, 2.5 * num_raw))
     i_plot = 0
     for key in target_gt.keys():
-        if key in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
-            ax[i_plot // 2, i_plot % 2].set_title(key)
+        if key in SCALAR_TARGETS:
+            axis = ax[i_plot // 2, i_plot % 2]
+            axis.set_title(key)
             x = ["GT", "FF"]
             y = [target_gt[key]["gt"], target_pred_frame[key].mean()]
-            ax[i_plot // 2, i_plot % 2].bar(x, y, width=0.35)
+            axis.bar(x, y, width=0.35)
             # barごとに値を表示
             for i, v in enumerate(y):
-                ax[i_plot // 2, i_plot % 2].text(
-                    i, v + 0.01, str(round(v, 3)), ha="center", va="bottom"
-                )
-            ax[i_plot // 2, i_plot % 2].set_ylim(0, y[0] * 1.2)
+                axis.text(i, v + 0.01, str(round(v, 3)), ha="center", va="bottom")
+            axis.set_ylim(0, y[0] * 1.2)
             i_plot += 1
         elif key in ["rdf", "adf"]:
             for kind in target_gt[key].keys():
-                ax[i_plot // 2, i_plot % 2].set_title(key + "_" + kind)
-                spectra = np.mean(target_pred_frame[key][kind], axis=0)
-                ax[i_plot // 2, i_plot % 2].plot(spectra, alpha=0.5)
-                ax[i_plot // 2, i_plot % 2].plot(target_gt[key][kind]["gt"], label="gt")
+                axis = ax[i_plot // 2, i_plot % 2]
+                axis.set_title(key + "_" + kind)
+                axis.plot(np.mean(target_pred_frame[key][kind], axis=0), alpha=0.5)
+                axis.plot(target_gt[key][kind]["gt"], label="gt")
                 i_plot += 1
     plt.tight_layout()
     fig.savefig(f"{label}.png", bbox_inches="tight")
