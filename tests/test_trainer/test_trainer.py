@@ -100,7 +100,7 @@ class TestDistanceTrainer:
         trainer.setup()
         trainer.fit(steps=2, checkpoint_frequency=1)
         trainer = DistanceTrainer.from_checkpoint(
-            trainer_checkpoint="train_state.pkl",
+            trainer_checkpoint=f"train_state_{trainer.label}.pkl",
             ffxml_list=[self.ffxml],
             nums_ffxml=[1],
             pdbfile=self.pdbfile,

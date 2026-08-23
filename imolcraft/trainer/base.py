@@ -5,6 +5,7 @@ from openmm.app import ForceField, Modeller
 import jax
 import jax.numpy as jnp
 import os
+import pickle
 import optax
 import time
 from typing import List, Callable, Optional, Any, Union, Tuple
@@ -218,21 +219,51 @@ class BaseTrainer:
 
         self.losses = []
         self.epochs = []
+        # best-so-far snapshot, filled in by fit()
+        self.best_params = None
+        self.best_epoch = None
+        self.best_loss = None
         self._modifyfns = {}
         # self._modifyfns["after_grad"]は与えられたgradをそのまま返す
         self._modifyfns["after_grad"] = lambda grads: grads
         self._modifyfns["after_update"] = lambda ffparams: ffparams
 
+    def _best_checkpoint_fields(self) -> dict:
+        """The best-so-far snapshot, for inclusion in a checkpoint."""
+        return {
+            "best_params": self.best_params,
+            "best_epoch": self.best_epoch,
+            "best_loss": self.best_loss,
+        }
+
+    def _restore_best(self, dump_dict: dict) -> None:
+        """
+        Restore the best-so-far snapshot from a checkpoint.
+
+        Without it a restarted run forgets the best model of the previous one:
+        ``fit`` compares against ``min(self.losses)``, which is restored, but
+        ``best_params`` would stay None until the historical minimum is beaten
+        again. Checkpoints written before this was stored simply carry None.
+        """
+        self.best_params = dump_dict.get("best_params")
+        self.best_epoch = dump_dict.get("best_epoch")
+        self.best_loss = dump_dict.get("best_loss")
+
     def add_modifyfn(self, type_fn: str, fn: Callable[[Any], Any]) -> None:
         """
         Register a hook function to modify gradients or parameters.
 
+        The hook takes the value and **returns** the modified one; the caller
+        assigns that return value. It must not rely on modifying its argument
+        in place, and it must not return None.
+
         Parameters
         ----------
         type_fn : {"after_grad", "after_update"}
-            Type of hook to register.
+            Type of hook to register. "after_grad" receives the gradients
+            before the optimizer step, "after_update" the parameters after it.
         fn : callable
-            Function to be called after gradients or parameter update.
+            Function taking the value and returning the modified value.
         """
         types_modifyfn = [
             "after_grad",
@@ -256,12 +287,13 @@ class BaseTrainer:
         Returns
         -------
         Any
-            Result of the hook function, or None if not registered.
+            Result of the hook function. With no hook registered the first
+            argument is handed back unchanged, so that callers can always
+            assign the result.
         """
         if type_fn in self._modifyfns:
             return self._modifyfns[type_fn](*args, **kwargs)
-        else:
-            return
+        return args[0] if args else None
 
     def get_loss_gradients(self) -> Tuple[Any, Any]:
         """
@@ -318,6 +350,9 @@ class BaseTrainer:
         """
         Run the training loop for a given number of steps.
 
+        Calling it again continues from where the previous call stopped, so
+        ``fit(10)`` twice runs the same 20 epochs as ``fit(20)`` once.
+
         Parameters
         ----------
         steps : int
@@ -327,7 +362,7 @@ class BaseTrainer:
         """
         self.checkpoint_frequency = checkpoint_frequency
         start_epoch = self._epoch
-        end_epoch = start_epoch + steps + 1
+        end_epoch = start_epoch + steps
         for i_epoch in range(start_epoch, end_epoch):
             start_time = time.time()
             self.before_step()
@@ -386,6 +421,9 @@ class SumTrainer(BaseTrainer):
         self.label = f"{self.trainer1.label}_{self.trainer2.label}"
 
         xmlfile = merge_xml(self.ffxml_list, f"{self.label}.xml")
+        if restart_xml is not None:
+            print(f"Restarting training from {restart_xml}...")
+            xmlfile = restart_xml
         self.ffxml = xmlfile
         self.ff = Hamiltonian(self.ffxml)
 
@@ -398,6 +436,9 @@ class SumTrainer(BaseTrainer):
         self._epoch = 0
         self.losses = []
         self.epochs = []
+        self.best_params = None
+        self.best_epoch = None
+        self.best_loss = None
         self._modifyfns = {}
         self._modifyfns["after_grad"] = lambda grads: grads
         self._modifyfns["after_update"] = lambda ffparams: ffparams
@@ -410,18 +451,29 @@ class SumTrainer(BaseTrainer):
         )
 
     def setup(self) -> None:
+        """
+        Set up both sub-trainers and the joint optimizer.
+
+        An optimizer state restored by :meth:`from_checkpoint` is kept, so that
+        the momenta of the previous run survive a restart.
+        """
         self.trainer1.setup()
         self.trainer2.setup()
-        self.opt_state = self.optimizer.init(self.ffparams)
+        if getattr(self, "opt_state", None) is None:
+            self.opt_state = self.optimizer.init(self.ffparams)
     
     @staticmethod
     def _substep(trainer, name):
         """
-        Loss and gradients of one sub-trainer, with its own hooks applied and
-        its optimizer state advanced.
+        Loss and gradients of one sub-trainer, with its own "after_grad" hook
+        applied.
 
-        The updates themselves are dropped: the parameters are updated by
-        :meth:`training_step` from the concatenated gradients instead.
+        The sub-trainer's own optimizer is deliberately left alone: the
+        parameters are updated by :meth:`training_step` through the joint
+        optimizer, from the concatenated and weighted gradients. Stepping the
+        sub optimizer here would leave it holding momenta for updates that were
+        never applied, computed from gradients that had not been weighted yet,
+        and those momenta would then be written to the sub-trainer checkpoint.
         """
         loss, grads = trainer.get_loss_gradients()
         print(f"{name}: {loss}")
@@ -429,9 +481,7 @@ class SumTrainer(BaseTrainer):
             print("Warning: Loss is NaN or Inf. Skipping this step.")
             grads = _nan_recovery_gradients(trainer.ffparams)
 
-        grads = trainer._do_modify("after_grad", grads)
-        _, trainer.opt_state = trainer.optimizer.update(grads, trainer.opt_state)
-        return loss, grads
+        return loss, trainer._do_modify("after_grad", grads)
 
     def get_loss_gradients(self):
         self.loss1, grads1 = self._substep(self.trainer1, "Loss1")
@@ -466,10 +516,14 @@ class SumTrainer(BaseTrainer):
         self.ffparams = optax.apply_updates(self.ffparams, updates)
 
         self._scatter_to_subtrainers()
-        # NOTE: the return values of the sub-hooks are dropped, so an
-        # "after_update" hook on a sub-trainer has no effect.
-        self.trainer1._do_modify("after_update", self.trainer1.ffparams)
-        self.trainer2._do_modify("after_update", self.trainer2.ffparams)
+        # the sub hooks run on their own half first, then the joint hook sees
+        # the whole vector; both results have to be assigned to take effect
+        self.trainer1.ffparams = self.trainer1._do_modify(
+            "after_update", self.trainer1.ffparams
+        )
+        self.trainer2.ffparams = self.trainer2._do_modify(
+            "after_update", self.trainer2.ffparams
+        )
         self.ffparams = self._gather_from_subtrainers()
 
         self.ffparams = self._do_modify("after_update", self.ffparams)
@@ -514,9 +568,81 @@ class SumTrainer(BaseTrainer):
         self.ff.renderXML(f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml")
         self.ffxml = f"xmlfiles/epoch_{self.label}-{self._epoch+1}.xml"
     
+    @classmethod
+    def from_checkpoint(
+        cls,
+        trainer_checkpoint: str,
+        trainer1,
+        trainer2,
+        opt_fftypes: Optional[List[str]] = None,
+        weight: Optional[List[float]] = None,
+        optimizer_algo: Optional[str] = None,
+        lr: Optional[Union[float, List[float]]] = None,
+        clip: Optional[Union[float, List[float]]] = None,
+        restart_xml: Optional[str] = None,
+    ) -> "SumTrainer":
+        """
+        Rebuild a SumTrainer from its own checkpoint.
+
+        The two sub-trainers have to be restored first and passed in: they hold
+        the calculators, inputs and estimators that this class does not
+        duplicate. What only lives here is the joint optimizer state, which is
+        why reading the two sub-checkpoints alone is not enough to continue a
+        run: the momenta of the joint optimizer would restart from zero.
+
+        Parameters
+        ----------
+        trainer_checkpoint : str
+            Path of the pickle written by :meth:`write_checkpoint`.
+        trainer1, trainer2 : BaseTrainer
+            The sub-trainers, already restored from their own checkpoints.
+        opt_fftypes, weight, optimizer_algo, lr, clip : optional
+            Override the values stored in the checkpoint.
+        restart_xml : str, optional
+            Force field XML to resume from, instead of merging the original ones.
+
+        Returns
+        -------
+        SumTrainer
+        """
+        with open(trainer_checkpoint, "rb") as f:
+            dump_dict = pickle.load(f)
+
+        trainer = cls(
+            trainer1,
+            trainer2,
+            opt_fftypes=(
+                dump_dict["opt_fftypes"] if opt_fftypes is None else opt_fftypes
+            ),
+            weight=dump_dict.get("weight", [1.0, 1.0]) if weight is None else weight,
+            optimizer_algo=(
+                dump_dict["optimizer_algo"]
+                if optimizer_algo is None
+                else optimizer_algo
+            ),
+            lr=dump_dict["lr"] if lr is None else lr,
+            clip=dump_dict["clip"] if clip is None else clip,
+            restart_xml=restart_xml,
+        )
+
+        trainer.ffparams = dump_dict["ffparams"]
+        trainer.opt_state = dump_dict["opt_state"]
+        trainer.ff.ffinfo = dump_dict["ffinfo"]
+        trainer._epoch = dump_dict["epoch"]
+        trainer.losses = dump_dict["losses"]
+        trainer.epochs = dump_dict["epochs"]
+        trainer._restore_best(dump_dict)
+        # hand the restored parameters down, so the sub-trainers agree with the
+        # joint vector before the first step
+        trainer._scatter_to_subtrainers()
+        return trainer
+
     def write_checkpoint(self, checkpoint_frequency: int) -> None:
         """
         Save the current training state and plots to a checkpoint file.
+
+        The sub-trainers write their own checkpoints as well; both are needed
+        to resume, see :meth:`from_checkpoint`.
 
         Parameters
         ----------
@@ -525,7 +651,6 @@ class SumTrainer(BaseTrainer):
         """
         if self._epoch % checkpoint_frequency == 0:
             self.ff.renderXML(f"chkpoint_{self.label}.xml")
-            # NOTE: dump_dict is never written; the pkl ends up empty.
             with open(f"train_state_{self.label}.pkl", "wb") as f:
                 dump_dict = {
                     "ffparams": self.ffparams,
@@ -539,7 +664,11 @@ class SumTrainer(BaseTrainer):
                     "opt_fftypes": self.opt_fftypes,
                     "lr": self.lr,
                     "clip": self.clip,
+                    "weight": self.weight,
+                    **self._best_checkpoint_fields(),
                 }
+                pickle.dump(dump_dict, f)
+
             
             plot_learning_curve(self.epochs, self.losses, self.label)
 

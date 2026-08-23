@@ -53,6 +53,11 @@ _SAMPLING_KEYS = {
 _NONBONDED_METHODS = {"PME": app.PME, "LJPME": app.LJPME}
 
 
+def _state_name(idx: int) -> str:
+    """Name of the MBAR state of one replica. Must match everywhere it is used."""
+    return f"sample_{idx}"
+
+
 def _resolve_nonbondedmethod(name):
     """Translate the nonbonded method name of the YAML into an OpenMM constant."""
     if name not in _NONBONDED_METHODS:
@@ -156,6 +161,19 @@ class _ScanTrainerMixin:
             ),
         )
 
+    def _render_loop_xml(self, epoch: int) -> str:
+        """
+        Write the current force field for the periodic re-relaxation and return
+        its path.
+
+        The label is part of the name so that two trainers combined by
+        SumTrainer do not overwrite each other's files.
+        """
+        os.makedirs("xmlfiles", exist_ok=True)
+        path = f"xmlfiles/loop_{self.label}-{epoch}.xml"
+        self.ff.renderXML(path)
+        return path
+
     def _push_params_to_ff(self) -> None:
         """Write the optimized parameters back into the Hamiltonian."""
         self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
@@ -239,8 +257,7 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
 
         epoch = self._epoch + 1
         if epoch % self.relax_steps == 0:
-            self.ff.renderXML(f"loop-{epoch}.xml")
-            self.calculator.do_ffscan(f"loop-{epoch}.xml", ini_geom="QM")
+            self.calculator.do_ffscan(self._render_loop_xml(epoch), ini_geom="QM")
             self.inputs["positions"] = jnp.array(
                 _scan_positions_nm(
                     self.calculator.ff_scan, self.potentials, self.num_vsites
@@ -251,13 +268,16 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
         """
         Save the current training state to a checkpoint file.
 
+        The file name carries the label so that two trainers combined by
+        SumTrainer do not overwrite each other.
+
         Parameters
         ----------
         checkpoint_frequency : int
             Frequency (in epochs) to write checkpoints.
         """
         if self._epoch % checkpoint_frequency == 0:
-            with open("train_state.pkl", "wb") as f:
+            with open(f"train_state_{self.label}.pkl", "wb") as f:
                 dump_dict = {
                     "ffparams": self.ffparams,
                     "opt_state": self.opt_state,
@@ -274,6 +294,7 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
                     "opt_fftypes": self.opt_fftypes,
                     "lr": self.lr,
                     "clip": self.clip,
+                    **self._best_checkpoint_fields(),
                 }
                 pickle.dump(dump_dict, f)
 
@@ -327,6 +348,7 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
         trainer._epoch = dump_dict["epoch"]
         trainer.losses = dump_dict["losses"]
         trainer.epochs = dump_dict["epochs"]
+        trainer._restore_best(dump_dict)
 
         return trainer
 
@@ -431,16 +453,121 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
 
         epoch = self._epoch + 1
         if epoch % self.relax_steps == 0:
-            os.makedirs("xmlfiles", exist_ok=True)
-            self.ff.renderXML(f"xmlfiles/loop-{epoch}.xml")
             self.calculator.do_ffscan(
-                f"xmlfiles/loop-{epoch}.xml", angles="QM", ini_geom="FF"
+                self._render_loop_xml(epoch), angles="QM", ini_geom="FF"
             )
             self.inputs["positions"] = jnp.array(
                 _scan_positions_nm(
                     self.calculator.ff_scan, self.potentials, self.num_vsites
                 )
             )
+
+
+    def write_checkpoint(self, checkpoint_frequency: int) -> None:
+        """
+        Save the current training state to a checkpoint file.
+
+        The file name carries the label so that two trainers combined by
+        SumTrainer do not overwrite each other.
+
+        Parameters
+        ----------
+        checkpoint_frequency : int
+            Frequency (in epochs) to write checkpoints.
+        """
+        if self._epoch % checkpoint_frequency == 0:
+            with open(f"train_state_{self.label}.pkl", "wb") as f:
+                pickle.dump(
+                    {
+                        "ffparams": self.ffparams,
+                        "opt_state": self.opt_state,
+                        "ffinfo": self.ff.ffinfo,
+                        "rescharges": self.rescharges,
+                        "positions": self.inputs["positions"],
+                        "pairs": self.inputs["pairs"],
+                        "calculator": self.calculator,
+                        "epoch": self._epoch,
+                        "losses": self.losses,
+                        "epochs": self.epochs,
+                        "label": self.label,
+                        "optimizer_algo": self.optimizer_algo,
+                        "opt_fftypes": self.opt_fftypes,
+                        "lr": self.lr,
+                        "clip": self.clip,
+                        **self._best_checkpoint_fields(),
+                    },
+                    f,
+                )
+
+    @classmethod
+    def from_checkpoint(
+        cls,
+        trainer_checkpoint: str,
+        ffxml: str,
+        pdbfile: str,
+        loss_fn: Optional[Callable[..., float]] = None,
+        opt_fftypes: Optional[List[str]] = None,
+        optimizer_algo: Optional[str] = None,
+        lr: Optional[Union[float, List[float]]] = None,
+        clip: Optional[Union[float, List[float]]] = None,
+    ) -> "DihedralTrainer":
+        """
+        Rebuild a DihedralTrainer from a checkpoint.
+
+        The scan geometries and the neighbour lists come from the checkpoint,
+        so :meth:`setup` does not have to run the force field scan again.
+
+        Parameters
+        ----------
+        trainer_checkpoint : str
+            Path of the pickle written by :meth:`write_checkpoint`.
+        ffxml : str
+            Force field XML to resume from.
+        pdbfile : str
+            Path to the PDB file.
+        loss_fn : callable, optional
+            Loss function; the stored one cannot be pickled, so it is passed in.
+        opt_fftypes, optimizer_algo, lr, clip : optional
+            Override the values stored in the checkpoint.
+
+        Returns
+        -------
+        DihedralTrainer
+        """
+        with open(trainer_checkpoint, "rb") as f:
+            dump_dict = pickle.load(f)
+
+        trainer = cls(
+            ffxml=ffxml,
+            pdbfile=pdbfile,
+            calculator=dump_dict["calculator"],
+            loss_fn=loss_fn,
+            opt_fftypes=(
+                dump_dict["opt_fftypes"] if opt_fftypes is None else opt_fftypes
+            ),
+            optimizer_algo=(
+                dump_dict["optimizer_algo"]
+                if optimizer_algo is None
+                else optimizer_algo
+            ),
+            label=dump_dict["label"],
+            lr=dump_dict["lr"] if lr is None else lr,
+            clip=dump_dict["clip"] if clip is None else clip,
+        )
+
+        trainer.GT_scans = _qm_energies(trainer.calculator.qm_scan)
+        trainer.opt_state = dump_dict["opt_state"]
+        trainer.ffparams = dump_dict["ffparams"]
+        trainer.ff.ffinfo = dump_dict["ffinfo"]
+        trainer.rescharges = dump_dict["rescharges"]
+        trainer.inputs["positions"] = dump_dict["positions"]
+        trainer.inputs["pairs"] = dump_dict["pairs"]
+        trainer._epoch = dump_dict["epoch"]
+        trainer.losses = dump_dict["losses"]
+        trainer.epochs = dump_dict["epochs"]
+        trainer._restore_best(dump_dict)
+
+        return trainer
 
 
 class ThermodynamicTrainer(BaseTrainer):
@@ -670,7 +797,7 @@ class ThermodynamicTrainer(BaseTrainer):
             has_target_gt = True
 
         for i in range(len(self.sampling_params)):
-            state_name = f"sample_{i}"
+            state_name = _state_name(i)
             xtcfile = self._run_md(i, state_name)
             self._add_sample(i, state_name, xtcfile)
 
@@ -723,29 +850,34 @@ class ThermodynamicTrainer(BaseTrainer):
 
         return loss, grads
 
+    def _resample_indices(self) -> List[int]:
+        """
+        Replica indices whose trajectory has to be sampled again.
+
+        With nothing registered in the estimator yet, every replica has to be
+        sampled; otherwise only the ones flagged by :meth:`after_step`.
+        """
+        if len(self.estimator.states) > 0:
+            return [i for i, flag in enumerate(self.resample) if flag]
+        return list(range(len(self.sampling_params)))
+
     def _resample(self) -> None:
         """
         Resample MD trajectories and update MBAR estimator if needed.
+
+        States are addressed by name rather than by their position in
+        ``estimator.states``: removing and re-adding a state moves it to the
+        end of that list, so the positions stop matching the replica indices
+        after the first resampling.
         """
         self.resample_counter = 0
-        if len(self.estimator.states) > 0:
-            removedstatename = [
-                self.estimator.states[i].name
-                for i, flag in enumerate(self.resample)
-                if flag
-            ]
-            removedstateidx = [i for i, flag in enumerate(self.resample) if flag]
-        else:
-            removedstatename = []
-            removedstateidx = [i for i in range(len(self.sampling_params))]
+        registered = {state.name for state in self.estimator.states}
 
-        for idx in removedstateidx:
-            if len(removedstatename) > 0:
-                self.estimator.remove_state(removedstatename[idx])
-                # self.estimator.remove_sample(removedstatename[idx])
-                state_name = removedstatename[idx]
-            elif len(removedstateidx) > 0:
-                state_name = f"sample_{idx}"
+        for idx in self._resample_indices():
+            state_name = _state_name(idx)
+            if state_name in registered:
+                self.estimator.remove_state(state_name)
+                # self.estimator.remove_sample(state_name)
             print(f"Resampling {state_name}... by {self.ffxml}")
             xtcfile = self._run_md(idx, state_name)
             self.target_pred_frame[idx] = get_target_pred_frame(
@@ -753,6 +885,17 @@ class ThermodynamicTrainer(BaseTrainer):
             )
             self._add_sample(idx, state_name, xtcfile)
         self.estimator.optimize_mbar()
+
+    def _needs_resample(self, ii: int, ieff: dict) -> bool:
+        """
+        Whether replica ``ii`` no longer contributes enough effective samples.
+
+        ``ieff`` is keyed by state name, so the entry of this replica is looked
+        up by name. Taking the ``ii``-th entry instead would break as soon as
+        :meth:`_resample` reorders ``estimator.states``.
+        """
+        own = ieff.get(_state_name(ii))
+        return own is not None and own < self.neff[ii]
 
     def after_step(self) -> None:
         """
@@ -791,13 +934,10 @@ class ThermodynamicTrainer(BaseTrainer):
                 )
                 for k, v in ieff.items():
                     print(f"  {k}: {v}")
-                for i, (k, v) in enumerate(ieff.items()):
-                    if v < self.neff[ii] and k != "Total" and ii == i:
-                        self.resample[i] = True
-                        print(f"  {i} -> Resample")
-                    else:  # Vsiteのposition update
-                        # self.estimator._input***
-                        pass
+                if self._needs_resample(ii, ieff):
+                    self.resample[ii] = True
+                    print(f"  {ii} -> Resample")
+                # TODO: Vsiteのposition update (self.estimator._input***)
             except Exception:
                 print("Warning: Error in estimating effective sample size")
                 self.estimator.states = []
@@ -851,6 +991,7 @@ class ThermodynamicTrainer(BaseTrainer):
                     "clip": self.clip,
                     "target_gt": self.target_gt,
                     "target_pred_frame": self.target_pred_frame,
+                    **self._best_checkpoint_fields(),
                 }
                 pickle.dump(dump_dict, f)
 
@@ -917,14 +1058,15 @@ class ThermodynamicTrainer(BaseTrainer):
             restart_xml=initial_ffxml,
         )
 
-        attr_lists = ["epoch", "epochs", "losses", "ff_info"]
-        for key, value in dump_dict.items():
-            if key in attr_lists:
-                setattr(trainer, key, value)
+        # the force field itself comes from initial_ffxml, which BaseTrainer
+        # already loaded, so only the history is taken from the checkpoint
+        trainer.losses = dump_dict["losses"]
+        trainer.epochs = dump_dict["epochs"]
 
         # order is important
         trainer.ffxml = initial_ffxml
         trainer.opt_state = dump_dict["opt_state"]
         trainer._epoch = dump_dict["epoch"]
+        trainer._restore_best(dump_dict)
 
         return trainer
