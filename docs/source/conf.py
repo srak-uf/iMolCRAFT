@@ -5,16 +5,20 @@
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
-import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, os.path.abspath('../../iMolCRAFT/'))
+# Make the in-tree package importable so autodoc and the version lookup below
+# work without installing iMolCRAFT first.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from imolcraft import __version__
 
 project = 'iMolCRAFT'
 copyright = '2025, Ryoma Sasaki'
 author = 'Ryoma Sasaki'
-release = '0.0.1'
+version = __version__
+release = __version__
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
