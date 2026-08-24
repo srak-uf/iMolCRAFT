@@ -34,23 +34,19 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
         self,
         molecules: List[Molecule],
         il_assign: Optional[Dict[str, Dict[str, str]]] = None,
-        forcefield_files: Optional[List[str]] = None,
-        cache: Optional[Dict[str, Any]] = None,
         **kwargs
     ) -> None:
-        super().__init__(
-            molecules,
-            forcefield_files=None,
-            cache=None,
-            **kwargs
-        )
+        super().__init__(molecules, **kwargs)
         # ``super().__init__`` stores deep copies of the molecules, so the
         # ``mol2file`` attribute attached by the caller has to be propagated
-        # to the stored copies by matching them on SMILES.
+        # to the stored copies by matching them on SMILES.  The cache maps a
+        # molecular formula to a list of ``(Molecule, matching_template)``
+        # pairs, so both levels have to be unwrapped here.
         for molecule in molecules:
-            for stored in self._molecules.values():
-                if stored.to_smiles() == molecule.to_smiles():
-                    stored.mol2file = molecule.mol2file
+            for stored_entries in self._molecules.values():
+                for stored, _matching_template in stored_entries:
+                    if stored.to_smiles() == molecule.to_smiles():
+                        stored.mol2file = molecule.mol2file
 
         self.il_assign = DEFAULT_IL_ASSIGN if il_assign is None else il_assign
 
@@ -67,7 +63,6 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
 
         frcmod_filename = self.run_parmchk(mol2file)
         params = self._load_openmm_parameters(frcmod_filename)
-        self._gaff_atom_types_observed.update(params.atom_types.keys())
 
         ffxml = StringIO()
         params.write(ffxml)

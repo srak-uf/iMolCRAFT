@@ -111,8 +111,13 @@ exporter(
   - `liquid.gro`: Structure file (GROMACS format)
   - `posre.itp`: Position restraint file
 
-- **LAMMPS** (`format="lmp"`):
+- **LAMMPS** (`format="lmp"`, *experimental*):
   - `liquid.data`: Data file
+
+```{warning}
+The LAMMPS exporter is experimental and not considered stable; verify its output before use.
+LAMMPS is not installed by `env.yml`. See {doc}`exporter` for details.
+```
 
 ## Key Parameters Reference
 
@@ -261,7 +266,7 @@ exporter(
     format="gmx"
 )
 
-# Option 2: LAMMPS format  
+# Option 2: LAMMPS format (experimental, see the Exporter page)
 exporter(
     pdb="supercell_bonds.pdb",
     system="system.xml",

@@ -2,7 +2,21 @@
 
 ## Overview
 
-The **Exporter** is a versatile feature in iMolCRAFT that automates the generation of MD input files from prepared molecular systems (pdb files with bond information and force field xml files). It supports GAFF-type force fields and can export to both GROMACS and LAMMPS formats. 
+The **Exporter** is a versatile feature in iMolCRAFT that automates the generation of MD input files from prepared molecular systems (pdb files with bond information and force field xml files). It supports GAFF-type force fields and can export to both GROMACS and LAMMPS formats.
+
+```{warning}
+**The LAMMPS exporter (`format="lmp"`) is experimental and is not considered stable.**
+Its output has received far less validation than the GROMACS exporter, and the generated
+data file may be incomplete or incorrect for some systems. Always verify the resulting
+topology, force field parameters and box definition before running a production simulation.
+The GROMACS exporter (`format="gmx"`) is the recommended and supported path.
+
+LAMMPS itself is **not** included in `env.yml`. The `lammps` conda-forge package cannot be
+installed alongside `ambertools>=25` because the two require incompatible `libnetcdf`
+versions. iMolCRAFT never invokes the `lmp` binary -- it only writes input files -- so this
+does not affect any iMolCRAFT functionality. If you want to run the exported input, install
+LAMMPS separately (for example in its own conda environment).
+```
 
 
 ## Example
@@ -32,5 +46,5 @@ exporter("supercell_bonds.pdb", "system.xml", "liquid", format="lmp")
   - `liquid.top`: Topology file
   - `liquid.gro`: Structure file (GROMACS format)
 
-- **LAMMPS** (`format="lmp"`):
+- **LAMMPS** (`format="lmp"`, *experimental -- see the warning above*):
   - `liquid.data`: Data file

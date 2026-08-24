@@ -96,8 +96,13 @@ exporter(
   - `crystal.top`: Topology file
   - `crystal.gro`: Structure file (GROMACS format)
 
-- **LAMMPS** (`format="lmp"`):
+- **LAMMPS** (`format="lmp"`, *experimental*):
   - `crystal.data`: Data file
+
+```{warning}
+The LAMMPS exporter is experimental and not considered stable; verify its output before use.
+LAMMPS is not installed by `env.yml`. See {doc}`exporter` for details.
+```
 
 
 ## Key Parameters Reference

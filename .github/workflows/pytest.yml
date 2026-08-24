@@ -19,7 +19,7 @@ jobs:
       - name: Install Python
         uses: conda-incubator/setup-miniconda@v3
         with:
-          activate-environment: imc
+          activate-environment: imc_cpu
           mamba-version: "*"
           use-mamba: true
           channels: conda-forge
