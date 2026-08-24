@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from imolcraft.analyzer.analyzer import (
-    _fit_msd_slope,
+    _fit_msd_line,
     _join_on_center,
     _zero_first_bin,
     calc_cellpar_frame,
@@ -106,32 +106,32 @@ def test_package_exports_only_public_api():
     }
 
 
-def test_fit_msd_slope_recovers_a_straight_line():
-    """直線を与えれば窓の取り方によらず傾きがそのまま返る"""
+def test_fit_msd_line_recovers_a_straight_line():
+    """直線を与えれば窓の取り方によらず傾きと切片がそのまま返る"""
     t = np.arange(100) * 0.5
     msd = 3.0 * t + 7.0
-    assert np.isclose(_fit_msd_slope(t, msd, (0.0, 0.5)), 3.0)
-    assert np.isclose(_fit_msd_slope(t, msd, (0.25, 1.0)), 3.0)
+    assert np.allclose(_fit_msd_line(t, msd, (0.0, 0.5)), (3.0, 7.0))
+    assert np.allclose(_fit_msd_line(t, msd, (0.25, 1.0)), (3.0, 7.0))
 
 
-def test_fit_msd_slope_uses_only_the_requested_window():
+def test_fit_msd_line_uses_only_the_requested_window():
     """窓の外がどれだけ暴れても傾きに効かない"""
     t = np.arange(100) * 0.5
     msd = 3.0 * t
     msd[50:] = 1e6  # 後半をノイズで潰す
-    assert np.isclose(_fit_msd_slope(t, msd, (0.0, 0.5)), 3.0)
+    assert np.isclose(_fit_msd_line(t, msd, (0.0, 0.5))[0], 3.0)
 
 
 @pytest.mark.parametrize("fit_range", [(0.5, 0.5), (0.6, 0.2), (-0.1, 0.5), (0.0, 1.5)])
-def test_fit_msd_slope_rejects_invalid_range(fit_range):
+def test_fit_msd_line_rejects_invalid_range(fit_range):
     with pytest.raises(ValueError, match="fit_range must satisfy"):
-        _fit_msd_slope(np.arange(10.0), np.arange(10.0), fit_range)
+        _fit_msd_line(np.arange(10.0), np.arange(10.0), fit_range)
 
 
-def test_fit_msd_slope_rejects_too_few_points():
+def test_fit_msd_line_rejects_too_few_points():
     """点が 2 つ未満しか入らない窓は直線を引けない"""
     with pytest.raises(ValueError, match="at least 2"):
-        _fit_msd_slope(np.arange(10.0), np.arange(10.0), (0.0, 0.1))
+        _fit_msd_line(np.arange(10.0), np.arange(10.0), (0.0, 0.1))
 
 
 def test_calc_msd_axis_and_zero_lag(universe):
@@ -168,7 +168,7 @@ def test_calc_msd_rejects_unknown_type(universe):
 def test_calc_dself_matches_the_einstein_relation(universe):
     """calc_dself が MSD の傾き / (2d) に単位換算を掛けた値と一致する"""
     lagtime, msd = calc_msd(universe, select="element C")
-    slope = _fit_msd_slope(lagtime, msd, (0.0, 0.5))
+    slope, _ = _fit_msd_line(lagtime, msd, (0.0, 0.5))
     expected = slope / 6 * 1e-4  # xyz なので 2d = 6, A^2/ps -> cm^2/s
     assert np.isclose(calc_dself(universe, select="element C"), expected)
 
@@ -176,6 +176,6 @@ def test_calc_dself_matches_the_einstein_relation(universe):
 @pytest.mark.parametrize("msd_type,dof", [("xyz", 6), ("xy", 4), ("z", 2)])
 def test_calc_dself_scales_with_dimensionality(universe, msd_type, dof):
     lagtime, msd = calc_msd(universe, select="element C", msd_type=msd_type)
-    slope = _fit_msd_slope(lagtime, msd, (0.0, 0.5))
+    slope, _ = _fit_msd_line(lagtime, msd, (0.0, 0.5))
     got = calc_dself(universe, select="element C", msd_type=msd_type)
     assert np.isclose(got, slope / dof * 1e-4)

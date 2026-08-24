@@ -4,6 +4,8 @@ from collections import defaultdict
 import MDAnalysis
 import MDAnalysis.analysis.msd as mda_msd
 import MDAnalysis.analysis.rdf as mda
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import mdtraj as md
 import numpy as np
 from MDAnalysis.transformations.nojump import NoJump
@@ -543,7 +545,8 @@ def calc_msd(u: MDAnalysis.Universe, select="all", msd_type="xyz", fft=True,
 
 def calc_dself(u: MDAnalysis.Universe, select="all", msd_type="xyz", fft=True,
                nojump=True, fit_range=(0.0, 0.5),
-               start=None, stop=None, step=None):
+               start=None, stop=None, step=None,
+               save=False, basename="dself"):
     """
     Calculate the self-diffusion coefficient from the slope of the MSD.
 
@@ -583,6 +586,12 @@ def calc_dself(u: MDAnalysis.Universe, select="all", msd_type="xyz", fft=True,
     step : int, optional
         Step size for frame selection in MSD calculation
         (default is None, which means every frame).
+    save : bool, optional
+        If True, write the MSD curve to ``{basename}_msd.csv`` and plot it
+        together with the fitted straight line in ``{basename}_msd.pdf``
+        (default is False).
+    basename : str, optional
+        Stem of the files written when ``save`` is True (default is 'dself').
 
     Returns
     -------
@@ -593,13 +602,71 @@ def calc_dself(u: MDAnalysis.Universe, select="all", msd_type="xyz", fft=True,
         u, select=select, msd_type=msd_type, fft=fft, nojump=nojump,
         start=start, stop=stop, step=step
     )
-    slope = _fit_msd_slope(lagtime_ps, msd_A2, fit_range)
+    slope, intercept = _fit_msd_line(lagtime_ps, msd_A2, fit_range)
+    if save:
+        _write_msd_csv(lagtime_ps, msd_A2, basename)
+        _plot_msd(lagtime_ps, msd_A2, slope, intercept, basename)
     return slope / _MSD_DOF[msd_type] * _ANG2_PS_TO_CM2_S
 
 
-def _fit_msd_slope(lagtime_ps, msd_A2, fit_range):
+def _write_msd_csv(lagtime_ps, msd_A2, basename):
     """
-    Slope in angstrom^2/ps of a straight line fitted to a window of the MSD.
+    Write the MSD curve to ``{basename}_msd.csv``.
+
+    The figure only shows the curve; the csv keeps the numbers so that the fit
+    can be redone or the curve replotted without rerunning the analysis.
+
+    Parameters
+    ----------
+    lagtime_ps : numpy.ndarray
+        Array of lag times in picoseconds.
+    msd_A2 : numpy.ndarray
+        Array of MSD values in angstrom^2.
+    basename : str
+        Stem of the file to write.
+    """
+    np.savetxt(
+        f"{basename}_msd.csv",
+        np.column_stack((lagtime_ps, msd_A2)),
+        delimiter=",",
+        header="time_ps,msd_A2",
+        comments="",  # keep the header a plain csv line instead of a comment
+    )
+
+
+def _plot_msd(lagtime_ps, msd_A2, slope, intercept, basename):
+    """
+    Save the MSD and the straight line fitted to it as ``{basename}_msd.pdf``.
+
+    Parameters
+    ----------
+    lagtime_ps : numpy.ndarray
+        Array of lag times in picoseconds.
+    msd_A2 : numpy.ndarray
+        Array of MSD values in angstrom^2.
+    slope : float
+        Slope of the fitted line in angstrom^2/ps.
+    intercept : float
+        Intercept of the fitted line in angstrom^2.
+    basename : str
+        Stem of the file to write.
+    """
+    fig, ax = plt.subplots()
+    ax.xaxis.set_minor_locator(ticker.AutoMinorLocator(2))
+    ax.yaxis.set_minor_locator(ticker.AutoMinorLocator(2))
+
+    ax.plot(lagtime_ps, msd_A2)
+    # the fit is dashed so that it stays distinguishable from the MSD itself
+    ax.plot(lagtime_ps, lagtime_ps * slope + intercept, linestyle="--")
+    ax.set_xlabel("Time (ps)")
+    ax.set_ylabel("MSD ($\\mathrm{\\AA}^2$)")
+    fig.savefig(f"{basename}_msd.pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
+def _fit_msd_line(lagtime_ps, msd_A2, fit_range):
+    """
+    Straight line fitted to a window of the MSD.
 
     Parameters
     ----------
@@ -614,6 +681,8 @@ def _fit_msd_slope(lagtime_ps, msd_A2, fit_range):
     -------
     slope : float
         Slope of the fitted line in angstrom^2/ps.
+    intercept : float
+        Intercept of the fitted line in angstrom^2.
     """
     begin, end = fit_range
     if not 0.0 <= begin < end <= 1.0:
@@ -630,4 +699,7 @@ def _fit_msd_slope(lagtime_ps, msd_A2, fit_range):
             "MSD points, at least 2 are needed for a linear fit"
         )
 
-    return np.polyfit(lagtime_ps[i_begin:i_end], msd_A2[i_begin:i_end], 1)[0]
+    slope, intercept = np.polyfit(
+        lagtime_ps[i_begin:i_end], msd_A2[i_begin:i_end], 1
+    )
+    return slope, intercept
