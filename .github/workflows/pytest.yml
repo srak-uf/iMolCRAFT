@@ -28,16 +28,13 @@ jobs:
       
       - name: Install iMolCRAFT
         shell: bash -el {0}
-        run: |
-          mamba install -c conda-forge pytest
-          pip install importlib-resources
-          pip install .
-      
+        run: pip install '.[test]'
+
       - name: Run tests
         shell: bash -el {0}
         run: |
-          pytest tests/test_calculator/test_* -m "not g16"
-          pytest tests/test_crafter/test_* -m "not g16"
-          pytest tests/test_trainer/test_* -m "not g16"
-
-        
+          pytest tests/test_analyzer -m "not g16"
+          pytest tests/test_calculator -m "not g16"
+          pytest tests/test_crafter -m "not g16"
+          pytest tests/test_io -m "not g16"
+          pytest tests/test_trainer -m "not g16"
