@@ -628,7 +628,7 @@ def md_sample(
         system.addForce(barostat)
 
     integrator = openmm.LangevinIntegrator(
-        T * unit.kelvin, 5 / unit.picosecond, dt * unit.femtosecond
+        T * unit.kelvin, 1 / unit.picosecond, dt * unit.femtosecond
     )
 
     platform = openmm.Platform.getPlatformByName(device)
