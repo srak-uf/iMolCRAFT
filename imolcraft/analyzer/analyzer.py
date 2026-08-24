@@ -2,9 +2,11 @@
 from collections import defaultdict
 
 import MDAnalysis
+import MDAnalysis.analysis.msd as mda_msd
 import MDAnalysis.analysis.rdf as mda
 import mdtraj as md
 import numpy as np
+from MDAnalysis.transformations.nojump import NoJump
 
 #: Public API re-exported by ``imolcraft.analyzer``. Without it the wildcard
 #: import in ``__init__.py`` would also leak the imported modules.
@@ -15,6 +17,8 @@ __all__ = [
     "calc_cellpar_frame",
     "calc_density",
     "calc_density_frame",
+    "calc_dself",
+    "calc_msd",
     "calc_rdf",
     "calc_rdf_frame",
 ]
@@ -24,6 +28,22 @@ _AMU_TO_G = 1.66053886e-24
 
 #: Volume of one cubic angstrom in cubic centimetre.
 _ANG3_TO_CM3 = 1e-24
+
+#: Conversion of a diffusion coefficient from angstrom^2/ps to cm^2/s.
+#: 1 angstrom^2 = 1e-16 cm^2 and 1 ps = 1e-12 s, so the ratio is 1e-4.
+_ANG2_PS_TO_CM2_S = 1e-4
+
+#: Number of degrees of freedom (2 * dimensionality) entering the Einstein
+#: relation MSD = 2 * d * D * t, for every ``msd_type`` of ``EinsteinMSD``.
+_MSD_DOF = {
+    "xyz": 6,
+    "xy": 4,
+    "xz": 4,
+    "yz": 4,
+    "x": 2,
+    "y": 2,
+    "z": 2,
+}
 
 #: Bin edges in degrees shared by every angle distribution function.
 _ADF_BINS = np.arange(0, 180 + 0.001, 1)
@@ -429,3 +449,185 @@ def calc_cellpar_frame(u: MDAnalysis.Universe, target="all"):
         raise ValueError(f"target must be {listed}")
 
     return np.array([np.array(ts.dimensions)[idx] for ts in u.trajectory])
+
+
+def _ensure_nojump(u: MDAnalysis.Universe):
+    """
+    Attach the :class:`NoJump` transformation unless the trajectory has one.
+
+    An MSD only makes sense on unwrapped coordinates: in a periodic box an atom
+    that leaves one face and re-enters the opposite one looks like a jump of a
+    whole box length, which swamps the real displacement. ``NoJump`` undoes
+    those jumps on the fly.
+
+    MDAnalysis refuses to add transformations twice, so a trajectory that
+    already carries some is left untouched: the caller is assumed to have set
+    up the unwrapping (or to have supplied an already unwrapped trajectory).
+    """
+    if not u.trajectory.transformations:
+        u.trajectory.add_transformations(NoJump())
+
+
+def calc_msd(u: MDAnalysis.Universe, select="all", msd_type="xyz", fft=True,
+             nojump=True, start=None, stop=None, step=None):
+    """
+    Calculate the mean squared displacement (MSD) of a selection.
+
+    The MSD is averaged over the selected atoms and over every time origin
+    (Einstein MSD), so ``msd[i]`` is the displacement squared after a lag of
+    ``i`` analysed frames.
+
+    Parameters
+    ----------
+    u : MDAnalysis.Universe
+        MDAnalysis universe object.
+    select : str, optional
+        MDAnalysis selection string for the atoms to follow
+        (default is 'all'). A single atom per molecule, e.g. 'element S' for
+        sulfolane, tracks the molecular diffusion without the intramolecular
+        vibrations of the lighter atoms.
+    msd_type : str, optional
+        Directions to include, one of 'xyz' (default), 'xy', 'xz', 'yz',
+        'x', 'y' or 'z'.
+    fft : bool, optional
+        If True (default), use the FFT based algorithm, which is much faster
+        than the direct double loop over time origins.
+    nojump : bool, optional
+        If True (default), attach the :class:`NoJump` transformation to the
+        trajectory so that the coordinates are unwrapped. This modifies ``u``
+        in place, and is skipped when the trajectory already carries
+        transformations.
+    start : int, optional
+        Starting frame index for MSD calculation
+        (default is None, which means the first frame).
+    stop : int, optional
+        Ending frame index for MSD calculation
+        (default is None, which means the last frame).
+    step : int, optional
+        Step size for frame selection in MSD calculation
+        (default is None, which means every frame). Beware that ``NoJump``
+        can only undo a jump it can recognise as one, i.e. a displacement of
+        more than half a box length between two consecutive analysed frames;
+        a large ``step`` makes real displacements that big and the unwrapping
+        unreliable.
+
+    Returns
+    -------
+    lagtime_ps : numpy.ndarray
+        Array of lag times in picoseconds, starting at 0.
+    msd_A2 : numpy.ndarray
+        Array of MSD values in angstrom^2.
+    """
+    if msd_type not in _MSD_DOF:
+        listed = ", ".join(repr(t) for t in _MSD_DOF)
+        raise ValueError(f"msd_type must be one of {listed}")
+
+    if nojump:
+        _ensure_nojump(u)
+
+    # verbose=False asks for a silent run; note that the FFT path of
+    # MDAnalysis 2.10 calls tqdm unconditionally, so a progress bar may still
+    # reach stderr regardless
+    msd = mda_msd.EinsteinMSD(
+        u, select=select, msd_type=msd_type, fft=fft, verbose=False
+    )
+    msd.run(start=start, stop=stop, step=step, verbose=False)
+
+    msd_A2 = msd.results.timeseries
+    # the lag is counted in analysed frames, so skipping frames stretches the
+    # time between two consecutive points by the same factor
+    dt_ps = u.trajectory.dt * (1 if step is None else step)
+    lagtime_ps = np.arange(len(msd_A2)) * dt_ps
+    return lagtime_ps, msd_A2
+
+
+def calc_dself(u: MDAnalysis.Universe, select="all", msd_type="xyz", fft=True,
+               nojump=True, fit_range=(0.0, 0.5),
+               start=None, stop=None, step=None):
+    """
+    Calculate the self-diffusion coefficient from the slope of the MSD.
+
+    The Einstein relation ``MSD = 2 * d * D * t`` is used, with ``d`` the
+    number of directions included in ``msd_type``, so ``D`` is the slope of a
+    straight line fitted to the MSD divided by ``2 * d``.
+
+    The fit is restricted to ``fit_range`` because neither end of the MSD is
+    diffusive: the short lags are still ballistic/cage-rattling, and the long
+    lags average over so few time origins that they are dominated by noise.
+
+    Parameters
+    ----------
+    u : MDAnalysis.Universe
+        MDAnalysis universe object.
+    select : str, optional
+        MDAnalysis selection string for the atoms to follow
+        (default is 'all'). See :func:`calc_msd`.
+    msd_type : str, optional
+        Directions to include, one of 'xyz' (default), 'xy', 'xz', 'yz',
+        'x', 'y' or 'z'.
+    fft : bool, optional
+        If True (default), use the FFT based algorithm.
+    nojump : bool, optional
+        If True (default), unwrap the trajectory with :class:`NoJump`.
+        This modifies ``u`` in place. See :func:`calc_msd`.
+    fit_range : tuple of float, optional
+        Fraction of the lag time axis used for the linear fit, as
+        ``(begin, end)`` with values in [0, 1] (default is (0.0, 0.5),
+        i.e. the first half of the MSD).
+    start : int, optional
+        Starting frame index for MSD calculation
+        (default is None, which means the first frame).
+    stop : int, optional
+        Ending frame index for MSD calculation
+        (default is None, which means the last frame).
+    step : int, optional
+        Step size for frame selection in MSD calculation
+        (default is None, which means every frame).
+
+    Returns
+    -------
+    dself_cm2s : float
+        Self-diffusion coefficient in cm^2/s.
+    """
+    lagtime_ps, msd_A2 = calc_msd(
+        u, select=select, msd_type=msd_type, fft=fft, nojump=nojump,
+        start=start, stop=stop, step=step
+    )
+    slope = _fit_msd_slope(lagtime_ps, msd_A2, fit_range)
+    return slope / _MSD_DOF[msd_type] * _ANG2_PS_TO_CM2_S
+
+
+def _fit_msd_slope(lagtime_ps, msd_A2, fit_range):
+    """
+    Slope in angstrom^2/ps of a straight line fitted to a window of the MSD.
+
+    Parameters
+    ----------
+    lagtime_ps : numpy.ndarray
+        Array of lag times in picoseconds.
+    msd_A2 : numpy.ndarray
+        Array of MSD values in angstrom^2.
+    fit_range : tuple of float
+        Fraction ``(begin, end)`` of the axis to fit, with values in [0, 1].
+
+    Returns
+    -------
+    slope : float
+        Slope of the fitted line in angstrom^2/ps.
+    """
+    begin, end = fit_range
+    if not 0.0 <= begin < end <= 1.0:
+        raise ValueError(
+            f"fit_range must satisfy 0 <= begin < end <= 1, got {fit_range}"
+        )
+
+    n_points = len(msd_A2)
+    i_begin = int(n_points * begin)
+    i_end = int(n_points * end)
+    if i_end - i_begin < 2:
+        raise ValueError(
+            f"fit_range {fit_range} selects {i_end - i_begin} of {n_points} "
+            "MSD points, at least 2 are needed for a linear fit"
+        )
+
+    return np.polyfit(lagtime_ps[i_begin:i_end], msd_A2[i_begin:i_end], 1)[0]
