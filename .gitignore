@@ -105,7 +105,6 @@ tests/test_tp_learning_curve.png
 tests/vs_supercell_bonds.pdb
 tests/vs_temp.pdb
 tests/data/dmff_parsed.yaml
-tests/data/fsa_resp.mol2.gaff
 tests/ethane/ethane_bonds.pdb
 tests/ethane/ethane_resp.mol2
 tests/ethane/ethane_resp.mol2.gaff
@@ -150,3 +149,7 @@ tests/logylogx_test_tp_learning_curve.png
 tests/data/dmff_parsed.yaml
 tests/data/dmff_parsed.yaml
 tests/data/dmff_parsed.yaml
+
+### テスト用入力データ ###
+# tests/data/ はフィクスチャ置き場。上の test_*log 等の汎用パターンから除外する
+!tests/data/test_dihed_0.log

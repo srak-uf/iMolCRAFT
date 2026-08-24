@@ -1,19 +1,20 @@
 from imolcraft.trainer import dmff_utils
 import os
+import shutil
 import pytest
 import numpy as np
 import jax.numpy as jnp
 
 
-def test_parser_dmffyaml():
-    d = dmff_utils.parser_dmffyaml(
-        os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "data",
-            "dmff.yml"
-        )
-    )
+def test_parser_dmffyaml(tmp_path):
+    # parser_dmffyaml は入力 yaml と同じ場所に *_parsed.yaml を書き出すので、
+    # tests/data/ を汚さないよう入力一式を tmp_path にコピーしてから実行する
+    data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+    for name in ("dmff.yml", "LiBH4.cif"):
+        shutil.copy(os.path.join(data_dir, name), tmp_path / name)
+
+    d = dmff_utils.parser_dmffyaml(str(tmp_path / "dmff.yml"))
+    assert (tmp_path / "dmff_parsed.yaml").is_file()  # 出力先は tmp_path
     assert set(d.keys()) == set(['sampling', 'targets'])
     assert set(d["targets"].keys()) == set([
         'density_gcm3', 'La_A', 'Lc_A', 'rdf', 'adf'

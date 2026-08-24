@@ -13,9 +13,9 @@ from imolcraft.analyzer.analyzer import (
     calc_rdf_frame,
 )
 
-DATA = os.path.join(os.path.dirname(__file__), "..")
+DATA = os.path.join(os.path.dirname(__file__), "..", "data")
 PDB = os.path.join(DATA, "vs_supercell_bonds.pdb")
-XTC = os.path.join(DATA, "xtcfiles", "sample_0.xtc")
+XTC = os.path.join(DATA, "sample_0.xtc")
 
 
 @pytest.fixture

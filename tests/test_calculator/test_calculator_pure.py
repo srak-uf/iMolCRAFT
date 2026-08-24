@@ -97,7 +97,7 @@ def test_change_distance_translates_only_one_fragment():
 
 def test_load_g16scan(tmp_path):
     log = tmp_path / "scan.log"
-    log.write_bytes(open(os.path.join(TESTS, "test", "test_dihed_0.log"), "rb").read())
+    log.write_bytes(open(os.path.join(TESTS, "data", "test_dihed_0.log"), "rb").read())
 
     angle, energy, atoms_list = load_g16scan(str(log))
     assert len(angle) == len(energy) == len(atoms_list)
@@ -163,7 +163,7 @@ def _succinonitrile():
     from openmm.app import PDBFile
     from openmm.unit import angstrom as omm_angstrom
 
-    pdb = PDBFile(os.path.join(TESTS, "vs_supercell_bonds.pdb"))
+    pdb = PDBFile(os.path.join(TESTS, "data", "vs_supercell_bonds.pdb"))
     coords = pdb.getPositions().value_in_unit(omm_angstrom)
     real = [
         (a.element.symbol, coords[i])

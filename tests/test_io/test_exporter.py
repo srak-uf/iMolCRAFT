@@ -7,9 +7,9 @@ from imolcraft.io import exporter_lmp as exporter_lmp_module
 from imolcraft.io._exporter import exporter
 from imolcraft.io.exporter_lmp import to_lammps_non_rectangular
 
-TESTS = os.path.join(os.path.dirname(__file__), "..")
-PDB = os.path.join(TESTS, "supercell_bonds.pdb")
-SYSTEM = os.path.join(TESTS, "system.xml")
+DATA = os.path.join(os.path.dirname(__file__), "..", "data")
+PDB = os.path.join(DATA, "supercell_bonds.pdb")
+SYSTEM = os.path.join(DATA, "system.xml")
 
 
 def test_exporter_rejects_unknown_format(tmp_path):
