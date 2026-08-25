@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import contextlib
 import os
 import sys
 import yaml
@@ -36,6 +37,9 @@ from .properties import (
 
 #: Ensembles md_sample knows how to set up.
 VALID_ENSEMBLES = ("nve", "nvt", "isonpt", "anisonpt", "trinpt")
+
+#: Where md_sample may send its progress messages and per-step state data.
+MD_LOG_MODES = ("stdout", "file", "none")
 
 #: Metric comparing a validated distribution with its reference.
 DEFAULT_DISTRIBUTION_METRIC = "wrightfactor"
@@ -875,18 +879,57 @@ def get_rescharges_from_residues(ff, ratio=None):
         return rescharges
 
 
-def _make_barostat(ensemble, T):
+@contextlib.contextmanager
+def _open_md_log(md_log, md_logfile, trajectory):
+    """
+    Resolve the requested MD log destination into a writable stream.
+
+    Yields ``sys.stdout`` for ``"stdout"``, ``None`` for ``"none"`` (callers
+    then emit nothing at all), or a freshly opened file for ``"file"``. Only a
+    file opened here is closed on exit; ``sys.stdout`` is left alone.
+    """
+    mode = "none" if md_log is None else str(md_log).lower()
+    if mode not in MD_LOG_MODES:
+        raise ValueError(f"md_log must be one of {MD_LOG_MODES}, got {md_log!r}")
+    if mode == "none":
+        yield None
+        return
+    if mode == "stdout":
+        yield sys.stdout
+        return
+
+    path = md_logfile
+    if path is None:
+        # One log per trajectory, so replicas never overwrite each other.
+        stem = os.path.splitext(os.path.basename(trajectory))[0]
+        path = os.path.join("mdlogs", f"{stem}.log")
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    handle = open(path, "w")
+    try:
+        yield handle
+    finally:
+        handle.close()
+
+
+def _make_barostat(ensemble, T, log=None):
     """
     Barostat matching the requested NPT flavour, or None for a fixed volume.
 
     The three NPT ensembles differ in how much of the box shape they let move:
     isotropic scaling, independent axes, or a fully flexible triclinic cell.
+    ``log`` is an optional one-argument callable used to announce the choice.
     """
+    if log is None:
+        def log(_message):
+            return None
+
     if ensemble == "isonpt":
-        print("Isotropic pressure control")
+        log("Isotropic pressure control")
         return openmm.MonteCarloBarostat(1.0 * unit.bar, T * unit.kelvin)
     if ensemble == "anisonpt":
-        print("Anisotropic pressure control")
+        log("Anisotropic pressure control")
         return openmm.MonteCarloAnisotropicBarostat(
             [1.0 * unit.bar] * 3, T * unit.kelvin
         )
@@ -913,7 +956,9 @@ def md_sample(
     useDispersionCorrection=False,
     useHbondConstraint=True,
     rigidWater=False,
-    device="CPU"
+    device="CPU",
+    md_log="stdout",
+    md_logfile=None,
 ):
     """
     Run MD simulation with OpenMM
@@ -931,94 +976,112 @@ def md_sample(
         annealing steps, etc.
     useDispersionCorrection : bool, optional
         Whether to use dispersion correction in the nonbonded force. Default is False.
+    md_log : {'stdout', 'file', 'none'}, optional
+        Where the progress messages and the per-step state data go.
+        ``'stdout'`` (default) keeps writing to the terminal, ``'file'``
+        redirects everything to ``md_logfile``, and ``'none'`` suppresses the
+        output entirely (no StateDataReporter is attached at all).
+    md_logfile : str, optional
+        Log file used when ``md_log='file'``. Default is
+        ``mdlogs/<trajectory stem>.log``, so replicas do not overwrite each
+        other. Ignored for the other modes.
 
     Returns
     -------
     state_init : dict
         Dictionary containing the initial state of the system
     """
-    pdb = app.PDBFile(initialpdb)
-    forcefield = app.ForceField(ffxml)
+    with _open_md_log(md_log, md_logfile, trajectory) as logstream:
 
-    modeller = app.Modeller(pdb.topology, pdb.getPositions())
-    modeller.addExtraParticles(forcefield)
-    pos = modeller.getPositions()
-    topology = modeller.topology
-    # modellerをpdbに書き出す
-    # app.PDBFile.writeFile(topology, pos, open("modeller.pdb", "w"))
+        def log(message):
+            if logstream is not None:
+                print(message, file=logstream, flush=True)
 
-    if nonbondedmethod == "PME":
-        nonbondedmethod = app.PME
-    elif nonbondedmethod == "LJPME":
-        nonbondedmethod = app.LJPME
+        pdb = app.PDBFile(initialpdb)
+        forcefield = app.ForceField(ffxml)
 
-    constraints = {"constraints": app.HBonds} if useHbondConstraint else {}
-    system = forcefield.createSystem(
-        topology,
-        nonbondedMethod=nonbondedmethod,
-        nonbondedCutoff=rc * unit.nanometer,
-        rigidWater=rigidWater,
-        **constraints,
-    )
+        modeller = app.Modeller(pdb.topology, pdb.getPositions())
+        modeller.addExtraParticles(forcefield)
+        pos = modeller.getPositions()
+        topology = modeller.topology
+        # modellerをpdbに書き出す
+        # app.PDBFile.writeFile(topology, pos, open("modeller.pdb", "w"))
 
-    for force in system.getForces():
-        if isinstance(force, openmm.NonbondedForce):
-            force.setUseDispersionCorrection(useDispersionCorrection)
+        if nonbondedmethod == "PME":
+            nonbondedmethod_omm = app.PME
+        elif nonbondedmethod == "LJPME":
+            nonbondedmethod_omm = app.LJPME
+        else:
+            nonbondedmethod_omm = nonbondedmethod
 
-    print(f"Using {ensemble} ensemble")
-    barostat = _make_barostat(ensemble, T)
-    if barostat is not None:
-        system.addForce(barostat)
-
-    integrator = openmm.LangevinIntegrator(
-        T * unit.kelvin, 1 / unit.picosecond, dt * unit.femtosecond
-    )
-
-    platform = openmm.Platform.getPlatformByName(device)
-
-    simulation = app.Simulation(topology, system, integrator, platform)
-    xtcfile = os.path.join("xtcfiles", trajectory)
-    try:
-        os.remove(xtcfile)
-    except Exception:
-        pass
-    simulation.context.setPositions(pos)
-    print("== Energy minimization ==")
-    simulation.minimizeEnergy()
-    simulation.context.setVelocitiesToTemperature(T * unit.kelvin)
-
-    simulation.reporters.append(
-        app.StateDataReporter(
-            sys.stdout,
-            nstxout,
-            potentialEnergy=True,
-            density=True,
-            step=True,
-            remainingTime=True,
-            speed=True,
-            totalSteps=relax_steps + prod_steps,
+        constraints = {"constraints": app.HBonds} if useHbondConstraint else {}
+        system = forcefield.createSystem(
+            topology,
+            nonbondedMethod=nonbondedmethod_omm,
+            nonbondedCutoff=rc * unit.nanometer,
+            rigidWater=rigidWater,
+            **constraints,
         )
-    )
 
-    # relaxation run
-    # SA
-    if anneal_totalsteps > 0:
-        print("== Start Simulated Annealing ==")
-        deltaT = (T - anneal_Tmax) / anneal_steps
-        step_pertemp = int(anneal_totalsteps / anneal_steps)
-        for i in range(anneal_steps):
-            integrator.setTemperature((anneal_Tmax + deltaT * i) * unit.kelvin)
-            simulation.step(step_pertemp)
-    # relax at desired temperature
-    print("== Start Relaxation ==")
-    integrator.setTemperature(T * unit.kelvin)
-    simulation.step(relax_steps)
-    # production run
-    print("== Start Production ==")
-    os.makedirs("xtcfiles", exist_ok=True)
-    simulation.reporters.append(app.XTCReporter(xtcfile, nstxout))
-    simulation.step(prod_steps)
-    return xtcfile
+        for force in system.getForces():
+            if isinstance(force, openmm.NonbondedForce):
+                force.setUseDispersionCorrection(useDispersionCorrection)
+
+        log(f"Using {ensemble} ensemble")
+        barostat = _make_barostat(ensemble, T, log=log)
+        if barostat is not None:
+            system.addForce(barostat)
+
+        integrator = openmm.LangevinIntegrator(
+            T * unit.kelvin, 1 / unit.picosecond, dt * unit.femtosecond
+        )
+
+        platform = openmm.Platform.getPlatformByName(device)
+
+        simulation = app.Simulation(topology, system, integrator, platform)
+        xtcfile = os.path.join("xtcfiles", trajectory)
+        try:
+            os.remove(xtcfile)
+        except Exception:
+            pass
+        simulation.context.setPositions(pos)
+        log("== Energy minimization ==")
+        simulation.minimizeEnergy()
+        simulation.context.setVelocitiesToTemperature(T * unit.kelvin)
+
+        if logstream is not None:
+            simulation.reporters.append(
+                app.StateDataReporter(
+                    logstream,
+                    nstxout,
+                    potentialEnergy=True,
+                    density=True,
+                    step=True,
+                    remainingTime=True,
+                    speed=True,
+                    totalSteps=relax_steps + prod_steps,
+                )
+            )
+
+        # relaxation run
+        # SA
+        if anneal_totalsteps > 0:
+            log("== Start Simulated Annealing ==")
+            deltaT = (T - anneal_Tmax) / anneal_steps
+            step_pertemp = int(anneal_totalsteps / anneal_steps)
+            for i in range(anneal_steps):
+                integrator.setTemperature((anneal_Tmax + deltaT * i) * unit.kelvin)
+                simulation.step(step_pertemp)
+        # relax at desired temperature
+        log("== Start Relaxation ==")
+        integrator.setTemperature(T * unit.kelvin)
+        simulation.step(relax_steps)
+        # production run
+        log("== Start Production ==")
+        os.makedirs("xtcfiles", exist_ok=True)
+        simulation.reporters.append(app.XTCReporter(xtcfile, nstxout))
+        simulation.step(prod_steps)
+        return xtcfile
 
 
 def get_target_pred_frame(xtcfile, pdbfile, target_params: dict):

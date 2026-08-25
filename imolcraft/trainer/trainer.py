@@ -628,7 +628,9 @@ class ThermodynamicTrainer(BaseTrainer):
         clip: Union[float, List[float]] = 0.1,
         resample_freq: int = 50,
         restart_xml: str = None,
-        device: str = "CPU"
+        device: str = "CPU",
+        md_log: str = "stdout",
+        md_logfile: Optional[str] = None,
     ) -> None:
         """
         Initialize the ThermodynamicTrainer.
@@ -665,6 +667,14 @@ class ThermodynamicTrainer(BaseTrainer):
             Gradient clipping value(s) (default: 0.1).
         restart_xml : str, optional
             Path to the XML file for restarting the training.
+        md_log : {'stdout', 'file', 'none'}, optional
+            Where the MD progress and per-step state data of every replica go.
+            ``'stdout'`` (default) keeps the current terminal output,
+            ``'file'`` redirects it to a log file, and ``'none'`` suppresses it.
+        md_logfile : str, optional
+            Log file used when ``md_log='file'``. Default is
+            ``mdlogs/<state name>.log``, one file per replica. Note that a
+            single explicit path makes all replicas share (and overwrite) it.
         """
         # params
         self.sampling_params = sampling_params
@@ -674,6 +684,8 @@ class ThermodynamicTrainer(BaseTrainer):
         self.resample_counter = 0
 
         self.device = device
+        self.md_log = md_log
+        self.md_logfile = md_logfile
 
         super().__init__(
             ffxml_list=ffxml_list,
@@ -821,6 +833,8 @@ class ThermodynamicTrainer(BaseTrainer):
             nonbondedmethod=self.nonbondedmethod[idx],
             useDispersionCorrection=self.dispcorr[idx],
             device=self.device,
+            md_log=self.md_log,
+            md_logfile=self.md_logfile,
         )
 
     def _add_sample(self, idx: int, state_name: str, xtcfile: str) -> None:
