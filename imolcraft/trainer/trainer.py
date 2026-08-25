@@ -29,13 +29,30 @@ from ..calculator import DihedralCalculator, DistanceCalculator
 from openmm import unit
 
 
+def _optional_list(cast):
+    """
+    Build a cast for an annealing schedule, keeping None as "no annealing".
+
+    A bare number is wrapped into a one-element list so a single-leg schedule
+    can be written without brackets.
+    """
+    def _cast(value):
+        if value is None:
+            return None
+        if isinstance(value, (list, tuple)):
+            return [cast(v) for v in value]
+        return [cast(value)]
+
+    return _cast
+
+
 #: Per-replica sampling settings, as (attribute name, type to cast to).
 _SAMPLING_FIELDS = (
     ("T_K", float),
     ("P_bar", float),
-    ("anneal_steps", int),
-    ("anneal_Tmax", float),
-    ("anneal_totalsteps", int),
+    ("anneal_T", _optional_list(float)),
+    ("anneal_steps", _optional_list(int)),
+    ("anneal_interval", int),
     ("relax_steps", int),
     ("rc_nm", float),
     ("dispcorr", bool),
@@ -822,9 +839,9 @@ class ThermodynamicTrainer(BaseTrainer):
             trajectory=f"{state_name}.xtc",
             rc=self.rc_nm[idx],
             T=self.T_K[idx],
-            anneal_Tmax=self.anneal_Tmax[idx],
+            anneal_T=self.anneal_T[idx],
             anneal_steps=self.anneal_steps[idx],
-            anneal_totalsteps=self.anneal_totalsteps[idx],
+            anneal_interval=self.anneal_interval[idx],
             dt=self.dt_fs[idx],
             nstxout=self.nstxout[idx],
             relax_steps=self.relax_steps[idx],
@@ -1094,9 +1111,9 @@ class ThermodynamicTrainer(BaseTrainer):
                     "topology": self.topology,
                     "T_K": self.T_K,
                     "P_bar": self.P_bar,
+                    "anneal_T": self.anneal_T,
                     "anneal_steps": self.anneal_steps,
-                    "anneal_Tmax": self.anneal_Tmax,
-                    "anneal_totalsteps": self.anneal_totalsteps,
+                    "anneal_interval": self.anneal_interval,
                     "relax_steps": self.relax_steps,
                     "rc_nm": self.rc_nm,
                     "prod_steps": self.prod_steps,

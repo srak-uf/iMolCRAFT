@@ -21,8 +21,8 @@ def test_parser_dmffyaml(tmp_path):
     ])
     assert set(d["sampling"].keys()) == set([
         'init_structure', 'ensemble', 'dt_fs', 'rcut_nm', 'temperature_K',
-        'pressure_bar', 'anneal_steps', 'anneal_Tmax', 'anneal_totalsteps',
-        'relax_steps', 'prod_steps', 'nstxout', 'neff', 'anneal_totaltime',
+        'pressure_bar', 'anneal_T', 'anneal_steps', 'anneal_interval',
+        'relax_steps', 'prod_steps', 'nstxout', 'neff',
         'dispcorr', 'nonbondedmethod'
     ])
     assert set(d["validation"].keys()) == set([
