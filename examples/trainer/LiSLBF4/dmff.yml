@@ -13,7 +13,7 @@ sampling:
     prod_steps : 100000
     nstxout: 1000
     neff: 50
-    dispcorr: True
+    dispcorr: False
 targets:
     La_A:
         weight: 1.0
@@ -44,3 +44,18 @@ targets:
             rcut12_A: 8.0
             gt: rdf_Li_Li.txt
 
+validation:
+    dself_Li:
+        property: dself_cm2s
+        select: element Li
+        gt: 1.0e-10
+    dself_BF4:
+        property: dself_cm2s
+        select: element B
+        gt: 1.0e-10
+    rdf_Li_Li:
+        property: rdf
+        elem1: Li
+        elem2: Li
+        rcut12_A: 8.0
+        gt: rdf_Li_Li.txt

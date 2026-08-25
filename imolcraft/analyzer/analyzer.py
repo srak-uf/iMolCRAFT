@@ -544,9 +544,9 @@ def calc_msd(u: MDAnalysis.Universe, select="all", msd_type="xyz", fft=True,
 
 
 def calc_dself(u: MDAnalysis.Universe, select="all", msd_type="xyz", fft=True,
-               nojump=True, fit_range=(0.0, 0.5),
+               nojump=True, fit_range=(0.1, 0.5),
                start=None, stop=None, step=None,
-               save=False, basename="dself"):
+               save=False, basename="dself", return_msd=False):
     """
     Calculate the self-diffusion coefficient from the slope of the MSD.
 
@@ -575,8 +575,8 @@ def calc_dself(u: MDAnalysis.Universe, select="all", msd_type="xyz", fft=True,
         This modifies ``u`` in place. See :func:`calc_msd`.
     fit_range : tuple of float, optional
         Fraction of the lag time axis used for the linear fit, as
-        ``(begin, end)`` with values in [0, 1] (default is (0.0, 0.5),
-        i.e. the first half of the MSD).
+        ``(begin, end)`` with values in [0, 1] (default is (0.1, 0.5), i.e.
+        the first half of the MSD).
     start : int, optional
         Starting frame index for MSD calculation
         (default is None, which means the first frame).
@@ -592,11 +592,19 @@ def calc_dself(u: MDAnalysis.Universe, select="all", msd_type="xyz", fft=True,
         (default is False).
     basename : str, optional
         Stem of the files written when ``save`` is True (default is 'dself').
+    return_msd : bool, optional
+        If True, also return the MSD curve the coefficient was fitted on
+        (default is False). It lets a caller keep the curve without either
+        writing it to disk or running the analysis twice.
 
     Returns
     -------
     dself_cm2s : float
         Self-diffusion coefficient in cm^2/s.
+    lagtime_ps : numpy.ndarray
+        Array of lag times in picoseconds, only if ``return_msd`` is True.
+    msd_A2 : numpy.ndarray
+        Array of MSD values in angstrom^2, only if ``return_msd`` is True.
     """
     lagtime_ps, msd_A2 = calc_msd(
         u, select=select, msd_type=msd_type, fft=fft, nojump=nojump,
@@ -606,7 +614,10 @@ def calc_dself(u: MDAnalysis.Universe, select="all", msd_type="xyz", fft=True,
     if save:
         _write_msd_csv(lagtime_ps, msd_A2, basename)
         _plot_msd(lagtime_ps, msd_A2, slope, intercept, basename)
-    return slope / _MSD_DOF[msd_type] * _ANG2_PS_TO_CM2_S
+    dself_cm2s = slope / _MSD_DOF[msd_type] * _ANG2_PS_TO_CM2_S
+    if return_msd:
+        return dself_cm2s, lagtime_ps, msd_A2
+    return dself_cm2s
 
 
 def _write_msd_csv(lagtime_ps, msd_A2, basename):

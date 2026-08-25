@@ -168,14 +168,26 @@ def test_calc_msd_rejects_unknown_type(universe):
 def test_calc_dself_matches_the_einstein_relation(universe):
     """calc_dself が MSD の傾き / (2d) に単位換算を掛けた値と一致する"""
     lagtime, msd = calc_msd(universe, select="element C")
-    slope, _ = _fit_msd_line(lagtime, msd, (0.0, 0.5))
+    slope, _ = _fit_msd_line(lagtime, msd, (0.1, 0.5))  # 既定のフィット範囲
     expected = slope / 6 * 1e-4  # xyz なので 2d = 6, A^2/ps -> cm^2/s
     assert np.isclose(calc_dself(universe, select="element C"), expected)
+
+
+def test_calc_dself_can_return_the_msd_it_fitted(universe):
+    """return_msd で、フィットした MSD 曲線をそのまま受け取れる"""
+    expected_lagtime, expected_msd = calc_msd(universe, select="element C")
+    dself, lagtime, msd = calc_dself(
+        universe, select="element C", return_msd=True
+    )
+
+    assert np.isclose(dself, calc_dself(universe, select="element C"))
+    assert np.allclose(lagtime, expected_lagtime)
+    assert np.allclose(msd, expected_msd)
 
 
 @pytest.mark.parametrize("msd_type,dof", [("xyz", 6), ("xy", 4), ("z", 2)])
 def test_calc_dself_scales_with_dimensionality(universe, msd_type, dof):
     lagtime, msd = calc_msd(universe, select="element C", msd_type=msd_type)
-    slope, _ = _fit_msd_line(lagtime, msd, (0.0, 0.5))
+    slope, _ = _fit_msd_line(lagtime, msd, (0.1, 0.5))
     got = calc_dself(universe, select="element C", msd_type=msd_type)
     assert np.isclose(got, slope / dof * 1e-4)

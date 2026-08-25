@@ -7,11 +7,15 @@ import pytest
 
 from imolcraft.trainer import dmff_utils
 from imolcraft.trainer.base import _broadcast_lr_clip, _nan_recovery_gradients
-from imolcraft.trainer.dmff_utils import (
+from imolcraft.trainer.dmff_utils import VALID_ENSEMBLES, neutralize
+from imolcraft.trainer.properties import (
+    DISTRIBUTION_TARGETS,
+    PROPERTY_KEYS,
+    PROPERTY_KINDS,
     REQUIRED_TARGET_KEYS,
+    REQUIRED_VALIDATION_KEYS,
     SCALAR_TARGETS,
-    VALID_ENSEMBLES,
-    neutralize,
+    VALIDATION_ONLY_PROPERTIES,
 )
 from imolcraft.trainer.loss import (
     IMPLEMENTED_WEIGHT_SCHEMES,
@@ -125,6 +129,31 @@ def test_target_key_tables_agree():
         assert REQUIRED_TARGET_KEYS[target] == ("gt", "weight")
     assert set(REQUIRED_TARGET_KEYS) >= set(SCALAR_TARGETS) | {"rdf", "adf"}
     assert "nvt" in VALID_ENSEMBLES and "isonpt" in VALID_ENSEMBLES
+
+
+def test_every_property_is_declared_once_and_completely():
+    """物性の一覧は 1 か所で、種類と必要なキーの両方を持つ"""
+    assert set(PROPERTY_KINDS) == set(PROPERTY_KEYS)
+    assert set(PROPERTY_KINDS.values()) <= {"scalar", "distribution"}
+
+
+def test_the_loss_takes_every_property_but_the_validation_only_ones():
+    """最適化対象は、validation 専用を除いた全物性"""
+    assert set(REQUIRED_TARGET_KEYS) == set(PROPERTY_KINDS) - set(
+        VALIDATION_ONLY_PROPERTIES
+    )
+    # loss 側が分岐に使う 2 つの組も、同じ表から導出されている
+    assert set(SCALAR_TARGETS) | set(DISTRIBUTION_TARGETS) == set(
+        REQUIRED_TARGET_KEYS
+    )
+    # 逆向きは成り立つ: loss で使える物性は validation でも監視できる
+    assert set(REQUIRED_VALIDATION_KEYS) == set(PROPERTY_KINDS)
+
+
+def test_a_validated_distribution_always_needs_its_reference():
+    """分布は参照との距離を記録するので、validation でも gt が要る"""
+    for name, kind in PROPERTY_KINDS.items():
+        assert ("gt" in REQUIRED_VALIDATION_KEYS[name]) is (kind == "distribution")
 
 
 @pytest.mark.parametrize(
@@ -803,3 +832,97 @@ def test_sub_after_grad_hook_still_applies(sum_trainer_env):
     half = seen[0]
     charge = trainer.ffparams["NonbondedForce"]["charge"]
     assert len(charge) == 2 * half
+
+
+# ------------------------------------ ThermodynamicTrainer の validation 記録
+def _validation_stub(params, pred, dev=None, epoch=0, label="t"):
+    import types
+
+    return types.SimpleNamespace(
+        validation_params=params,
+        validation_pred=pred,
+        validation_dev=[{} for _ in params] if dev is None else dev,
+        validation_curves=[{} for _ in params],
+        validation_history=[],
+        validation_dev_history=[],
+        label=label,
+        _epoch=epoch,
+    )
+
+
+def test_record_validation_labels_the_values_by_replica():
+    """レプリカ番号と項目名の組で履歴に残る"""
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    stub = _validation_stub(
+        [{"dself_Li": {}}, {"dself_Li": {}}],
+        [{"dself_Li": 1.0}, {"dself_Li": 2.0}],
+        epoch=3,
+    )
+    ThermodynamicTrainer._record_validation(stub)
+
+    assert stub.validation_history == [
+        {"epoch": 3, "sample_0/dself_Li": 1.0, "sample_1/dself_Li": 2.0}
+    ]
+
+
+def test_record_validation_keeps_the_values_of_the_untouched_replicas():
+    """再サンプリングされなかったレプリカも、前回の値のまま記録に残る"""
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    stub = _validation_stub(
+        [{"dself_Li": {}}, {"dself_Li": {}}],
+        [{"dself_Li": 1.0}, {"dself_Li": 2.0}],
+        epoch=3,
+    )
+    ThermodynamicTrainer._record_validation(stub)
+    # sample_0 だけ再サンプリングされた状況
+    stub.validation_pred[0] = {"dself_Li": 1.5}
+    stub._epoch = 8
+    ThermodynamicTrainer._record_validation(stub)
+
+    assert stub.validation_history[-1] == {
+        "epoch": 8, "sample_0/dself_Li": 1.5, "sample_1/dself_Li": 2.0
+    }
+
+
+def test_record_validation_is_skipped_without_any_target():
+    """validation を設定していない run では、履歴を作らない"""
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    stub = _validation_stub([{}, {}], [{}, {}])
+    ThermodynamicTrainer._record_validation(stub)
+
+    assert stub.validation_history == []
+
+
+def test_update_validation_is_skipped_without_any_target():
+    """validation が空なら、軌跡を読みに行かない（存在しないファイルでも落ちない）"""
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    stub = _validation_stub([{}], [{}])
+    stub.pdbfile_vsite = ["nonexistent.pdb"]
+    ThermodynamicTrainer._update_validation(stub, 0, "nonexistent.xtc")
+
+    assert stub.validation_pred == [{}]
+    assert stub.validation_dev == [{}]
+    assert stub.validation_curves == [{}]
+
+
+def test_record_validation_keeps_the_deviations_in_their_own_history():
+    """ズレは値とは別の履歴に、項目ごとに分かれたまま残る"""
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    stub = _validation_stub(
+        [{"rho": {}, "rdf_Li_O": {}}],
+        [{"rho": 1.5}],
+        dev=[{"rho": -0.05, "rdf_Li_O": 0.02}],
+        epoch=3,
+    )
+    ThermodynamicTrainer._record_validation(stub)
+
+    # 値を持つのはスカラーだけ、ズレは分布も含めて全部
+    assert stub.validation_history == [{"epoch": 3, "sample_0/rho": 1.5}]
+    assert stub.validation_dev_history == [
+        {"epoch": 3, "sample_0/rho": -0.05, "sample_0/rdf_Li_O": 0.02}
+    ]

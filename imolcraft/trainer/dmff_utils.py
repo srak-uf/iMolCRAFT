@@ -22,25 +22,27 @@ from ..analyzer.analyzer import (
     calc_cellpar_frame,
     calc_rdf_frame,
     calc_adf_frame,
+    calc_dself,
+)
+from .loss import _DISTRIBUTION_LOSSES, _SCALAR_DEVIATIONS
+from .properties import (
+    PROPERTY_KINDS,
+    REQUIRED_TARGET_KEYS,
+    REQUIRED_VALIDATION_KEYS,
+    SCALAR_TARGETS,
+    VALIDATION_ONLY_PROPERTIES,
 )
 
 
-#: Targets given as a single reference number.
-SCALAR_TARGETS = ("density_gcm3", "La_A", "Lb_A", "Lc_A")
-
-#: Keys every target must provide. Scalar targets carry them directly, while
-#: rdf / adf carry one such block per named pair or triplet.
-REQUIRED_TARGET_KEYS = {
-    "density_gcm3": ("gt", "weight"),
-    "La_A": ("gt", "weight"),
-    "Lb_A": ("gt", "weight"),
-    "Lc_A": ("gt", "weight"),
-    "rdf": ("elem1", "elem2", "rcut12_A"),
-    "adf": ("elem1", "elem2", "elem3", "rcut12_A", "rcut23_A"),
-}
-
 #: Ensembles md_sample knows how to set up.
 VALID_ENSEMBLES = ("nve", "nvt", "isonpt", "anisonpt", "trinpt")
+
+#: Metric comparing a validated distribution with its reference.
+DEFAULT_DISTRIBUTION_METRIC = "wrightfactor"
+
+#: Metric comparing a validated scalar with its reference. Signed, so that the
+#: record says whether the property comes out too high or too low.
+DEFAULT_SCALAR_METRIC = "relerr"
 
 
 def parser_dmffyaml(yaml_file):
@@ -111,10 +113,27 @@ def parser_dmffyaml(yaml_file):
             f"{list(VALID_ENSEMBLES)}."
         )
 
+    # LJPME sums the long-range dispersion itself, so a dispersion correction
+    # on top of it counts the same energy twice. OpenMM silently ignores the
+    # flag under LJPME while DMFF honours it, which would leave the sampling
+    # and the target state with different energies for the same configuration
+    # and eat most of the effective samples before the fit even starts.
+    if data["sampling"]["nonbondedmethod"] == "LJPME" and data["sampling"]["dispcorr"]:
+        raise ValueError(
+            "dispcorr must be False with the LJPME nonbonded method, which "
+            "already accounts for the long-range dispersion."
+        )
+
     # check for valid target_types
     if "targets" not in data:
         raise KeyError("Missing necessary key in data: targets")
     for target_name in data["targets"]:
+        if target_name in VALIDATION_ONLY_PROPERTIES:
+            raise ValueError(
+                f"Target {target_name} is only available in the validation "
+                "section: thermodynamic perturbation reweights stored "
+                "configurations, which cannot give a dynamical property."
+            )
         if target_name not in REQUIRED_TARGET_KEYS:
             raise ValueError(
                 f"Invalid target type {target_name}. Must be one of "
@@ -133,12 +152,336 @@ def parser_dmffyaml(yaml_file):
                             f"Missing {required_key} for target {target_name}: {key}."
                         )
 
+    # validation targets are optional, an empty section keeps the callers from
+    # having to special-case a missing key
+    data["validation"] = _check_validation(data.get("validation"))
+
     # output parsed data as yaml, the filename is added with "_parsed"
     yaml_file = os.path.splitext(yaml_file)[0] + "_parsed.yaml"
     with open(yaml_file, "w") as file:
         yaml.dump(data, file)
 
     return data
+
+
+def _check_validation(validation_params):
+    """
+    Check the ``validation`` section, keyed by a user chosen name::
+
+        validation:
+            dself_Li:
+                property: dself_cm2s
+                select: element Li
+                gt: 1.0e-6
+
+    Parameters
+    ----------
+    validation_params : dict or None
+        Section read from the YAML.
+
+    Returns
+    -------
+    validation_params : dict
+        The same section, or an empty dict when it is absent, so that the
+        callers never have to special-case a missing key.
+    """
+    if validation_params is None:
+        return {}
+
+    for name, block in validation_params.items():
+        if "property" not in block:
+            raise KeyError(f"Missing property for validation target {name}.")
+        prop = block["property"]
+        if prop not in REQUIRED_VALIDATION_KEYS:
+            raise ValueError(
+                f"Invalid validation property {prop} for {name}. Must be one of "
+                f"{list(REQUIRED_VALIDATION_KEYS)}."
+            )
+        for key in REQUIRED_VALIDATION_KEYS[prop]:
+            if key not in block:
+                raise KeyError(f"Missing {key} for validation target {name}.")
+        is_distribution = PROPERTY_KINDS[prop] == "distribution"
+        metrics = _DISTRIBUTION_LOSSES if is_distribution else _SCALAR_DEVIATIONS
+        default = (
+            DEFAULT_DISTRIBUTION_METRIC if is_distribution else DEFAULT_SCALAR_METRIC
+        )
+        metric = block.get("metric", default)
+        if metric not in metrics:
+            raise ValueError(
+                f"Invalid metric {metric} for validation target {name}. Must be "
+                f"one of {list(metrics)}."
+            )
+        # a metric is a distance to a reference, so asking for one without
+        # giving the reference is a mistake rather than something to ignore
+        if not is_distribution and "metric" in block and block.get("gt") is None:
+            raise KeyError(
+                f"Missing gt for validation target {name}: metric {metric} "
+                "measures the deviation from a reference value."
+            )
+
+    return validation_params
+
+
+def _score_scalar(value, block):
+    """
+    Deviation of a computed scalar from its reference value.
+
+    Parameters
+    ----------
+    value : float
+        Value computed from the trajectory.
+    block : dict
+        Validation block, whose ``metric`` picks how the deviation is measured
+        and whose ``gt`` is the reference it is measured against.
+
+    Returns
+    -------
+    float or None
+        The deviation, or None when the block declares no reference: a scalar
+        is worth watching even without one, and then only its value is kept.
+    """
+    if block.get("gt") is None:
+        return None
+    metric = _SCALAR_DEVIATIONS[block.get("metric", DEFAULT_SCALAR_METRIC)]
+    return float(metric(float(value), float(block["gt"])))
+
+
+def _score_distribution(pred, block):
+    """
+    Distance between a computed distribution and its reference, with the two
+    curves behind it.
+
+    A whole curve cannot be followed epoch by epoch, so what is recorded is the
+    same metric the loss uses on the fitted distributions: zero for a perfect
+    match, larger the further apart the two curves are. The reference file is
+    the one the targets use, ``x`` in the first column and the distribution in
+    the second.
+    """
+    x, gt = np.loadtxt(block["gt"]).T[:2]
+    if len(pred) != len(gt):
+        raise ValueError(
+            f"The computed distribution has {len(pred)} bins while the "
+            f"reference {block['gt']} has {len(gt)}. Check the cutoff and the "
+            "bin width against the ones the reference was made with."
+        )
+    metric = _DISTRIBUTION_LOSSES[block.get("metric", DEFAULT_DISTRIBUTION_METRIC)]
+    return float(metric(jnp.array(pred), jnp.array(gt))), np.column_stack([x, pred, gt])
+
+
+def get_validation_gt(validation_params: dict):
+    """
+    Get the reference values of the validation targets that declare one.
+
+    Parameters
+    ----------
+    validation_params : dict
+        Validation section as returned by :func:`parser_dmffyaml`.
+
+    Returns
+    -------
+    validation_gt : dict
+        Reference value of every scalar block carrying a ``gt`` key. The
+        distributions are left out: their ``gt`` is a file, and what they
+        record is already the distance to it.
+    """
+    return {
+        name: float(block["gt"])
+        for name, block in validation_params.items()
+        if block.get("gt") is not None
+        and PROPERTY_KINDS[block["property"]] == "scalar"
+    }
+
+
+def get_validation_pred(xtcfile, pdbfile, validation_params: dict):
+    """
+    Get the validation values of one trajectory from the parameters obtained by
+    parser_dmffyaml().
+
+    Unlike the targets these are one number per trajectory rather than
+    per-frame arrays: they are scores watched along the optimization, not
+    quantities reweighted by MBAR.
+
+    Parameters
+    ----------
+    xtcfile : str
+        Path to the XTC file.
+    pdbfile : str
+        Path to the PDB file, with the virtual sites of the trajectory.
+    validation_params : dict
+        Parameters for the validation targets.
+        keys(validation_params) = names chosen by the user
+
+    Returns
+    -------
+    validation_pred : dict
+        Value of every scalar block, keyed by its name. A distribution has no
+        single value to record, so it does not appear here.
+    validation_dev : dict
+        Deviation of every block that has a reference from it, keyed by its
+        name and measured with the ``metric`` of the block. Zero for a perfect
+        match; the deviations are kept apart from one another rather than
+        summed into a score.
+    validation_curves : dict
+        Curve behind the value, for the blocks that have one: the MSD as
+        ``(lagtime_ps, msd_A2)`` columns, a distribution as ``(x, pred, gt)``
+        columns.
+    """
+    validation_pred = {}
+    validation_dev = {}
+    validation_curves = {}
+
+    for name, block in validation_params.items():
+        prop = block["property"]
+        if prop not in REQUIRED_VALIDATION_KEYS:
+            raise ValueError(
+                f"Invalid validation property {prop} for {name}. Must be one of "
+                f"{list(REQUIRED_VALIDATION_KEYS)}."
+            )
+        # unwrapping edits the trajectory in place, so each block reads its own
+        # Universe rather than inheriting the transformations of the previous one
+        u = MDAnalysis.Universe(pdbfile, xtcfile)
+
+        if prop == "dself_cm2s":
+            # the MSD comes back with the coefficient so that the fit can be
+            # judged afterwards: one fitted outside the diffusive regime looks
+            # just as reasonable as a good one until the curve is seen
+            value, lagtime_ps, msd_A2 = calc_dself(
+                u,
+                select=block["select"],
+                msd_type=block.get("msd_type", "xyz"),
+                fit_range=tuple(block.get("fit_range", (0.1, 0.5))),
+                start=block.get("start"),
+                stop=block.get("stop"),
+                step=block.get("step"),
+                return_msd=True,
+            )
+            validation_curves[name] = np.column_stack([lagtime_ps, msd_A2])
+        elif prop == "density_gcm3":
+            value = np.mean(calc_density_frame(u))
+        elif prop in ["La_A", "Lb_A", "Lc_A"]:
+            value = np.mean(calc_cellpar_frame(u, prop))
+        elif prop == "rdf":
+            pred = calc_rdf_frame(
+                u,
+                block["elem1"],
+                block["elem2"],
+                rmax=block["rcut12_A"],
+                dr=block.get("dr_A", 0.01),
+                only_intermolecular=block.get("intermolecular", False),
+            ).mean(axis=0)
+            validation_dev[name], validation_curves[name] = _score_distribution(
+                pred, block
+            )
+            continue
+        elif prop == "adf":
+            pred = calc_adf_frame(
+                xtcfile,
+                pdbfile,
+                block["elem1"],
+                block["elem2"],
+                block["elem3"],
+                rcut12=block["rcut12_A"],
+                rcut23=block["rcut23_A"],
+            ).mean(axis=0)
+            validation_dev[name], validation_curves[name] = _score_distribution(
+                pred, block
+            )
+            continue
+
+        validation_pred[name] = float(value)
+        deviation = _score_scalar(value, block)
+        if deviation is not None:
+            validation_dev[name] = deviation
+
+    return validation_pred, validation_dev, validation_curves
+
+
+def plot_validation(history: list, gt: dict = None, label="validation",
+                    baseline: float = None):
+    """
+    Plot every validation value against the epoch.
+
+    The same figure serves the values and their deviations: the values are
+    read against their reference, the deviations against zero.
+
+    Parameters
+    ----------
+    history : list of dict
+        Records written by the trainer, each with an ``epoch`` key and one key
+        per value.
+    gt : dict, optional
+        Reference values, keyed like the records. A dashed line is drawn for
+        the values that have one.
+    label : str, optional
+        Stem of the figure written, ``{label}.png``.
+    baseline : float, optional
+        Value a dashed line is drawn at on every panel, 0 for a plot of
+        deviations. Use it instead of `gt` when every panel shares one
+        reference.
+    """
+    # a replica resampled for the first time adds its keys mid-history, so the
+    # columns are collected over every record rather than from the first one
+    keys = []
+    for record in history:
+        keys.extend(key for key in record if key != "epoch" and key not in keys)
+    if len(keys) == 0:
+        return
+
+    gt = {} if gt is None else gt
+    epochs = [record["epoch"] for record in history]
+    fig, ax = plt.subplots(len(keys), 1, figsize=(5, 2.5 * len(keys)), squeeze=False)
+    for axis, key in zip(ax[:, 0], keys):
+        axis.set_title(key)
+        axis.plot(epochs, [record.get(key, np.nan) for record in history], marker="o")
+        if key in gt:
+            axis.axhline(gt[key], linestyle="--", color="k", label="gt")
+            axis.legend()
+        elif baseline is not None:
+            axis.axhline(baseline, linestyle="--", color="k")
+        axis.set_xlabel("Epoch")
+    plt.tight_layout()
+    fig.savefig(f"{label}.png", bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_validation_curves(curves: dict, validation_params: dict,
+                           label="validation_curves"):
+    """
+    Plot the curves the validation values of one replica were derived from.
+
+    They say why a value is what it is: whether the MSD is straight over the
+    fitted window, or where a distribution departs from its reference.
+
+    Parameters
+    ----------
+    curves : dict
+        Curves as returned by :func:`get_validation_pred`.
+    validation_params : dict
+        Validation section of the replica, for the axis labels.
+    label : str, optional
+        Stem of the figure written, ``{label}.png``.
+    """
+    if len(curves) == 0:
+        return
+
+    fig, ax = plt.subplots(len(curves), 1, figsize=(5, 2.5 * len(curves)),
+                           squeeze=False)
+    for axis, (name, curve) in zip(ax[:, 0], curves.items()):
+        prop = validation_params[name]["property"]
+        axis.set_title(name)
+        if PROPERTY_KINDS[prop] == "distribution":
+            axis.plot(curve[:, 0], curve[:, 1], alpha=0.5, label="pred")
+            axis.plot(curve[:, 0], curve[:, 2], label="gt")
+            axis.legend()
+            axis.set_xlabel("r ($\\mathrm{\\AA}$)" if prop == "rdf"
+                            else "angle (deg)")
+        else:
+            axis.plot(curve[:, 0], curve[:, 1])
+            axis.set_xlabel("Time (ps)")
+            axis.set_ylabel("MSD ($\\mathrm{\\AA}^2$)")
+    plt.tight_layout()
+    fig.savefig(f"{label}.png", bbox_inches="tight")
+    plt.close(fig)
 
 
 def get_target_gt(target_params: dict):

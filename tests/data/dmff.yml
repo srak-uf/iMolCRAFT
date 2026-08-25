@@ -44,3 +44,23 @@ targets:
             rcut12_A: 1.4
             rcut23_A: 2.9
             gt: reference_adf_CNLi.txt
+validation:
+    dself_Li:
+        property: dself_cm2s
+        select: element Li
+        gt: 1.0e-6
+    dself_B:
+        property: dself_cm2s
+        select: element B
+        msd_type: xyz
+        fit_range: [0.1, 0.6]
+    rho:
+        property: density_gcm3
+        gt: 1.568
+        metric: sqrelerr
+    rdf_Li_O:
+        property: rdf
+        elem1: Li
+        elem2: O
+        rcut12_A: 8.0
+        gt: reference_rdf_Li_O.txt

@@ -193,6 +193,119 @@ Adaptive resampling is triggered when:
 
 This ensures the method remains stable across the optimization landscape.
 
+#### Validation Properties
+
+Properties listed in the optional `validation` section of the YAML are computed
+on every freshly sampled trajectory and recorded, but they never enter the loss.
+They are an independent score, measured on a trajectory run with the current
+parameters rather than reweighted from the stored ones.
+
+The properties themselves are declared once, in `imolcraft.trainer.properties`,
+whether they are fitted or monitored: `PROPERTY_KINDS` says whether a property is a **scalar**
+(one number per frame) or a **distribution** (a curve per frame),
+`PROPERTY_KEYS` what it needs to be computed, and `VALIDATION_ONLY_PROPERTIES`
+which of them the loss cannot fit. The tables `targets` and `validation` are
+checked against are derived from those three.
+
+| `property` | kind | computed value | keys of the property | optional keys |
+| --- | --- | --- | --- | --- |
+| `density_gcm3` | scalar | density, g/cm^3 | -- | -- |
+| `La_A`, `Lb_A`, `Lc_A` | scalar | cell length, A | -- | -- |
+| `rdf` | distribution | radial distribution function | `elem1`, `elem2`, `rcut12_A` | `dr_A`, `intermolecular` |
+| `adf` | distribution | angle distribution function | `elem1`, `elem2`, `elem3`, `rcut12_A`, `rcut23_A` | -- |
+| `dself_cm2s` (validation only) | scalar | self-diffusion coefficient, cm^2/s | `select` | `msd_type`, `fit_range`, `start`, `stop`, `step` |
+
+Every property the loss fits can also be validated -- useful to watch one on a
+replica it is not fitted on. The reverse does not hold: `dself_cm2s` is
+**validation only** and is rejected in `targets`, because the thermodynamic
+perturbation reweights the configurations a trajectory stored, which says
+nothing about how fast they interconvert. It has to be measured on the
+trajectory as it was run, i.e. at a resampling.
+
+##### Metrics
+
+Every entry with a reference is also recorded as its deviation from it, one
+number per entry: they are kept apart rather than summed, so what a run is
+judged by stays your call. How that deviation is measured is the `metric` key
+of the entry, written next to `gt`:
+
+```yaml
+    rho:
+        property: density_gcm3
+        gt: 1.568
+        metric: relerr        # this is the whole syntax
+```
+
+Each kind of property has its own set of metric names, and all of them are zero
+for a perfect match:
+
+| `metric` | kind | recorded value | |
+| --- | --- | --- | --- |
+| `relerr` | scalar | `(pred - gt) / gt` | **default**; signed, so the record says in which direction the property is off |
+| `absrelerr` | scalar | `abs(pred - gt) / abs(gt)` | the same without its sign |
+| `sqrelerr` | scalar | `(pred - gt)^2 / gt^2` | the form the scalar targets are fitted with |
+| `diff` | scalar | `pred - gt` | in the unit of the property, not dimensionless |
+| `wrightfactor` | distribution | `sum((pred - gt)^2) / sum(gt^2)` | **default**; the metric the loss uses for a fitted distribution |
+| `jsdivergence` | distribution | Jensen-Shannon divergence | the loss's other distribution metric |
+
+The rules `parser_dmffyaml` enforces:
+
+- a name from the wrong kind, or one that does not exist, is rejected with the
+  list of the names that kind accepts -- there is no silently ignored `metric`
+- `metric` without `gt` is rejected too: a deviation needs something to deviate
+  from
+- for a distribution `gt` is mandatory in any case, and is the same two-column
+  file the targets use; a curve cannot be followed epoch by epoch, so its
+  deviation is all that is recorded
+- for a scalar `gt` is optional: without it the value is still followed, it is
+  just not turned into a deviation
+
+```yaml
+validation:
+    dself_Li:                 # your own name for the entry
+        property: dself_cm2s
+        select: element Li    # MDAnalysis selection to follow
+        msd_type: xyz         # optional, default xyz
+        fit_range: [0.1, 0.5] # optional, fraction of the MSD used for the fit
+        gt: 1.0e-6            # optional reference value, in cm^2/s
+        metric: relerr        # optional, how far it is from gt
+    rho:
+        property: density_gcm3
+        gt: 1.568
+    rdf_Li_O:
+        property: rdf
+        elem1: Li
+        elem2: O
+        rcut12_A: 8.0
+        gt: reference_rdf_Li_O.txt
+        metric: wrightfactor  # optional, or jsdivergence
+```
+
+```python
+params = parser_dmffyaml("dmff.yml")
+trainer = ThermodynamicTrainer(
+    ...,
+    target_params=params["targets"],
+    validation_params=params["validation"],
+)
+```
+
+The results live in the checkpoint, like the rest of the training state:
+
+- `validation_history` / `validation_dev_history`: one record per resampling of
+  the values and of their deviations, keyed `sample_{i}/{entry}`
+- `validation_pred` / `validation_dev` / `validation_curves`: the latest values,
+  the latest deviations, and the curves they came from, the MSD as
+  `(lagtime_ps, msd_A2)` columns and a distribution as `(x, pred, gt)` columns
+
+and are restored by `from_checkpoint`. Only the scalars appear among the values,
+a distribution having none; the deviations hold every entry that has a
+reference. Three figures are written next to the learning curve:
+`validation_LABEL.png`, the values against the epoch with their references,
+`validation_dev_LABEL.png`, the deviations against the epoch with a line at
+zero, and `validation_curves_LABEL_{i}.png`, the curves behind them -- the one
+to look at to check that the MSD is straight over the fitted window.
+
 ## Usage Example
 ### 1. Parameter optimization
 ```python
@@ -244,6 +357,7 @@ trainer = ThermodynamicTrainer(
 #     loss_fn=lossfn,
 #     sampling_params=params["sampling"],
 #     target_params=params["targets"],
+#     validation_params=params["validation"],
 #     opt_fftypes=["NonbondedForce/charge",
 #                  "NonbondedForce/epsilon",
 #                  "NonbondedForce/sigma"],
@@ -350,6 +464,7 @@ trainer = ThermodynamicTrainer.from_checkpoint(trainer_checkpoint="train_state.p
                                      loss_fn=lossfn,
                                      sampling_params=params["sampling"],
                                      target_params=params["targets"],
+                                     validation_params=params["validation"],
                                      lr=lr_prod,
 )
 

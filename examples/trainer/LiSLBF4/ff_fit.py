@@ -31,6 +31,7 @@ trainer = ThermodynamicTrainer(
     loss_fn=lossfn,
     sampling_params=params["sampling"],
     target_params=params["targets"],
+    validation_params=params["validation"],
     opt_fftypes=["NonbondedForce/charge",
                  "NonbondedForce/epsilon",
                  "NonbondedForce/sigma"],

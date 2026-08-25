@@ -14,17 +14,13 @@ from dmff.mbar import (
 from jax import vmap
 from jax.scipy.special import kl_div
 
+from .properties import DISTRIBUTION_TARGETS, SCALAR_TARGETS
+
 #: Weighting schemes accepted by :func:`mse_energy`.
 IMPLEMENTED_WEIGHT_SCHEMES = ["uniform", "boltzmann", "nonboltzmann"]
 
 #: Ensembles that MBAR treats as an NPT ensemble.
 _NPT_ENSEMBLES = ("isonpt", "anisonpt", "trinpt")
-
-#: Targets compared as a single scalar per frame.
-_SCALAR_TARGETS = ("density_gcm3", "La_A", "Lb_A", "Lc_A")
-
-#: Targets compared as a distribution function.
-_DISTRIBUTION_TARGETS = ("rdf", "adf")
 
 #: No charge penalty.
 _NO_CHARGE_PENALTY = {
@@ -141,6 +137,37 @@ _DISTRIBUTION_LOSSES = {
 }
 
 
+def relative_error(pred, gt):
+    """Signed relative deviation, negative when the prediction is too low."""
+    return (pred - gt) / gt
+
+
+def abs_relative_error(pred, gt):
+    """Relative deviation without its sign."""
+    return abs(pred - gt) / abs(gt)
+
+
+def squared_relative_error(pred, gt):
+    """Squared relative deviation, the form the scalar targets are fitted with."""
+    return (pred - gt) ** 2 / gt**2
+
+
+def absolute_error(pred, gt):
+    """Signed deviation, in the unit of the property itself."""
+    return pred - gt
+
+
+#: Metrics comparing a single predicted number with its reference. They are
+#: dimensionless but for ``diff``, and all of them are zero for a perfect
+#: match; only the signed ones say in which direction the prediction is off.
+_SCALAR_DEVIATIONS = {
+    "relerr": relative_error,
+    "absrelerr": abs_relative_error,
+    "sqrelerr": squared_relative_error,
+    "diff": absolute_error,
+}
+
+
 def loss_energy(
     ffparams,
     efunc,
@@ -238,7 +265,7 @@ def loss_thermodynamicperturbation(
     loss = 0.0
     weighted_results = {}
     for key in target_gt.keys():
-        if key in _SCALAR_TARGETS:
+        if key in SCALAR_TARGETS:
             # a single number per frame, so the reweighted average is compared
             pred = jnp.average(target_pred[key], weights=weight)
             weighted_results[key] = pred
@@ -247,7 +274,7 @@ def loss_thermodynamicperturbation(
                 * (target_gt[key]["gt"] - pred) ** 2
                 / target_gt[key]["gt"] ** 2
             )
-        elif key in _DISTRIBUTION_TARGETS:
+        elif key in DISTRIBUTION_TARGETS:
             # a curve per frame, so the frames are reweighted bin by bin
             weighted_results[key] = {}
             for kind in target_gt[key].keys():

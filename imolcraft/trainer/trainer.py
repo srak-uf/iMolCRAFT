@@ -16,7 +16,11 @@ from ..trainer.dmff_utils import (
     md_sample,
     get_target_pred_frame,
     get_target_gt,
+    get_validation_gt,
+    get_validation_pred,
     plot_compare,
+    plot_validation,
+    plot_validation_curves,
     get_chgparams_from_rescharges
 )
 from .base import BaseTrainer, plot_learning_curve
@@ -56,6 +60,19 @@ _NONBONDED_METHODS = {"PME": app.PME, "LJPME": app.LJPME}
 def _state_name(idx: int) -> str:
     """Name of the MBAR state of one replica. Must match everywhere it is used."""
     return f"sample_{idx}"
+
+
+def _validation_record(values_per_replica: List[dict], epoch: int) -> dict:
+    """
+    One history record out of the per-replica validation values, keyed by the
+    replica the value belongs to so that the entries of two replicas sharing a
+    name stay apart.
+    """
+    record = {"epoch": epoch}
+    for idx, values in enumerate(values_per_replica):
+        for name, value in values.items():
+            record[f"{_state_name(idx)}/{name}"] = value
+    return record
 
 
 def _resolve_nonbondedmethod(name):
@@ -348,6 +365,17 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
         trainer._epoch = dump_dict["epoch"]
         trainer.losses = dump_dict["losses"]
         trainer.epochs = dump_dict["epochs"]
+        trainer.validation_history = dump_dict.get("validation_history", [])
+        trainer.validation_dev_history = dump_dict.get("validation_dev_history", [])
+        trainer.validation_pred = dump_dict.get(
+            "validation_pred", trainer.validation_pred
+        )
+        trainer.validation_dev = dump_dict.get(
+            "validation_dev", trainer.validation_dev
+        )
+        trainer.validation_curves = dump_dict.get(
+            "validation_curves", trainer.validation_curves
+        )
         trainer._restore_best(dump_dict)
 
         return trainer
@@ -585,6 +613,7 @@ class ThermodynamicTrainer(BaseTrainer):
         loss_fn: Callable[..., float],
         sampling_params: List[Any],
         target_params: List[Any],
+        validation_params: Optional[List[Any]] = None,
         opt_fftypes: List[str] = [
             "NonbondedForce/charge",
             "NonbondedForce/sigma",
@@ -615,6 +644,12 @@ class ThermodynamicTrainer(BaseTrainer):
             List of dictionaries containing sampling parameters for each replica.
         target_params : list of dict
             List of dictionaries containing target parameters for each replica.
+        validation_params : list of dict, optional
+            List of dictionaries containing validation parameters for each
+            replica, as parsed from the ``validation`` section of the YAML.
+            These properties are computed on every resampled trajectory and
+            recorded, but never enter the loss. Default is None, i.e. nothing
+            is monitored.
         opt_fftypes : list of str
             List of force field parameter types to optimize.
         label : str, optional
@@ -631,6 +666,7 @@ class ThermodynamicTrainer(BaseTrainer):
         # params
         self.sampling_params = sampling_params
         self.target_params = target_params
+        self.validation_params = validation_params
         self.resample_freq = resample_freq
         self.resample_counter = 0
 
@@ -738,6 +774,27 @@ class ThermodynamicTrainer(BaseTrainer):
         self.utarget = []
         self.resample = [False for i in range(len(self.sampling_params))]
 
+        # validation, monitored only: one block dict per replica, empty when
+        # nothing is asked for
+        if self.validation_params is None:
+            self.validation_params = [{} for _ in self.sampling_params]
+        if isinstance(self.validation_params, dict):
+            self.validation_params = [self.validation_params]
+        if len(self.validation_params) != len(self.sampling_params):
+            raise ValueError(
+                "validation_params and sampling_params must have the same length: "
+                f"{len(self.validation_params)} != {len(self.sampling_params)}"
+            )
+        self.validation_gt = {}
+        for i, params in enumerate(self.validation_params):
+            for name, gt in get_validation_gt(params).items():
+                self.validation_gt[f"{_state_name(i)}/{name}"] = gt
+        self.validation_pred = [{} for _ in self.sampling_params]
+        self.validation_dev = [{} for _ in self.sampling_params]
+        self.validation_curves = [{} for _ in self.sampling_params]
+        self.validation_history = []
+        self.validation_dev_history = []
+
         # loss function
         if not isinstance(self.loss_fn, list):
             self.loss_fn = [self.loss_fn for _ in range(len(self.sampling_params))]
@@ -786,6 +843,53 @@ class ThermodynamicTrainer(BaseTrainer):
         self.estimator.add_state(state)
         self.estimator.add_sample(Sample(traj, state_name))
 
+    def _update_validation(self, idx: int, xtcfile: str) -> None:
+        """
+        Recompute the validation properties of one replica from its fresh
+        trajectory.
+
+        They are read from the trajectory that has just been sampled, so they
+        describe the force field of this epoch without any MBAR reweighting:
+        a diffusion coefficient is a dynamical quantity, which reweighting
+        static configurations cannot give.
+        """
+        if not self.validation_params[idx]:
+            return
+        (
+            self.validation_pred[idx],
+            self.validation_dev[idx],
+            self.validation_curves[idx],
+        ) = get_validation_pred(
+            xtcfile, self.pdbfile_vsite[idx], self.validation_params[idx]
+        )
+        for name, value in self.validation_pred[idx].items():
+            print(f"Validation {_state_name(idx)}/{name}: {value:.6e}")
+        for name, deviation in self.validation_dev[idx].items():
+            print(f"Validation {_state_name(idx)}/{name} deviation: {deviation:.6e}")
+
+    def _record_validation(self) -> None:
+        """
+        Append the current validation values, and their deviations from the
+        references, to their histories.
+
+        The two are kept apart because they are read differently: a value is
+        read against the reference line of its own property, a deviation
+        against zero. The deviations are not combined with one another either;
+        what a run is judged by stays the user's call.
+
+        Only the replicas resampled in this round have fresh values; the others
+        keep the ones of their last sampling, so a record always describes every
+        replica. The histories ride in the checkpoint, next to the losses.
+        """
+        if not any(self.validation_params):
+            return
+        self.validation_history.append(
+            _validation_record(self.validation_pred, self._epoch)
+        )
+        self.validation_dev_history.append(
+            _validation_record(self.validation_dev, self._epoch)
+        )
+
     def setup(self) -> None:
         """
         Set up the trainer by running MD simulations and preparing MBAR estimator.
@@ -800,6 +904,7 @@ class ThermodynamicTrainer(BaseTrainer):
             state_name = _state_name(i)
             xtcfile = self._run_md(i, state_name)
             self._add_sample(i, state_name, xtcfile)
+            self._update_validation(i, xtcfile)
 
             if has_target_gt is False:
                 self.target_gt.append(get_target_gt(self.target_params[i]))
@@ -808,6 +913,7 @@ class ThermodynamicTrainer(BaseTrainer):
                         xtcfile, self.pdbfile_vsite[i], self.target_params[i]
                     )
                 )
+        self._record_validation()
         self.estimator.optimize_mbar()
         self.opt_state = self.optimizer.init(self.ffparams)
 
@@ -884,6 +990,8 @@ class ThermodynamicTrainer(BaseTrainer):
                 xtcfile, self.pdbfile_vsite[idx], self.target_params[idx]
             )
             self._add_sample(idx, state_name, xtcfile)
+            self._update_validation(idx, xtcfile)
+        self._record_validation()
         self.estimator.optimize_mbar()
 
     def _needs_resample(self, ii: int, ieff: dict) -> bool:
@@ -980,6 +1088,7 @@ class ThermodynamicTrainer(BaseTrainer):
                     "dt_fs": self.dt_fs,
                     "ensemble": self.ensemble,
                     "target_params": self.target_params,
+                    "validation_params": self.validation_params,
                     "sampling_params": self.sampling_params,
                     "epoch": self._epoch,
                     "losses": self.losses,
@@ -991,6 +1100,11 @@ class ThermodynamicTrainer(BaseTrainer):
                     "clip": self.clip,
                     "target_gt": self.target_gt,
                     "target_pred_frame": self.target_pred_frame,
+                    "validation_pred": self.validation_pred,
+                    "validation_dev": self.validation_dev,
+                    "validation_curves": self.validation_curves,
+                    "validation_history": self.validation_history,
+                    "validation_dev_history": self.validation_dev_history,
                     **self._best_checkpoint_fields(),
                 }
                 pickle.dump(dump_dict, f)
@@ -1000,6 +1114,23 @@ class ThermodynamicTrainer(BaseTrainer):
                 plot_compare(
                     self.target_gt[i], self.target_pred_frame[i],
                     label=f"sample_{self.label}_{i}"
+                )
+
+            plot_validation(
+                self.validation_history,
+                gt=self.validation_gt,
+                label=f"validation_{self.label}",
+            )
+            plot_validation(
+                self.validation_dev_history,
+                baseline=0.0,
+                label=f"validation_dev_{self.label}",
+            )
+            for i, curves in enumerate(self.validation_curves):
+                plot_validation_curves(
+                    curves,
+                    self.validation_params[i],
+                    label=f"validation_curves_{self.label}_{i}",
                 )
 
             plot_learning_curve(self.epochs, self.losses, self.label)
@@ -1015,6 +1146,7 @@ class ThermodynamicTrainer(BaseTrainer):
         loss_fn: Optional[Callable[..., float]] = None,
         sampling_params: Optional[List[Any]] = None,
         target_params: Optional[List[Any]] = None,
+        validation_params: Optional[List[Any]] = None,
         opt_fftypes: Optional[List[str]] = None,
         optimizer_algo: Optional[str] = None,
         lr: Optional[Union[float, List[float]]] = None,
@@ -1042,6 +1174,9 @@ class ThermodynamicTrainer(BaseTrainer):
         if target_params is None:
             target_params = dump_dict["target_params"]
             del dump_dict["target_params"]
+        # checkpoints written before the validation section have no such key
+        if validation_params is None:
+            validation_params = dump_dict.pop("validation_params", None)
         
         trainer = cls(
             ffxml_list=ffxml_list,
@@ -1050,6 +1185,7 @@ class ThermodynamicTrainer(BaseTrainer):
             loss_fn=loss_fn,
             sampling_params=sampling_params,
             target_params=target_params,
+            validation_params=validation_params,
             opt_fftypes=opt_fftypes,
             optimizer_algo=optimizer_algo,
             label=dump_dict["label"],
