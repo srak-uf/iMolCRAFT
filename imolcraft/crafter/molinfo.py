@@ -32,6 +32,7 @@ from .asemol import (
     pdb2packmol,
 )
 from .ffxml import gafftemplate2xml
+from ..provenance import provenance_fields
 from .gaffil_generators import GAFFilTemplateGenerator
 
 #: Schema of a single molecule entry of ``Crafter.mol_info``: the key and the
@@ -151,6 +152,11 @@ class Crafter:
         Parameters for force field generation.
     structure : dict or None
         Information about the molecular structure (e.g., crystal or liquid).
+    imolcraft_version : str
+        Version of iMolCRAFT that wrote the pickle; set by :meth:`save_crafter`.
+    git_hash : str or None
+        Git commit of the code that wrote the pickle, None if unavailable;
+        set by :meth:`save_crafter`.
     """
 
     def __init__(self, yml=None):
@@ -834,11 +840,20 @@ class Crafter:
         """
         Save the Crafter object to a file using pickle.
 
+        The iMolCRAFT version and git commit of the writing code are stored as
+        well, both on the Crafter object and in each ``mol_info.pkl``.
+
         Parameters
         ----------
         filename : str
             The name of the file to save the Crafter object to.
         """
+        # stamp the writing code onto the object itself, so the pickle says
+        # which version produced it
+        provenance = provenance_fields()
+        self.imolcraft_version = provenance["imolcraft_version"]
+        self.git_hash = provenance["git_hash"]
+
         with open(filename, mode="wb") as f:
             pickle.dump(self, f)
 
@@ -848,6 +863,7 @@ class Crafter:
             with open(f"{directory}/mol_info.pkl", mode="wb") as f:
                 mol_info = copy.deepcopy(self.mol_info[key])
                 mol_info.pop("directory")
+                mol_info.update(provenance)
                 pickle.dump(mol_info, f)
 
     def load_crafter(self, filename):

@@ -24,6 +24,7 @@ from ..trainer.dmff_utils import (
     get_chgparams_from_rescharges
 )
 from .base import BaseTrainer, plot_learning_curve
+from ..provenance import provenance_fields
 from ..calculator import DihedralCalculator, DistanceCalculator
 from openmm import unit
 
@@ -312,6 +313,7 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
                     "lr": self.lr,
                     "clip": self.clip,
                     **self._best_checkpoint_fields(),
+                    **provenance_fields(),
                 }
                 pickle.dump(dump_dict, f)
 
@@ -523,6 +525,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
                         "lr": self.lr,
                         "clip": self.clip,
                         **self._best_checkpoint_fields(),
+                        **provenance_fields(),
                     },
                     f,
                 )
@@ -1106,6 +1109,7 @@ class ThermodynamicTrainer(BaseTrainer):
                     "validation_history": self.validation_history,
                     "validation_dev_history": self.validation_dev_history,
                     **self._best_checkpoint_fields(),
+                    **provenance_fields(),
                 }
                 pickle.dump(dump_dict, f)
 

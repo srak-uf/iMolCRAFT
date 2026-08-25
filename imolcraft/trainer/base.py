@@ -11,6 +11,7 @@ import time
 from typing import List, Callable, Optional, Any, Union, Tuple
 from imolcraft.crafter.ffxml import check_vsite
 from imolcraft.crafter.ffxml import merge_xml
+from imolcraft.provenance import provenance_fields
 from imolcraft.trainer.dmff_utils import (
     get_chgparams_from_rescharges,
     get_rescharges_from_residues,
@@ -666,6 +667,7 @@ class SumTrainer(BaseTrainer):
                     "clip": self.clip,
                     "weight": self.weight,
                     **self._best_checkpoint_fields(),
+                    **provenance_fields(),
                 }
                 pickle.dump(dump_dict, f)
 
