@@ -116,6 +116,34 @@ examples/trainer/distance_vsite/wovsite.pdb
 examples/trainer/distance_vsite/xmlfiles/merge.xml
 examples/trainer/distance_vsite/xmlfiles/merged.xml
 
+### Run artefacts, by the name the code gives them ###
+# BaseTrainer.write_checkpoint / _render_loop_xml and friends name these after
+# the run label, so listing them one path at a time misses every new label.
+train_state_*.pkl
+chkpoint_*.xml
+*_best.xml
+*learning_curve.png
+sample_*.png
+validation_*.png
+xmlfiles/
+xtcfiles/
+mdlogs/
+# MDAnalysis caches the frame offsets of a trajectory next to it
+*_offsets.npz
+*_offsets.lock
+
+### Run artefacts dropped in the repository root ###
+# These names also belong to committed fixtures under tests/data/ and
+# examples/, so they are anchored to the root rather than matched anywhere.
+/CH4.pdb
+/sn.cif
+/supercell.pdb
+/supercell_bonds.pdb
+/gaffxml_0.xml
+/system.xml
+/vs_*.pdb
+/ethane/
+
 ### Test fixtures ###
 # tests/data/ holds committed input data; exempt it from the generic
 # patterns above (test_*log in particular).
