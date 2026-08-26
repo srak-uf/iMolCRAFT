@@ -11,6 +11,8 @@ fixes and backwards-compatible additions moves the patch number.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-08-26
+
 ### Added
 
 - Four Li<sup>+</sup> ion force fields shipped with iMolCRAFT and selectable
@@ -126,5 +128,6 @@ fixes and backwards-compatible additions moves the patch number.
 Not itemized. `0.2.1` was set on 2026-04-08 and the releases before it were
 not tagged, so their history lives in `git log` alone.
 
-[Unreleased]: https://github.com/srak-uf/iMolCRAFT/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/srak-uf/iMolCRAFT/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/srak-uf/iMolCRAFT/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/srak-uf/iMolCRAFT/releases/tag/v0.3.0
