@@ -1,8 +1,24 @@
-from openmmforcefields.generators import GAFFTemplateGenerator
+import shutil
 import subprocess
-from ..io.mol2 import read_mol2, write_mol2
-from typing import List, Dict, Optional, Any
+from inspect import signature
+from io import StringIO
+from typing import Any, Dict, List, Optional
+
+import parmed
+from lxml import etree
 from openff.toolkit.topology import Molecule
+from openff.units import unit
+from openmmforcefields.generators import GAFFTemplateGenerator
+
+from ..io.mol2 import read_mol2, write_mol2
+
+#: Default GAFF atom types assigned to the FSA anion.
+DEFAULT_IL_ASSIGN = {"FSA": {"S": "s6", "N": "n", "O": "o", "F": "f"}}
+
+#: (metadata flag, il_assign element key) pairs checked in ``run_antech``.
+#: The order matters: the first matching flag wins, as in the original
+#: if/elif chain.
+_FSA_METADATA_KEYS = (("FSA_S", "S"), ("FSA_N", "N"), ("FSA_O", "O"))
 
 
 class GAFFilTemplateGenerator(GAFFTemplateGenerator):
@@ -17,39 +33,26 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
     def __init__(
         self,
         molecules: List[Molecule],
-        il_assign: Optional[Dict[str, Dict[str, str]]] = {
-            "FSA": {
-                "S": "s6",
-                "N": "n",
-                "O": "o",
-                "F": "f"
-            }
-        },
-        forcefield_files: Optional[List[str]] = None,
-        cache: Optional[Dict[str, Any]] = None,
+        il_assign: Optional[Dict[str, Dict[str, str]]] = None,
         **kwargs
     ) -> None:
-        super().__init__(
-            molecules,
-            forcefield_files=None,
-            cache=None,
-            **kwargs
-        )
+        super().__init__(molecules, **kwargs)
+        # ``super().__init__`` stores deep copies of the molecules, so the
+        # ``mol2file`` attribute attached by the caller has to be propagated
+        # to the stored copies by matching them on SMILES.  The cache maps a
+        # molecular formula to a list of ``(Molecule, matching_template)``
+        # pairs, so both levels have to be unwrapped here.
         for molecule in molecules:
-            for mm in self._molecules.items():
-                if mm[1].to_smiles() == molecule.to_smiles():
-                    mm[1].mol2file = molecule.mol2file
+            for stored_entries in self._molecules.values():
+                for stored, _matching_template in stored_entries:
+                    if stored.to_smiles() == molecule.to_smiles():
+                        stored.mol2file = molecule.mol2file
 
-        if il_assign is None:
-            self.il_assign = {"FSA": {"S": "s6", "N": "n", "O": "o", "F": "f"}}
-        else:
-            self.il_assign = il_assign
+        self.il_assign = DEFAULT_IL_ASSIGN if il_assign is None else il_assign
 
-    def generate_residue_template(self,
-                                  molecule: Any,
-                                  residue_atoms: Optional[List[Any]] = None) -> str:
-        from openff.units import unit
-
+    def generate_residue_template(
+        self, molecule: Any, residue_atoms: Optional[List[Any]] = None
+    ) -> str:
         self._generate_unique_atom_names(molecule)
         smiles = molecule.to_smiles()
         mol2file = self.run_antech(molecule)
@@ -59,123 +62,107 @@ class GAFFilTemplateGenerator(GAFFTemplateGenerator):
             molecule.atoms[index].gaff_type = atominfo[5]
 
         frcmod_filename = self.run_parmchk(mol2file)
-        from io import StringIO
-        from inspect import (  # use introspection to support multiple parmed versions
-            signature,
-        )
+        params = self._load_openmm_parameters(frcmod_filename)
 
-        leaprc = StringIO(f"parm = loadamberparams {frcmod_filename}")
-
-        import parmed
-
-        params = parmed.amber.AmberParameterSet.from_leaprc(leaprc)
-        kwargs = {}
-        if (
-            "remediate_residues"
-            in signature(parmed.openmm.OpenMMParameterSet.from_parameterset).parameters
-        ):
-            kwargs["remediate_residues"] = False
-        params = parmed.openmm.OpenMMParameterSet.from_parameterset(params, **kwargs)
         ffxml = StringIO()
+        params.write(ffxml)
+        root = etree.fromstring(ffxml.getvalue())
+
+        self._append_residue(root, molecule, smiles, residue_atoms)
+
+        return etree.tostring(root, pretty_print=True, encoding="unicode")
+
+    @staticmethod
+    def _load_openmm_parameters(frcmod_filename: str) -> Any:
+        """Load an frcmod file through parmed and convert it to OpenMM form."""
+        leaprc = StringIO(f"parm = loadamberparams {frcmod_filename}")
+        params = parmed.amber.AmberParameterSet.from_leaprc(leaprc)
+
         kwargs = {}
+        # use introspection to support multiple parmed versions
+        from_parameterset = parmed.openmm.OpenMMParameterSet.from_parameterset
+        if "remediate_residues" in signature(from_parameterset).parameters:
+            kwargs["remediate_residues"] = False
+        return from_parameterset(params, **kwargs)
 
-        for atom_type in params.atom_types.copy().keys():
-            if atom_type not in self._gaff_atom_types_observed:
-                self._gaff_atom_types_observed.add(atom_type)
-            # if we have seen the atom type, delete it from the OG params,
-            # not the copy!
-            else:
-                # # # # del params.atom_types[atom_type] # # これでいい？
-                pass
-
-        params.write(ffxml, **kwargs)
-        ffxml_contents = ffxml.getvalue()
-
-        # Create the residue template
-        from lxml import etree
-
-        root = etree.fromstring(ffxml_contents)
-        # Create residue definitions
+    @staticmethod
+    def _append_residue(
+        root: Any,
+        molecule: Any,
+        smiles: str,
+        residue_atoms: Optional[List[Any]],
+    ) -> None:
+        """Append a ``<Residues>`` block describing ``molecule`` to ``root``."""
         residues = etree.SubElement(root, "Residues")
         residue = etree.SubElement(residues, "Residue", name=smiles)
         for atom in molecule.atoms:
-            charge_string = str(atom.partial_charge.m_as(unit.elementary_charge))
-            atom = etree.SubElement(
+            etree.SubElement(
                 residue,
                 "Atom",
                 name=atom.name,
                 type=atom.gaff_type,
-                charge=charge_string,
+                charge=str(atom.partial_charge.m_as(unit.elementary_charge)),
             )
 
         # If residue_atoms == None, add all atoms to the residues
         if not residue_atoms:
-            residue_atoms = [atom for atom in molecule.atoms]
+            residue_atoms = list(molecule.atoms)
+
         for bond in molecule.bonds:
-            if (bond.atom1 in residue_atoms) and (bond.atom2 in residue_atoms):
-                bond = etree.SubElement(
+            in1 = bond.atom1 in residue_atoms
+            in2 = bond.atom2 in residue_atoms
+            if in1 and in2:
+                etree.SubElement(
                     residue,
                     "Bond",
                     atomName1=bond.atom1.name,
                     atomName2=bond.atom2.name,
                 )
-            elif (bond.atom1 in residue_atoms) and (bond.atom2 not in residue_atoms):
-                bond = etree.SubElement(
-                    residue, "ExternalBond", atomName=bond.atom1.name
-                )
-            elif (bond.atom1 not in residue_atoms) and (bond.atom2 in residue_atoms):
-                bond = etree.SubElement(
-                    residue, "ExternalBond", atomName=bond.atom2.name
-                )
-        # Render XML into string and append to parameters
-        ffxml_contents = etree.tostring(root, pretty_print=True, encoding="unicode")
-
-        return ffxml_contents
+            elif in1:
+                etree.SubElement(residue, "ExternalBond", atomName=bond.atom1.name)
+            elif in2:
+                etree.SubElement(residue, "ExternalBond", atomName=bond.atom2.name)
 
     def run_antech(self, molecule: Any) -> str:
-        gaff_ver = self._gaff_major_version
+        mol2file = molecule.mol2file
         if len(molecule.atoms) == 1:
-            mol2file = molecule.mol2file
             return f"{mol2file}"
-        else:
-            mol2file = molecule.mol2file
-            cmd = (
-                f"antechamber -i {mol2file} -fi mol2 -o {mol2file}.gaff "
-                f"-fo mol2 -at {gaff_ver} -c dc -dr no"
-            )
-            _ = subprocess.getoutput(cmd)
-            gaffmol2 = read_mol2(f"{mol2file}.gaff")
-            chgmol2 = read_mol2(f"{mol2file}")
-            # charges
-            for i in range(len(gaffmol2["@<TRIPOS>ATOM"])):
-                gaffmol2["@<TRIPOS>ATOM"][i][8] = chgmol2["@<TRIPOS>ATOM"][i][8]
 
-            # Modify atom types
-            for i, atom in enumerate(molecule.atoms):
-                if "FSA_S" in atom.metadata and atom.metadata["FSA_S"] is True:
-                    gaffmol2["@<TRIPOS>ATOM"][i][5] = self.il_assign["FSA"]["S"]
-                elif "FSA_N" in atom.metadata and atom.metadata["FSA_N"] is True:
-                    gaffmol2["@<TRIPOS>ATOM"][i][5] = self.il_assign["FSA"]["N"]
-                elif "FSA_O" in atom.metadata and atom.metadata["FSA_O"] is True:
-                    gaffmol2["@<TRIPOS>ATOM"][i][5] = self.il_assign["FSA"]["O"]
+        cmd = (
+            f"antechamber -i {mol2file} -fi mol2 -o {mol2file}.gaff "
+            f"-fo mol2 -at {self._gaff_major_version} -c dc -dr no"
+        )
+        _ = subprocess.getoutput(cmd)
 
-            # Modify bond types
-            for i, bond in enumerate(molecule.bonds):
-                atom1_idx = bond.atom1_index + 1
-                atom2_idx = bond.atom2_index + 1
-                gaffmol2["@<TRIPOS>BOND"][i] = [
-                    i + 1,
-                    atom1_idx,
-                    atom2_idx,
-                    bond.bond_order,
-                ]
+        gaffmol2 = read_mol2(f"{mol2file}.gaff")
+        chgmol2 = read_mol2(f"{mol2file}")
+        gaff_atoms = gaffmol2["@<TRIPOS>ATOM"]
 
-            write_mol2(f"{mol2file}.gaff", gaffmol2)
-            return f"{mol2file}.gaff"
+        # antechamber recomputes the charges, so restore the original ones
+        for i, atominfo in enumerate(chgmol2["@<TRIPOS>ATOM"]):
+            gaff_atoms[i][8] = atominfo[8]
+
+        # Modify atom types
+        fsa_types = self.il_assign["FSA"]
+        for i, atom in enumerate(molecule.atoms):
+            for meta_key, elem_key in _FSA_METADATA_KEYS:
+                if atom.metadata.get(meta_key) is True:
+                    gaff_atoms[i][5] = fsa_types[elem_key]
+                    break
+
+        # Modify bond types
+        for i, bond in enumerate(molecule.bonds):
+            gaffmol2["@<TRIPOS>BOND"][i] = [
+                i + 1,
+                bond.atom1_index + 1,
+                bond.atom2_index + 1,
+                bond.bond_order,
+            ]
+
+        write_mol2(f"{mol2file}.gaff", gaffmol2)
+        return f"{mol2file}.gaff"
 
     def run_parmchk(self, mol2file: str) -> str:
-        import shutil
-
         frcmod_filename = "molecule.frcmod"
         shutil.copy(self.gaff_dat_filename, "gaff.dat")
         cmd = (

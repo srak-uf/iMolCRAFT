@@ -13,7 +13,7 @@ The package automates and accelerates the force field development process throug
 - **High-accuracy informed optimization**: Optimize parameters by combining high-accuracy calculations (QM, DFT, or other computational methods) with experimental data (density, RDF, thermodynamic properties, etc.)
 - **Differentiable architecture**: Leverage JAX and automatic differentiation for efficient gradient-based optimization, enabling end-to-end parameter tuning
 - **Diverse system support**: Specialized for electrolytic solutions and molecular crystal electrolytes, while supporting organic molecules, polymers, and other molecular systems
-- **Multi-platform compatibility**: Seamlessly export to and validate with LAMMPS, GROMACS, and OpenMM
+- **Multi-platform compatibility**: Seamlessly export to and validate with GROMACS and OpenMM (LAMMPS export is experimental and not considered stable; LAMMPS itself is not installed by `env.yml`)
 
 ## Specialization
 

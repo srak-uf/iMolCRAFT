@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 import os
-import sys
 import yaml
 import numpy as np
 import openmm
@@ -17,12 +16,30 @@ import MDAnalysis
 import matplotlib.pyplot as plt
 import math
 
+from ..calculator.md import VALID_ENSEMBLES
 from ..analyzer.analyzer import (
     calc_density_frame,
     calc_cellpar_frame,
     calc_rdf_frame,
     calc_adf_frame,
+    calc_dself,
 )
+from .loss import _DISTRIBUTION_LOSSES, _SCALAR_DEVIATIONS
+from .properties import (
+    PROPERTY_KINDS,
+    REQUIRED_TARGET_KEYS,
+    REQUIRED_VALIDATION_KEYS,
+    SCALAR_TARGETS,
+    VALIDATION_ONLY_PROPERTIES,
+)
+
+
+#: Metric comparing a validated distribution with its reference.
+DEFAULT_DISTRIBUTION_METRIC = "wrightfactor"
+
+#: Metric comparing a validated scalar with its reference. Signed, so that the
+#: record says whether the property comes out too high or too low.
+DEFAULT_SCALAR_METRIC = "relerr"
 
 
 def parser_dmffyaml(yaml_file):
@@ -43,10 +60,6 @@ def parser_dmffyaml(yaml_file):
             "dt_fs": 1.0,
             "ensemble": "nvt",
             "temperature_K": 300,
-            "pressure_bar": 1,
-            "anneal_steps": 1,
-            "anneal_Tmax": 400,
-            "anneal_totaltime": 0,
             "nstxout": 100,
             "rcut_nm": 1.2,
             "nonbondedmethod": "PME",
@@ -87,47 +100,54 @@ def parser_dmffyaml(yaml_file):
             )
 
     # Check for valid ensemble
-    valid_ensembles = ["nve", "nvt", "isonpt", "anisonpt", "trinpt"]
-    if data["sampling"]["ensemble"] not in valid_ensembles:
+    if data["sampling"]["ensemble"] not in VALID_ENSEMBLES:
         raise ValueError(
             f"Invalid ensemble {data['sampling']['ensemble']}. Must be one of "
-            f"{valid_ensembles}."
+            f"{list(VALID_ENSEMBLES)}."
+        )
+
+    # LJPME sums the long-range dispersion itself, so a dispersion correction
+    # on top of it counts the same energy twice. OpenMM silently ignores the
+    # flag under LJPME while DMFF honours it, which would leave the sampling
+    # and the target state with different energies for the same configuration
+    # and eat most of the effective samples before the fit even starts.
+    if data["sampling"]["nonbondedmethod"] == "LJPME" and data["sampling"]["dispcorr"]:
+        raise ValueError(
+            "dispcorr must be False with the LJPME nonbonded method, which "
+            "already accounts for the long-range dispersion."
         )
 
     # check for valid target_types
-    valid_targets = ["density_gcm3", "La_A", "Lb_A", "Lc_A", "rdf", "adf"]
     if "targets" not in data:
         raise KeyError("Missing necessary key in data: targets")
     for target_name in data["targets"]:
-        if target_name not in valid_targets:
+        if target_name in VALIDATION_ONLY_PROPERTIES:
             raise ValueError(
-                f"Invalid target type {target_name}. Must be one of {valid_targets}."
+                f"Target {target_name} is only available in the validation "
+                "section: thermodynamic perturbation reweights stored "
+                "configurations, which cannot give a dynamical property."
             )
-        if target_name in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
-            if "gt" not in data["targets"][target_name]:
-                raise KeyError(f"Missing ground truth for target {target_name}.")
-            if "weight" not in data["targets"][target_name]:
-                raise KeyError(f"Missing weight for target {target_name}.")
-        if target_name in ["rdf"]:
+        if target_name not in REQUIRED_TARGET_KEYS:
+            raise ValueError(
+                f"Invalid target type {target_name}. Must be one of "
+                f"{list(REQUIRED_TARGET_KEYS)}."
+            )
+        required = REQUIRED_TARGET_KEYS[target_name]
+        if target_name in SCALAR_TARGETS:
+            for key in required:
+                if key not in data["targets"][target_name]:
+                    raise KeyError(f"Missing {key} for target {target_name}.")
+        else:
             for key in data["targets"][target_name].keys():
-                if "elem1" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing elem1 for target {target_name}: {key}.")
-                if "elem2" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing elem2 for target {target_name}: {key}.")
-                if "rcut12_A" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing rcut12_A for target {target_name}: {key}.")
-        if target_name in ["adf"]:
-            for key in data["targets"][target_name].keys():
-                if "elem1" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing elem1 for target {target_name}: {key}.")
-                if "elem2" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing elem2 for target {target_name}: {key}.")
-                if "elem3" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing elem3 for target {target_name}: {key}.")
-                if "rcut12_A" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing rcut12_A for target {target_name}: {key}.")
-                if "rcut23_A" not in data["targets"][target_name][key]:
-                    raise KeyError(f"Missing rcut23_A for target {target_name}: {key}.")
+                for required_key in required:
+                    if required_key not in data["targets"][target_name][key]:
+                        raise KeyError(
+                            f"Missing {required_key} for target {target_name}: {key}."
+                        )
+
+    # validation targets are optional, an empty section keeps the callers from
+    # having to special-case a missing key
+    data["validation"] = _check_validation(data.get("validation"))
 
     # output parsed data as yaml, the filename is added with "_parsed"
     yaml_file = os.path.splitext(yaml_file)[0] + "_parsed.yaml"
@@ -135,6 +155,326 @@ def parser_dmffyaml(yaml_file):
         yaml.dump(data, file)
 
     return data
+
+
+def _check_validation(validation_params):
+    """
+    Check the ``validation`` section, keyed by a user chosen name::
+
+        validation:
+            dself_Li:
+                property: dself_cm2s
+                select: element Li
+                gt: 1.0e-6
+
+    Parameters
+    ----------
+    validation_params : dict or None
+        Section read from the YAML.
+
+    Returns
+    -------
+    validation_params : dict
+        The same section, or an empty dict when it is absent, so that the
+        callers never have to special-case a missing key.
+    """
+    if validation_params is None:
+        return {}
+
+    for name, block in validation_params.items():
+        if "property" not in block:
+            raise KeyError(f"Missing property for validation target {name}.")
+        prop = block["property"]
+        if prop not in REQUIRED_VALIDATION_KEYS:
+            raise ValueError(
+                f"Invalid validation property {prop} for {name}. Must be one of "
+                f"{list(REQUIRED_VALIDATION_KEYS)}."
+            )
+        for key in REQUIRED_VALIDATION_KEYS[prop]:
+            if key not in block:
+                raise KeyError(f"Missing {key} for validation target {name}.")
+        is_distribution = PROPERTY_KINDS[prop] == "distribution"
+        metrics = _DISTRIBUTION_LOSSES if is_distribution else _SCALAR_DEVIATIONS
+        default = (
+            DEFAULT_DISTRIBUTION_METRIC if is_distribution else DEFAULT_SCALAR_METRIC
+        )
+        metric = block.get("metric", default)
+        if metric not in metrics:
+            raise ValueError(
+                f"Invalid metric {metric} for validation target {name}. Must be "
+                f"one of {list(metrics)}."
+            )
+        # a metric is a distance to a reference, so asking for one without
+        # giving the reference is a mistake rather than something to ignore
+        if not is_distribution and "metric" in block and block.get("gt") is None:
+            raise KeyError(
+                f"Missing gt for validation target {name}: metric {metric} "
+                "measures the deviation from a reference value."
+            )
+
+    return validation_params
+
+
+def _score_scalar(value, block):
+    """
+    Deviation of a computed scalar from its reference value.
+
+    Parameters
+    ----------
+    value : float
+        Value computed from the trajectory.
+    block : dict
+        Validation block, whose ``metric`` picks how the deviation is measured
+        and whose ``gt`` is the reference it is measured against.
+
+    Returns
+    -------
+    float or None
+        The deviation, or None when the block declares no reference: a scalar
+        is worth watching even without one, and then only its value is kept.
+    """
+    if block.get("gt") is None:
+        return None
+    metric = _SCALAR_DEVIATIONS[block.get("metric", DEFAULT_SCALAR_METRIC)]
+    return float(metric(float(value), float(block["gt"])))
+
+
+def _score_distribution(pred, block):
+    """
+    Distance between a computed distribution and its reference, with the two
+    curves behind it.
+
+    A whole curve cannot be followed epoch by epoch, so what is recorded is the
+    same metric the loss uses on the fitted distributions: zero for a perfect
+    match, larger the further apart the two curves are. The reference file is
+    the one the targets use, ``x`` in the first column and the distribution in
+    the second.
+    """
+    x, gt = np.loadtxt(block["gt"]).T[:2]
+    if len(pred) != len(gt):
+        raise ValueError(
+            f"The computed distribution has {len(pred)} bins while the "
+            f"reference {block['gt']} has {len(gt)}. Check the cutoff and the "
+            "bin width against the ones the reference was made with."
+        )
+    metric = _DISTRIBUTION_LOSSES[block.get("metric", DEFAULT_DISTRIBUTION_METRIC)]
+    return float(metric(jnp.array(pred), jnp.array(gt))), np.column_stack([x, pred, gt])
+
+
+def get_validation_gt(validation_params: dict):
+    """
+    Get the reference values of the validation targets that declare one.
+
+    Parameters
+    ----------
+    validation_params : dict
+        Validation section as returned by :func:`parser_dmffyaml`.
+
+    Returns
+    -------
+    validation_gt : dict
+        Reference value of every scalar block carrying a ``gt`` key. The
+        distributions are left out: their ``gt`` is a file, and what they
+        record is already the distance to it.
+    """
+    return {
+        name: float(block["gt"])
+        for name, block in validation_params.items()
+        if block.get("gt") is not None
+        and PROPERTY_KINDS[block["property"]] == "scalar"
+    }
+
+
+def get_validation_pred(xtcfile, pdbfile, validation_params: dict):
+    """
+    Get the validation values of one trajectory from the parameters obtained by
+    parser_dmffyaml().
+
+    Unlike the targets these are one number per trajectory rather than
+    per-frame arrays: they are scores watched along the optimization, not
+    quantities reweighted by MBAR.
+
+    Parameters
+    ----------
+    xtcfile : str
+        Path to the XTC file.
+    pdbfile : str
+        Path to the PDB file, with the virtual sites of the trajectory.
+    validation_params : dict
+        Parameters for the validation targets.
+        keys(validation_params) = names chosen by the user
+
+    Returns
+    -------
+    validation_pred : dict
+        Value of every scalar block, keyed by its name. A distribution has no
+        single value to record, so it does not appear here.
+    validation_dev : dict
+        Deviation of every block that has a reference from it, keyed by its
+        name and measured with the ``metric`` of the block. Zero for a perfect
+        match; the deviations are kept apart from one another rather than
+        summed into a score.
+    validation_curves : dict
+        Curve behind the value, for the blocks that have one: the MSD as
+        ``(lagtime_ps, msd_A2)`` columns, a distribution as ``(x, pred, gt)``
+        columns.
+    """
+    validation_pred = {}
+    validation_dev = {}
+    validation_curves = {}
+
+    for name, block in validation_params.items():
+        prop = block["property"]
+        if prop not in REQUIRED_VALIDATION_KEYS:
+            raise ValueError(
+                f"Invalid validation property {prop} for {name}. Must be one of "
+                f"{list(REQUIRED_VALIDATION_KEYS)}."
+            )
+        # unwrapping edits the trajectory in place, so each block reads its own
+        # Universe rather than inheriting the transformations of the previous one
+        u = MDAnalysis.Universe(pdbfile, xtcfile)
+
+        if prop == "dself_cm2s":
+            # the MSD comes back with the coefficient so that the fit can be
+            # judged afterwards: one fitted outside the diffusive regime looks
+            # just as reasonable as a good one until the curve is seen
+            value, lagtime_ps, msd_A2 = calc_dself(
+                u,
+                select=block["select"],
+                msd_type=block.get("msd_type", "xyz"),
+                fit_range=tuple(block.get("fit_range", (0.1, 0.5))),
+                start=block.get("start"),
+                stop=block.get("stop"),
+                step=block.get("step"),
+                return_msd=True,
+            )
+            validation_curves[name] = np.column_stack([lagtime_ps, msd_A2])
+        elif prop == "density_gcm3":
+            value = np.mean(calc_density_frame(u))
+        elif prop in ["La_A", "Lb_A", "Lc_A"]:
+            value = np.mean(calc_cellpar_frame(u, prop))
+        elif prop == "rdf":
+            pred = calc_rdf_frame(
+                u,
+                block["elem1"],
+                block["elem2"],
+                rmax=block["rcut12_A"],
+                dr=block.get("dr_A", 0.01),
+                only_intermolecular=block.get("intermolecular", False),
+            ).mean(axis=0)
+            validation_dev[name], validation_curves[name] = _score_distribution(
+                pred, block
+            )
+            continue
+        elif prop == "adf":
+            pred = calc_adf_frame(
+                xtcfile,
+                pdbfile,
+                block["elem1"],
+                block["elem2"],
+                block["elem3"],
+                rcut12=block["rcut12_A"],
+                rcut23=block["rcut23_A"],
+            ).mean(axis=0)
+            validation_dev[name], validation_curves[name] = _score_distribution(
+                pred, block
+            )
+            continue
+
+        validation_pred[name] = float(value)
+        deviation = _score_scalar(value, block)
+        if deviation is not None:
+            validation_dev[name] = deviation
+
+    return validation_pred, validation_dev, validation_curves
+
+
+def plot_validation(history: list, gt: dict = None, label="validation",
+                    baseline: float = None):
+    """
+    Plot every validation value against the epoch.
+
+    The same figure serves the values and their deviations: the values are
+    read against their reference, the deviations against zero.
+
+    Parameters
+    ----------
+    history : list of dict
+        Records written by the trainer, each with an ``epoch`` key and one key
+        per value.
+    gt : dict, optional
+        Reference values, keyed like the records. A dashed line is drawn for
+        the values that have one.
+    label : str, optional
+        Stem of the figure written, ``{label}.png``.
+    baseline : float, optional
+        Value a dashed line is drawn at on every panel, 0 for a plot of
+        deviations. Use it instead of `gt` when every panel shares one
+        reference.
+    """
+    # a replica resampled for the first time adds its keys mid-history, so the
+    # columns are collected over every record rather than from the first one
+    keys = []
+    for record in history:
+        keys.extend(key for key in record if key != "epoch" and key not in keys)
+    if len(keys) == 0:
+        return
+
+    gt = {} if gt is None else gt
+    epochs = [record["epoch"] for record in history]
+    fig, ax = plt.subplots(len(keys), 1, figsize=(5, 2.5 * len(keys)), squeeze=False)
+    for axis, key in zip(ax[:, 0], keys):
+        axis.set_title(key)
+        axis.plot(epochs, [record.get(key, np.nan) for record in history], marker="o")
+        if key in gt:
+            axis.axhline(gt[key], linestyle="--", color="k", label="gt")
+            axis.legend()
+        elif baseline is not None:
+            axis.axhline(baseline, linestyle="--", color="k")
+        axis.set_xlabel("Epoch")
+    plt.tight_layout()
+    fig.savefig(f"{label}.png", bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_validation_curves(curves: dict, validation_params: dict,
+                           label="validation_curves"):
+    """
+    Plot the curves the validation values of one replica were derived from.
+
+    They say why a value is what it is: whether the MSD is straight over the
+    fitted window, or where a distribution departs from its reference.
+
+    Parameters
+    ----------
+    curves : dict
+        Curves as returned by :func:`get_validation_pred`.
+    validation_params : dict
+        Validation section of the replica, for the axis labels.
+    label : str, optional
+        Stem of the figure written, ``{label}.png``.
+    """
+    if len(curves) == 0:
+        return
+
+    fig, ax = plt.subplots(len(curves), 1, figsize=(5, 2.5 * len(curves)),
+                           squeeze=False)
+    for axis, (name, curve) in zip(ax[:, 0], curves.items()):
+        prop = validation_params[name]["property"]
+        axis.set_title(name)
+        if PROPERTY_KINDS[prop] == "distribution":
+            axis.plot(curve[:, 0], curve[:, 1], alpha=0.5, label="pred")
+            axis.plot(curve[:, 0], curve[:, 2], label="gt")
+            axis.legend()
+            axis.set_xlabel("r ($\\mathrm{\\AA}$)" if prop == "rdf"
+                            else "angle (deg)")
+        else:
+            axis.plot(curve[:, 0], curve[:, 1])
+            axis.set_xlabel("Time (ps)")
+            axis.set_ylabel("MSD ($\\mathrm{\\AA}^2$)")
+    plt.tight_layout()
+    fig.savefig(f"{label}.png", bbox_inches="tight")
+    plt.close(fig)
 
 
 def get_target_gt(target_params: dict):
@@ -155,7 +495,7 @@ def get_target_gt(target_params: dict):
     """
     target_gt = {}
     for target_name in target_params.keys():
-        if target_name not in ["rdf", "adf"]:
+        if target_name in SCALAR_TARGETS:
             target_gt[target_name] = {}
             target_gt[target_name]["gt"] = float(target_params[target_name]["gt"])
             target_gt[target_name]["weight"] = float(
@@ -202,14 +542,18 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
         Updated force field parameters with neutralized charges.
     """
 
-    assert len(ffparams["NonbondedForce"]["charge"]) == len(natoms_list), (
-        "len(ffparams['NonbondedForce']['charges']) != len(natoms_list)"
-    )
+    if len(ffparams["NonbondedForce"]["charge"]) != len(natoms_list):
+        raise ValueError(
+            "len(ffparams['NonbondedForce']['charge']) != len(natoms_list): "
+            f"{len(ffparams['NonbondedForce']['charge'])} != {len(natoms_list)}"
+        )
 
     if target_lists is not None and target_charges is not None:
-        assert len(target_lists) == len(target_charges), (
-            "len(target_lists) != len(target_charges)"
-        )
+        if len(target_lists) != len(target_charges):
+            raise ValueError(
+                "len(target_lists) != len(target_charges): "
+                f"{len(target_lists)} != {len(target_charges)}"
+            )
         for i, target_list in enumerate(target_lists):
             net_q = jnp.dot(
                 ffparams["NonbondedForce"]["charge"][jnp.array(target_list)],
@@ -239,9 +583,8 @@ def neutralize(ffparams, natoms_list, nc=0, target_lists=None, target_charges=No
                 [i for i in range(len(natoms_list)) if i not in target_all]
             )
 
-            assert nottarget_list.sum() > 0, (
-                "All atoms are constrained. Cannot neutralize."
-            )
+            if nottarget_list.sum() <= 0:
+                raise ValueError("All atoms are constrained. Cannot neutralize.")
 
             # Update charges for non-targeted atoms
             net_q = jnp.dot(ffparams["NonbondedForce"]["charge"], natoms_list)
@@ -344,12 +687,13 @@ def update_ffinfo_from_params(ff, params):
 
     idx = 0
     if "VirtualSite" in params:
-        w2_ave2 = params["VirtualSite"]["vsite_w2_type_2"] if "vsite_w2_type_2" in params["VirtualSite"] else []
+        vs = params["VirtualSite"]
+        w2_ave2 = vs["vsite_w2_type_2"] if "vsite_w2_type_2" in vs else []
         if len(w2_ave2) > 0:
             w1_ave2 = jnp.ones(w2_ave2.shape) - w2_ave2
             ave2_idx = 0
-        w2_ave3 = params["VirtualSite"]["vsite_w2_type_3"] if "vsite_w2_type_3" in params["VirtualSite"] else []
-        w3_ave3 = params["VirtualSite"]["vsite_w3_type_3"] if "vsite_w3_type_3" in params["VirtualSite"] else []
+        w2_ave3 = vs["vsite_w2_type_3"] if "vsite_w2_type_3" in vs else []
+        w3_ave3 = vs["vsite_w3_type_3"] if "vsite_w3_type_3" in vs else []
         if len(w2_ave3) > 0 or len(w3_ave3) > 0:
             w1_ave3 = jnp.ones(w2_ave3.shape) - w2_ave3 - w3_ave3
             ave3_idx = 0
@@ -488,7 +832,10 @@ def get_rescharges_from_residues(ff, ratio=None):
     rescharges = []
 
     if ratio is not None:
-        assert len(residues) == len(ratio), "len(residues) != len(ratio)"
+        if len(residues) != len(ratio):
+            raise ValueError(
+                f"len(residues) != len(ratio): {len(residues)} != {len(ratio)}"
+            )
         natoms_list = []
 
     for i_res in range(len(residues)):
@@ -519,151 +866,6 @@ def get_rescharges_from_residues(ff, ratio=None):
         return rescharges, jnp.array(natoms_list)
     else:
         return rescharges
-
-
-def md_sample(
-    initialpdb,
-    ffxml,
-    trajectory,
-    rc=1.2,
-    T=300,
-    anneal_Tmax=300,
-    anneal_steps=0,
-    anneal_totalsteps=0,
-    dt=1.0,
-    nstxout=1000,
-    relax_steps=100000,
-    prod_steps=2000000,
-    ensemble="nvt",
-    nonbondedmethod="PME",
-    useDispersionCorrection=False,
-    useHbondConstraint=True,
-    rigidWater=False,
-    device="CPU"
-):
-    """
-    Run MD simulation with OpenMM
-
-    Parameters
-    ----------
-    initialpdb : str
-        Path to the initial PDB file
-    ffxml : str
-        Path to the force field XML file
-    trajectory : str
-        Path to the output trajectory file
-    sampling_params : dict
-        Dictionary containing sampling parameters such as temperature,
-        annealing steps, etc.
-    useDispersionCorrection : bool, optional
-        Whether to use dispersion correction in the nonbonded force. Default is False.
-
-    Returns
-    -------
-    state_init : dict
-        Dictionary containing the initial state of the system
-    """
-    pdb = app.PDBFile(initialpdb)
-    forcefield = app.ForceField(ffxml)
-
-    modeller = app.Modeller(pdb.topology, pdb.getPositions())
-    modeller.addExtraParticles(forcefield)
-    pos = modeller.getPositions()
-    topology = modeller.topology
-    # modellerをpdbに書き出す
-    # app.PDBFile.writeFile(topology, pos, open("modeller.pdb", "w"))
-
-    if nonbondedmethod == "PME":
-        nonbondedmethod = app.PME
-    elif nonbondedmethod == "LJPME":
-        nonbondedmethod = app.LJPME
-
-    if useHbondConstraint:
-        system = forcefield.createSystem(
-            topology,
-            nonbondedMethod=nonbondedmethod,
-            nonbondedCutoff=rc * unit.nanometer,
-            constraints=app.HBonds,
-            rigidWater=rigidWater,
-        )
-    else:
-        system = forcefield.createSystem(
-            topology,
-            nonbondedMethod=nonbondedmethod,
-            nonbondedCutoff=rc * unit.nanometer,
-            rigidWater=rigidWater,
-        )
-
-    for force in system.getForces():
-        if isinstance(force, openmm.NonbondedForce):
-            if useDispersionCorrection:
-                force.setUseDispersionCorrection(True)
-            else:
-                force.setUseDispersionCorrection(False)
-
-    print(f"Using {ensemble} ensemble")
-    if ensemble == "isonpt":
-        print("Isotropic pressure control")
-        system.addForce(openmm.MonteCarloBarostat(1.0 * unit.bar, T * unit.kelvin))
-    elif ensemble == "anisonpt":
-        print("Anisotropic pressure control")
-        system.addForce(
-            openmm.MonteCarloAnisotropicBarostat([1.0 * unit.bar] * 3, T * unit.kelvin)
-        )
-    elif ensemble == "trinpt":
-        system.addForce(
-            openmm.MonteCarloFlexibleBarostat(1.0 * unit.bar, T * unit.kelvin)
-        )
-
-    integrator = openmm.LangevinIntegrator(
-        T * unit.kelvin, 5 / unit.picosecond, dt * unit.femtosecond
-    )
-
-    platform = openmm.Platform.getPlatformByName(device)
-
-    simulation = app.Simulation(topology, system, integrator, platform)
-    xtcfile = os.path.join("xtcfiles", trajectory)
-    try:
-        os.remove(xtcfile)
-    except Exception:
-        pass
-    simulation.context.setPositions(pos)
-    print("== Energy minimization ==")
-    simulation.minimizeEnergy()
-    simulation.context.setVelocitiesToTemperature(T * unit.kelvin)
-
-    simulation.reporters.append(
-        app.StateDataReporter(
-            sys.stdout,
-            nstxout,
-            potentialEnergy=True,
-            density=True,
-            step=True,
-            remainingTime=True,
-            speed=True,
-            totalSteps=relax_steps + prod_steps,
-        )
-    )
-
-    # relaxation run
-    # SA
-    if anneal_totalsteps > 0:
-        print("== Start Simulated Annealing ==")
-        deltaT = (T - anneal_Tmax) / anneal_steps
-        step_pertemp = int(anneal_totalsteps / anneal_steps)
-        for i in range(anneal_steps):
-            integrator.setTemperature((anneal_Tmax + deltaT * i) * unit.kelvin)
-            simulation.step(step_pertemp)
-    # relax at desired temperature
-    print("== Start Relaxation ==")
-    integrator.setTemperature(T * unit.kelvin)
-    simulation.step(relax_steps)
-    # production run
-    print("== Start Production ==")
-    os.makedirs("xtcfiles", exist_ok=True)
-    simulation.reporters.append(app.XTCReporter(xtcfile, nstxout))
-    simulation.step(prod_steps)
-    return xtcfile
 
 
 def get_target_pred_frame(xtcfile, pdbfile, target_params: dict):
@@ -701,9 +903,12 @@ def get_target_pred_frame(xtcfile, pdbfile, target_params: dict):
                 elem2 = target_params[target_name][key]["elem2"]
                 rcut12_A = target_params[target_name][key]["rcut12_A"]
                 dr_A = target_params[target_name][key].get("dr_A", 0.01)
-                inter_molecular_flag = target_params[target_name][key].get("intermolecular", False)
+                inter_molecular_flag = target_params[target_name][key].get(
+                    "intermolecular", False
+                )
                 target_pred[target_name][key] = calc_rdf_frame(
-                    u, elem1, elem2, rmax=rcut12_A, dr=dr_A, only_intermolecular=inter_molecular_flag
+                    u, elem1, elem2, rmax=rcut12_A, dr=dr_A,
+                    only_intermolecular=inter_molecular_flag,
                 )
         elif target_name == "adf":
             target_pred[target_name] = {}
@@ -728,7 +933,7 @@ def get_target_pred_frame(xtcfile, pdbfile, target_params: dict):
 def plot_compare(target_gt, target_pred_frame, label="sample"):
     num_plots = 0
     for key in target_gt.keys():
-        if key in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
+        if key in SCALAR_TARGETS:
             num_plots += 1
         elif key in ["rdf", "adf"]:
             for kind in target_gt[key].keys():
@@ -737,24 +942,23 @@ def plot_compare(target_gt, target_pred_frame, label="sample"):
     fig, ax = plt.subplots(num_raw, 2, figsize=(6.5, 2.5 * num_raw))
     i_plot = 0
     for key in target_gt.keys():
-        if key in ["density_gcm3", "La_A", "Lb_A", "Lc_A"]:
-            ax[i_plot // 2, i_plot % 2].set_title(key)
+        if key in SCALAR_TARGETS:
+            axis = ax[i_plot // 2, i_plot % 2]
+            axis.set_title(key)
             x = ["GT", "FF"]
             y = [target_gt[key]["gt"], target_pred_frame[key].mean()]
-            ax[i_plot // 2, i_plot % 2].bar(x, y, width=0.35)
+            axis.bar(x, y, width=0.35)
             # barごとに値を表示
             for i, v in enumerate(y):
-                ax[i_plot // 2, i_plot % 2].text(
-                    i, v + 0.01, str(round(v, 3)), ha="center", va="bottom"
-                )
-            ax[i_plot // 2, i_plot % 2].set_ylim(0, y[0] * 1.2)
+                axis.text(i, v + 0.01, str(round(v, 3)), ha="center", va="bottom")
+            axis.set_ylim(0, y[0] * 1.2)
             i_plot += 1
         elif key in ["rdf", "adf"]:
             for kind in target_gt[key].keys():
-                ax[i_plot // 2, i_plot % 2].set_title(key + "_" + kind)
-                spectra = np.mean(target_pred_frame[key][kind], axis=0)
-                ax[i_plot // 2, i_plot % 2].plot(spectra, alpha=0.5)
-                ax[i_plot // 2, i_plot % 2].plot(target_gt[key][kind]["gt"], label="gt")
+                axis = ax[i_plot // 2, i_plot % 2]
+                axis.set_title(key + "_" + kind)
+                axis.plot(np.mean(target_pred_frame[key][kind], axis=0), alpha=0.5)
+                axis.plot(target_gt[key][kind]["gt"], label="gt")
                 i_plot += 1
     plt.tight_layout()
     fig.savefig(f"{label}.png", bbox_inches="tight")

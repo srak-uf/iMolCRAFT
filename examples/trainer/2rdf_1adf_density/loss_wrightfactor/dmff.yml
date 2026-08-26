@@ -5,9 +5,11 @@ sampling:
     rcut_nm: 1.2
     temperature_K: 233.15
     pressure_bar: 1.0
-    anneal_steps: 1
-    anneal_Tmax : 400.0
-    anneal_totalsteps: 0
+    # anneal_T は温度点、anneal_steps は各レグの MD ステップ数（1 つ少ない）
+    # 例: anneal_T: [300.0, 400.0, 300.0] / anneal_steps: [5000, 5000]
+    anneal_T: null
+    anneal_steps: null
+    anneal_interval: 100
     relax_steps: 20000
     prod_steps : 100000
     nstxout: 1000

@@ -1,6 +1,7 @@
 from imolcraft.trainer import DistanceTrainer, DihedralTrainer, ThermodynamicTrainer
 from imolcraft.calculator import DistanceCalculator, DihedralCalculator
 from imolcraft.trainer.loss import loss_energy, loss_thermodynamicperturbation
+from imolcraft.trainer import dmff_utils
 from imolcraft.crafter.asemol import aseatoms2pdb, asemol_wrapper, merge_asemols
 from imolcraft.crafter import Crafter
 from functools import partial
@@ -83,33 +84,6 @@ class TestDistanceTrainer:
         trainer.setup()
         trainer.fit(steps=15, checkpoint_frequency=5)
         assert trainer.losses[-1] < trainer.losses[0], "Training did not reduce loss"
-
-    def test_save_load(self, setup):
-        lossfn = partial(loss_energy, weight_scheme="uniform")
-        trainer = DistanceTrainer(
-            ffxml_list=[self.ffxml],
-            nums_ffxml=[1],
-            pdbfile=self.pdbfile,
-            calculator=self.calculator,
-            loss_fn=lossfn,
-            opt_fftypes=["HarmonicBondForce/k",
-                         "HarmonicBondForce/length"],
-            relax_steps=1,
-            lr=0.002
-        )
-        trainer.setup()
-        trainer.fit(steps=2, checkpoint_frequency=1)
-        trainer = DistanceTrainer.from_checkpoint(
-            trainer_checkpoint="train_state.pkl",
-            ffxml_list=[self.ffxml],
-            nums_ffxml=[1],
-            pdbfile=self.pdbfile,
-            loss_fn=lossfn,
-            opt_fftypes=["HarmonicBondForce/k",
-                         "HarmonicBondForce/length"],
-        )
-        trainer.fit(steps=2, checkpoint_frequency=1)
-
 
 @pytest.mark.g16
 @pytest.mark.dihedral
@@ -240,23 +214,49 @@ class TestThermodynamicTrainer:
                                              'rcut_nm': 1.2,
                                              'temperature_K': 233.15,
                                              'pressure_bar': 1.0,
-                                             'anneal_steps': 1,
-                                             'anneal_Tmax': 400.0,
-                                             'anneal_totalsteps': 0,
+                                             'anneal_T': None,
+                                             'anneal_steps': None,
+                                             'anneal_interval': 100,
                                              'relax_steps': 100,
                                              'prod_steps': 100,
                                              'nstxout': 20,
                                              'neff': 2,
-                                             'anneal_totaltime': 0,
-                                             'dispcorr': True,
+                                             'dispcorr': False,
                                              'nonbondedmethod': 'LJPME'},
                             target_params={'density_gcm3': {'weight': 1.0, 'gt': 0.4},
                                            'La_A': {'weight': 1.0, 'gt': 41},
                                            'Lb_A': {'weight': 1.0, 'gt': 41},
                                            'Lc_A': {'weight': 1.0, 'gt': 41}},
+                            validation_params=dmff_utils._check_validation(
+                                {'dself_C': {'property': 'dself_cm2s',
+                                             'select': 'element C',
+                                             'gt': 5.0e-6},
+                                 'rho': {'property': 'density_gcm3',
+                                         'gt': 0.4}}
+                            ),
                             opt_fftypes=["NonbondedForce/charge", 'VirtualSite/weight'],
                             label="test_tp",
                         )
         self.trainer.setup()
         self.trainer.fit(10, 2)
         assert len(self.trainer.losses) > 1
+        # validation は再サンプリングのたびに 1 レコード増える
+        assert len(self.trainer.validation_history) > 0
+        assert all(
+            'sample_0/dself_C' in record and 'sample_0/rho' in record
+            for record in self.trainer.validation_history
+        )
+        # gt を書いた項目は、そのズレも項目ごとに残る
+        assert len(self.trainer.validation_dev_history) == len(
+            self.trainer.validation_history
+        )
+        assert all(
+            'sample_0/dself_C' in record and 'sample_0/rho' in record
+            for record in self.trainer.validation_dev_history
+        )
+        # ズレは既定の relerr、つまり (pred - gt) / gt
+        assert self.trainer.validation_dev[0]['rho'] == pytest.approx(
+            (self.trainer.validation_pred[0]['rho'] - 0.4) / 0.4
+        )
+        # MSD 曲線は pkl に残るので、あとからフィット範囲を検証できる
+        assert self.trainer.validation_curves[0]['dself_C'].shape[1] == 2

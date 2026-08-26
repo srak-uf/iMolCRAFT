@@ -5,9 +5,11 @@ sampling:
     rcut_nm: 1.2
     temperature_K: 233.15
     pressure_bar: 1.0
-    anneal_steps: 1
-    anneal_Tmax : 400.0
-    anneal_totalsteps: 0
+    # anneal_T は温度点、anneal_steps は各レグの MD ステップ数（1 つ少ない）
+    # 例: anneal_T: [300.0, 400.0, 300.0] / anneal_steps: [5000, 5000]
+    anneal_T: null
+    anneal_steps: null
+    anneal_interval: 100
     relax_steps: 20000
     prod_steps : 100000
     nstxout: 1000
@@ -44,3 +46,23 @@ targets:
             rcut12_A: 1.4
             rcut23_A: 2.9
             gt: reference_adf_CNLi.txt
+validation:
+    dself_Li:
+        property: dself_cm2s
+        select: element Li
+        gt: 1.0e-6
+    dself_B:
+        property: dself_cm2s
+        select: element B
+        msd_type: xyz
+        fit_range: [0.1, 0.6]
+    rho:
+        property: density_gcm3
+        gt: 1.568
+        metric: sqrelerr
+    rdf_Li_O:
+        property: rdf
+        elem1: Li
+        elem2: O
+        rcut12_A: 8.0
+        gt: reference_rdf_Li_O.txt

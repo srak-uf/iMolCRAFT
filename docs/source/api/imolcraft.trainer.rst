@@ -28,6 +28,14 @@ imolcraft.trainer.loss module
    :show-inheritance:
    :undoc-members:
 
+imolcraft.trainer.properties module
+-----------------------------------
+
+.. automodule:: imolcraft.trainer.properties
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 imolcraft.trainer.trainer module
 --------------------------------
 

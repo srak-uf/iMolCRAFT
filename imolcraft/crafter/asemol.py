@@ -1,22 +1,46 @@
-from ase.io import read, write
-import ase
-from ase import units
-from ase.geometry import get_distances
-from ase.data import chemical_symbols
-import imolcraft
-import networkx as nx
-import pandas as pd
-import numpy as np
-from collections import defaultdict
 import math
 import os
 import random
+from collections import defaultdict
+
+import ase
+import networkx as nx
+import numpy as np
+import pandas as pd
+from ase import units
+from ase.data import chemical_symbols
+from ase.geometry import get_distances
+from ase.io import read, write
 from openmm.app import PDBFile
+
+import imolcraft
 
 # -------------------------------
 # Future implementation
 # Distinguish the cis and trans isomers
 # -------------------------------
+
+#: PDB ATOM record layout used by :func:`aseatoms2pdb`.
+# ATOM      1    1 MOL     1       2.155   3.338  13.788  1.00  0.00           S
+_PDB_ATOM_FORMAT = (
+    "{:6s}{:5d} {:^4s}{:1s}{:3s} {:1s}{:4d}{:1s}   "
+    "{:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}          {:>2s}{:2s}"
+)
+
+#: Number of atoms below which the supercell bond shortcut is not worth it.
+_SUPERCELL_FAST_MIN_ATOMS = 1000
+
+
+def _bond_thresholds(chemical_bonds, symbols_a, symbols_b) -> np.ndarray:
+    """
+    Build the (len(symbols_a), len(symbols_b)) matrix of maximum bond lengths.
+
+    This is a vectorised replacement for repeated ``chemical_bonds.loc[si, sj]``
+    lookups, which dominate the cost of the distance-based bond search.
+    """
+    idx_a = chemical_bonds.index.get_indexer(symbols_a)
+    idx_b = chemical_bonds.columns.get_indexer(symbols_b)
+    return chemical_bonds.values[np.ix_(idx_a, idx_b)]
 
 
 class asemol_wrapper:
@@ -34,20 +58,7 @@ class asemol_wrapper:
         from the bond_def_file.
     """
 
-    def __init__(self,
-                 atoms: ase.Atoms, bond_def_file=None, chemical_bonds=None):
-        """
-        Wrapper class for ASE Atoms object to handle molecular operations.
-        Parameters
-        ----------
-        atoms : ase.Atoms
-            The atoms object to be wrapped.
-        bond_def_file : str, optional
-            Path to the bond definition file. If None, a default file is used.
-        chemical_bonds : pd.DataFrame, optional
-            DataFrame containing the chemical bond definitions. If None, it is read from
-            the bond_def_file.
-        """
+    def __init__(self, atoms: ase.Atoms, bond_def_file=None, chemical_bonds=None):
         self.atoms = atoms
         self.filename = bond_def_file
         self.chemical_bonds = chemical_bonds
@@ -58,19 +69,28 @@ class asemol_wrapper:
             if bond_def_file is None:
                 path = imolcraft.__path__[0]
                 self.bond_def_file = os.path.join(path, "data", "bond_def.ini")
+            self.chemical_bonds = self._read_bond_definitions(self.bond_def_file)
 
-            self.chemical_bonds = pd.DataFrame(
-                np.zeros((len(chemical_symbols), len(chemical_symbols))),
-                index=chemical_symbols,
-                columns=chemical_symbols,
-            )
-            data = pd.read_csv(self.bond_def_file, sep="\s+", header=None)
-            for i, elem_i in enumerate(data.iloc[:, 0].values):
-                elem_j = data.iloc[:, 1].values[i]
-                self.chemical_bonds.loc[elem_i, elem_j] = data.iloc[:, 2].values[i]
-                self.chemical_bonds.loc[elem_j, elem_i] = data.iloc[:, 2].values[i]
+    @staticmethod
+    def _read_bond_definitions(bond_def_file: str) -> pd.DataFrame:
+        """
+        Read ``elem_i elem_j max_bond_length`` triplets into a symmetric
+        element-by-element DataFrame of maximum bond lengths.
+        """
+        chemical_bonds = pd.DataFrame(
+            np.zeros((len(chemical_symbols), len(chemical_symbols))),
+            index=chemical_symbols,
+            columns=chemical_symbols,
+        )
+        data = pd.read_csv(bond_def_file, sep=r"\s+", header=None)
+        for elem_i, elem_j, length in data.itertuples(index=False, name=None):
+            chemical_bonds.loc[elem_i, elem_j] = length
+            chemical_bonds.loc[elem_j, elem_i] = length
+        return chemical_bonds
 
-    def get_bonds(self, use_cache=True, unit_cell_atoms=None, repeat_factors=None) -> list:
+    def get_bonds(
+        self, use_cache=True, unit_cell_atoms=None, repeat_factors=None
+    ) -> list:
         """
         Returns a list of bonds (pairs of atom indices) based on the distance matrix and
         the chemical bond definitions. The bonds are determined by checking if the
@@ -81,7 +101,8 @@ class asemol_wrapper:
         use_cache : bool, optional
             Whether to use cached bonds if available. Default is True.
         unit_cell_atoms : ase.Atoms, optional
-            If provided along with repeat_factors, will use optimized supercell calculation
+            If provided along with repeat_factors, will use optimized supercell
+            calculation
         repeat_factors : tuple or list, optional
             The repeat factors (nx, ny, nz) used to create the supercell
 
@@ -96,154 +117,148 @@ class asemol_wrapper:
 
         # Use optimized calculation for supercells if unit cell info is provided
         if unit_cell_atoms is not None and repeat_factors is not None:
-            bonds = self._calculate_supercell_bonds_fast(unit_cell_atoms, repeat_factors)
+            self.bonds = self._calculate_supercell_bonds_fast(
+                unit_cell_atoms, repeat_factors
+            )
         else:
-            bonds = self._calculate_bonds()
-            
-        self.bonds = bonds
-        return bonds
-
-    def _calculate_supercell_bonds_fast(self, unit_cell_atoms, repeat_factors):
-        """
-        Fast bond calculation for supercells created by repeating a unit cell.
-        
-        This method provides significant performance improvement by calculating bonds
-        for the smaller unit cell and replicating the pattern. 
-        
-        Parameters
-        ----------
-        unit_cell_atoms : ase.Atoms
-            The original unit cell
-        repeat_factors : tuple or list
-            The repeat factors (nx, ny, nz)
-            
-        Returns
-        -------
-        bonds : list
-            List of bond tuples
-        """
-        nx, ny, nz = repeat_factors
-        n_unit = len(unit_cell_atoms)
-        total_cells = nx * ny * nz
-        
-        # Only use optimization for large systems where benefit is clear
-        if len(self.atoms) < 1000:  # Higher threshold to avoid overhead
-            return self._calculate_bonds()
-        
-        # Calculate bonds for unit cell (much smaller, so fast)
-        unit_wrapper = asemol_wrapper(unit_cell_atoms, chemical_bonds=self.chemical_bonds)
-        unit_bonds = unit_wrapper._calculate_bonds()
-        
-        all_bonds = []
-        
-        # Replicate intra-cell bonds for each copy of the unit cell
-        for cell_idx in range(total_cells):
-            atom_offset = cell_idx * n_unit
-            
-            # Add unit cell bonds with proper atom index offset
-            for bond in unit_bonds:
-                new_bond = (bond[0] + atom_offset, bond[1] + atom_offset)
-                all_bonds.append(new_bond)
-        
-        # For inter-cell bonds, use the most efficient approach available
-        # For very large systems, we can accept some approximation for speed
-        inter_bonds = self._find_intercell_bonds_simple(unit_cell_atoms, repeat_factors)
-        all_bonds.extend(inter_bonds)
-        
-        return all_bonds
-    
-    def _find_intercell_bonds_simple(self, unit_cell_atoms, repeat_factors):
-        """
-        Simple but efficient inter-cell bond calculation.
-        
-        For very large systems, we prioritize speed over perfect accuracy.
-        """
-        nx, ny, nz = repeat_factors
-        n_unit = len(unit_cell_atoms)
-        
-        # For large systems, use a very targeted approach
-        # Only check bonds between atoms that are likely to be at cell boundaries
-        
-        max_bond_length = self.chemical_bonds.values.max()
-        unit_cell = unit_cell_atoms.cell
-        
-        inter_bonds = []
-        
-        # Find atoms near cell boundaries in the unit cell
-        boundary_atoms = []
-        for i, pos in enumerate(unit_cell_atoms.positions):
-            # Check if atom is near any cell face
-            near_boundary = False
-            for dim in range(3):
-                cell_dim = unit_cell[dim, dim]
-                if pos[dim] < max_bond_length or pos[dim] > cell_dim - max_bond_length:
-                    near_boundary = True
-                    break
-            
-            if near_boundary:
-                boundary_atoms.append(i)
-        
-        # For each boundary atom in each cell, check limited neighbors
-        if len(boundary_atoms) > 0:
-            for cell_idx in range(nx * ny * nz):
-                ix = cell_idx // (ny * nz)
-                iy = (cell_idx % (ny * nz)) // nz
-                iz = cell_idx % nz
-                
-                cell_offset = cell_idx * n_unit
-                
-                # Only check +x, +y, +z neighbors to avoid double counting
-                neighbor_deltas = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
-                
-                for dx, dy, dz in neighbor_deltas:
-                    neighbor_ix = (ix + dx) % nx
-                    neighbor_iy = (iy + dy) % ny
-                    neighbor_iz = (iz + dz) % nz
-                    
-                    neighbor_cell_idx = neighbor_ix * ny * nz + neighbor_iy * nz + neighbor_iz
-                    neighbor_offset = neighbor_cell_idx * n_unit
-                    
-                    # Check bonds between boundary atoms and all atoms in neighbor cell
-                    for boundary_atom in boundary_atoms:
-                        atom_i = cell_offset + boundary_atom
-                        
-                        for j in range(n_unit):
-                            atom_j = neighbor_offset + j
-                            
-                            if atom_i >= atom_j:  # Avoid double counting
-                                continue
-                            
-                            # Check bond
-                            pos_i = self.atoms.positions[atom_i]
-                            pos_j = self.atoms.positions[atom_j]
-                            
-                            geo_dist = get_distances([pos_i], [pos_j], 
-                                                   cell=self.atoms.cell, pbc=True)[1][0, 0]
-                            
-                            bond_length = self.chemical_bonds.loc[
-                                self.atoms[atom_i].symbol, self.atoms[atom_j].symbol
-                            ]
-                            
-                            if geo_dist <= bond_length:
-                                inter_bonds.append((atom_i, atom_j))
-        
-        return inter_bonds
+            self.bonds = self._calculate_bonds()
+        return self.bonds
 
     def _calculate_bonds(self) -> list:
         """
         Calculate bonds using the standard O(n^2) distance-based method.
         """
         atoms = self.atoms
+        symbols = atoms.get_chemical_symbols()
         geo_matrx = get_distances(atoms.positions, cell=atoms.cell, pbc=True)[1]
-        bonds = []
-        for i in range(len(atoms)):
-            for j in range(i + 1, len(atoms)):
-                if (
-                    geo_matrx[i, j]
-                    <= self.chemical_bonds.loc[atoms[i].symbol, atoms[j].symbol]
-                ):
-                    bonds.append((i, j))
-        return bonds
+        thresholds = _bond_thresholds(self.chemical_bonds, symbols, symbols)
+
+        i_idx, j_idx = np.triu_indices(len(atoms), k=1)
+        bonded = geo_matrx[i_idx, j_idx] <= thresholds[i_idx, j_idx]
+        return [(int(i), int(j)) for i, j in zip(i_idx[bonded], j_idx[bonded])]
+
+    def _calculate_supercell_bonds_fast(self, unit_cell_atoms, repeat_factors):
+        """
+        Fast bond calculation for supercells created by repeating a unit cell.
+
+        This method provides significant performance improvement by calculating bonds
+        for the smaller unit cell and replicating the pattern.
+
+        Parameters
+        ----------
+        unit_cell_atoms : ase.Atoms
+            The original unit cell
+        repeat_factors : tuple or list
+            The repeat factors (nx, ny, nz)
+
+        Returns
+        -------
+        bonds : list
+            List of bond tuples
+        """
+        n_unit = len(unit_cell_atoms)
+        total_cells = int(np.prod(repeat_factors))
+
+        # Only use optimization for large systems where benefit is clear
+        if len(self.atoms) < _SUPERCELL_FAST_MIN_ATOMS:
+            return self._calculate_bonds()
+
+        # Calculate bonds for unit cell (much smaller, so fast)
+        unit_wrapper = asemol_wrapper(
+            unit_cell_atoms, chemical_bonds=self.chemical_bonds
+        )
+        unit_bonds = unit_wrapper._calculate_bonds()
+
+        # Replicate intra-cell bonds for each copy of the unit cell
+        all_bonds = [
+            (bond[0] + cell_idx * n_unit, bond[1] + cell_idx * n_unit)
+            for cell_idx in range(total_cells)
+            for bond in unit_bonds
+        ]
+
+        # For inter-cell bonds, use the most efficient approach available
+        # For very large systems, we can accept some approximation for speed
+        all_bonds.extend(
+            self._find_intercell_bonds_simple(unit_cell_atoms, repeat_factors)
+        )
+        return all_bonds
+
+    def _find_boundary_atoms(self, unit_cell_atoms) -> list:
+        """
+        Indices of the unit-cell atoms lying within one maximum bond length of
+        any cell face; only these can bond across a cell boundary.
+        """
+        max_bond_length = self.chemical_bonds.values.max()
+        unit_cell = unit_cell_atoms.cell
+
+        boundary_atoms = []
+        for i, pos in enumerate(unit_cell_atoms.positions):
+            # Check if atom is near any cell face
+            for dim in range(3):
+                cell_dim = unit_cell[dim, dim]
+                if pos[dim] < max_bond_length or pos[dim] > cell_dim - max_bond_length:
+                    boundary_atoms.append(i)
+                    break
+        return boundary_atoms
+
+    def _find_intercell_bonds_simple(self, unit_cell_atoms, repeat_factors):
+        """
+        Simple but efficient inter-cell bond calculation.
+
+        For very large systems, we prioritize speed over perfect accuracy.
+        """
+        n_x, n_y, n_z = repeat_factors
+        n_unit = len(unit_cell_atoms)
+
+        # For large systems, use a very targeted approach
+        # Only check bonds between atoms that are likely to be at cell boundaries
+        boundary_atoms = self._find_boundary_atoms(unit_cell_atoms)
+        if not boundary_atoms:
+            return []
+
+        positions = self.atoms.positions
+        symbols = self.atoms.get_chemical_symbols()
+        inter_bonds = []
+
+        # For each boundary atom in each cell, check limited neighbors
+        for cell_idx in range(n_x * n_y * n_z):
+            ix = cell_idx // (n_y * n_z)
+            iy = (cell_idx % (n_y * n_z)) // n_z
+            iz = cell_idx % n_z
+            cell_offset = cell_idx * n_unit
+
+            # Only check +x, +y, +z neighbors to avoid double counting
+            for dx, dy, dz in ((1, 0, 0), (0, 1, 0), (0, 0, 1)):
+                neighbor_cell_idx = (
+                    ((ix + dx) % n_x) * n_y * n_z
+                    + ((iy + dy) % n_y) * n_z
+                    + ((iz + dz) % n_z)
+                )
+                neighbor_offset = neighbor_cell_idx * n_unit
+
+                atoms_i = np.array([cell_offset + b for b in boundary_atoms])
+                atoms_j = np.arange(neighbor_offset, neighbor_offset + n_unit)
+
+                # Check bonds between boundary atoms and all atoms in neighbor cell
+                dists = get_distances(
+                    positions[atoms_i],
+                    positions[atoms_j],
+                    cell=self.atoms.cell,
+                    pbc=True,
+                )[1]
+                thresholds = _bond_thresholds(
+                    self.chemical_bonds,
+                    [symbols[a] for a in atoms_i],
+                    [symbols[a] for a in atoms_j],
+                )
+                # Avoid double counting
+                bonded = (dists <= thresholds) & (
+                    atoms_i[:, None] < atoms_j[None, :]
+                )
+                for a, b in zip(*np.nonzero(bonded)):
+                    inter_bonds.append((int(atoms_i[a]), int(atoms_j[b])))
+
+        return inter_bonds
 
     def get_molecules(self):
         """
@@ -257,43 +272,37 @@ class asemol_wrapper:
             atom indices.
         """
         atoms = self.atoms
-        compounds = []
-        graph = defaultdict(list)
 
         if self.bonds is None:
             self.bonds = self.get_bonds()
 
         # Construct a graph from the bonds
-        for bond in self.bonds:
-            atom1, atom2 = bond
+        graph = defaultdict(list)
+        for atom1, atom2 in self.bonds:
             graph[atom1].append(atom2)
             graph[atom2].append(atom1)
 
+        # Find all connected components (molecules) in the graph.
+        # Iterative pre-order DFS: neighbours are pushed in reverse so that
+        # they are popped in insertion order.
+        compounds = []
         visited = set()
-
-        def dfs(atom, compound):
-            # Perform a depth-first search to find all connected atoms
-            if atom not in visited:
-                visited.add(atom)
-                compound.append(atom)
-                for neighbor in graph[atom]:
-                    dfs(neighbor, compound)
-            return compound
-
-        # Find all connected components (molecules) in the graph
         for atom in graph:
-            if atom not in visited:
-                compound = dfs(atom, [])
-                compounds.append(compound)
-
-        # Add the atoms that are not part of any bond to the list of molecules
-        moleculed_atoms = []
-        for molecule in compounds:
-            moleculed_atoms.extend(molecule)
+            if atom in visited:
+                continue
+            compound = []
+            stack = [atom]
+            while stack:
+                current = stack.pop()
+                if current in visited:
+                    continue
+                visited.add(current)
+                compound.append(current)
+                stack.extend(reversed(graph[current]))
+            compounds.append(compound)
 
         # Add single atoms (not part of any bond) as separate molecules
-        singleatoms = [[i] for i in range(len(atoms)) if i not in moleculed_atoms]
-        compounds.extend(singleatoms)
+        compounds.extend([[i] for i in range(len(atoms)) if i not in visited])
 
         return compounds
 
@@ -317,29 +326,32 @@ class asemol_wrapper:
             If out_nX is True, returns a list of networkx graphs of the molecules.
             List of networkx graphs of the molecules.
         """
-        asemols = []
-        asenX = []
-
         if self.molecules is None:
             self.molecules = self.get_molecules()
         self.atoms = self.unwrap_molecules()
 
-        for i_mol in range(len(self.molecules)):
-            # self.molecules[i_mol]を小さい順に並べ替え
-            self.molecules[i_mol] = sorted(self.molecules[i_mol])
-            asemols.append(self.atoms[self.molecules[i_mol]])
+        self.molecules = [sorted(mol) for mol in self.molecules]
+        asemols = [self.atoms[mol] for mol in self.molecules]
 
+        # Group the molecules by isomorphism; molecule_list[i] holds the
+        # indices of every molecule identical to its first entry.
         molecule_list = []
+        grouped = set()
         for i_mol in range(len(asemols)):
-            tmp2 = [t for t in molecule_list for t in t]
-            if i_mol not in tmp2:
-                molecule_list.append([i_mol])
-                for j_mol in range(i_mol + 1, len(asemols)):
-                    if is_same_molecule(
-                        asemols[i_mol], asemols[j_mol], self.chemical_bonds
-                    ):
-                        molecule_list[-1].append(j_mol)
+            if i_mol in grouped:
+                continue
+            group = [i_mol]
+            grouped.add(i_mol)
+            for j_mol in range(i_mol + 1, len(asemols)):
+                if is_same_molecule(
+                    asemols[i_mol], asemols[j_mol], self.chemical_bonds
+                ):
+                    group.append(j_mol)
+                    grouped.add(j_mol)
+            molecule_list.append(group)
 
+        # Reorder every molecule to match the atom order of its group
+        # representative, so that identical molecules share an atom ordering.
         ref_mols = [asemols[mol[0]] for mol in molecule_list]
         asenX = [None for _ in asemols]
         res_number = 0
@@ -381,32 +393,29 @@ class asemol_wrapper:
         if self.molecules is None:
             self.molecules = self.get_molecules()
 
+        neighbors = defaultdict(list)
+        for atom1, atom2 in self.bonds:
+            neighbors[atom1].append(atom2)
+            neighbors[atom2].append(atom1)
+
         shift_mic = get_distances(atoms.positions, cell=atoms.cell, pbc=True)[0]
-        for i_mol in range(len(self.molecules)):
-            mol = self.molecules[i_mol]
+        for mol in self.molecules:
+            # Breadth-first walk from the first atom of the molecule, placing
+            # each atom next to the neighbour it was reached from.
             ref_init = [mol[0]]
-            next_ref = []
-            ref_done = [mol[0]]
+            ref_done = {mol[0]}
             while len(ref_done) != len(mol):
                 next_ref = []
                 for ref_i in ref_init:
-                    for bond in self.bonds:
-                        if ref_i in bond:
-                            if ref_i == bond[0] and bond[1] not in ref_done:
-                                next_ref.append(bond[1])
-                                atoms_unwrap[next_ref[-1]].position = (
-                                    atoms_unwrap[ref_i].position
-                                    + shift_mic[ref_i, next_ref[-1]]
-                                )
-                            elif ref_i == bond[1] and bond[0] not in ref_done:
-                                next_ref.append(bond[0])
-                                atoms_unwrap[next_ref[-1]].position = (
-                                    atoms_unwrap[ref_i].position
-                                    + shift_mic[ref_i, next_ref[-1]]
-                                )
+                    for ref_j in neighbors[ref_i]:
+                        if ref_j in ref_done:
+                            continue
+                        next_ref.append(ref_j)
+                        atoms_unwrap[ref_j].position = (
+                            atoms_unwrap[ref_i].position + shift_mic[ref_i, ref_j]
+                        )
                 ref_init = next_ref
-                ref_done.extend(next_ref)
-                ref_done = list(set(ref_done))
+                ref_done.update(next_ref)
         return atoms_unwrap
 
 
@@ -429,13 +438,19 @@ def ase_atoms_to_nx(atoms: ase.Atoms, chemical_bonds=None):
     """
     G = nx.Graph()
     asemol_wrap = asemol_wrapper(atoms, chemical_bonds=chemical_bonds)
-    bonds = asemol_wrap.get_bonds()
     for i, at in enumerate(atoms):
         G.add_node(i, element=at.symbol, xyz=at.position)
-        # G.add_node(i, element=at.symbol)
-    for bond in bonds:
-        G.add_edge(bond[0], bond[1])
+    G.add_edges_from(asemol_wrap.get_bonds())
     return G
+
+
+def _element_graph_matcher(mol1: ase.Atoms, mol2: ase.Atoms, chemical_bonds):
+    """Build a ``GraphMatcher`` between two molecules, matching elements."""
+    G1 = ase_atoms_to_nx(mol1, chemical_bonds)
+    G2 = ase_atoms_to_nx(mol2, chemical_bonds)
+    return nx.isomorphism.GraphMatcher(
+        G1, G2, node_match=lambda x, y: x["element"] == y["element"]
+    )
 
 
 def is_same_molecule(mol1: ase.Atoms, mol2: ase.Atoms, chemical_bonds):
@@ -457,11 +472,7 @@ def is_same_molecule(mol1: ase.Atoms, mol2: ase.Atoms, chemical_bonds):
     isomorphic : bool
         True if the two molecules are isomorphic (same structure), False otherwise.
     """
-    G1 = ase_atoms_to_nx(mol1, chemical_bonds)
-    G2 = ase_atoms_to_nx(mol2, chemical_bonds)
-    return nx.isomorphism.GraphMatcher(
-        G1, G2, node_match=lambda x, y: x["element"] == y["element"]
-    ).is_isomorphic()
+    return _element_graph_matcher(mol1, mol2, chemical_bonds).is_isomorphic()
 
 
 def reorder_atoms(atoms1, atoms2, chemical_bonds):
@@ -486,24 +497,18 @@ def reorder_atoms(atoms1, atoms2, chemical_bonds):
         The reordered atoms2 object.
     """
     # グラフが同型かどうかをチェック
-    G1 = ase_atoms_to_nx(atoms1, chemical_bonds)
-    G2 = ase_atoms_to_nx(atoms2, chemical_bonds)
-    GM = nx.isomorphism.GraphMatcher(
-        G1, G2, node_match=lambda x, y: x["element"] == y["element"]
-    )
+    GM = _element_graph_matcher(atoms1, atoms2, chemical_bonds)
     if not GM.is_isomorphic():
         raise ValueError("分子1と分子2は同型ではありません。")
 
-    # 同型の場合、対応するノードのマッピングを取得
-    mapping = GM.mapping
-
+    # 同型の場合、対応するノードのマッピングを取得し、
     # 分子2の原子を分子1の原子の順序に従って並べ替え
-    new_order = [mapping[i] for i in range(len(atoms1))]
-    reordered_atoms2 = atoms2[new_order]
-    if "residuenames" in atoms1.arrays:
-        reordered_atoms2.arrays["residuenames"] = atoms1.arrays["residuenames"]
-    if "atomtypes" in atoms1.arrays:
-        reordered_atoms2.arrays["atomtypes"] = atoms1.arrays["atomtypes"]
+    mapping = GM.mapping
+    reordered_atoms2 = atoms2[[mapping[i] for i in range(len(atoms1))]]
+
+    for key in ("residuenames", "atomtypes"):
+        if key in atoms1.arrays:
+            reordered_atoms2.arrays[key] = atoms1.arrays[key]
     return reordered_atoms2
 
 
@@ -541,8 +546,7 @@ def kabsch_algorithm(P, Q):
     V = Vt.T
 
     # Reflection
-    d = np.sign(np.linalg.det(V @ U.T))
-    if d < 0:
+    if np.sign(np.linalg.det(V @ U.T)) < 0:
         V[:, -1] *= -1
 
     # Rotational matrix
@@ -575,15 +579,13 @@ def cast_molecules(G1, G2):
     GM = nx.isomorphism.GraphMatcher(
         G1, G2, node_match=lambda n1, n2: n1["element"] == n2["element"]
     )
-    best_portions = None
     if not GM.is_isomorphic():
-        assert False, "Graph isomorphism failed"
+        raise ValueError("Graph isomorphism failed")
 
-    # Get the mappings
-    mapping = list(GM.subgraph_isomorphisms_iter())
-
+    # Try every isomorphism mapping and keep the best superposition
     best_rmsd = float("inf")
-    for map in mapping:
+    best_portions = None
+    for map in GM.subgraph_isomorphisms_iter():
         P = np.array([G1.nodes[i]["xyz"] for i in map.keys()])
         Q = np.array([G2.nodes[j]["xyz"] for j in map.values()])
         R, t = kabsch_algorithm(P, Q)
@@ -607,73 +609,46 @@ def aseatoms2pdb(filename, atoms):
     atoms : ase.Atoms
         The atoms object to be written to the PDB file.
     """
-    # ATOM      1    1 MOL     1       2.155   3.338  13.788  1.00  0.00           S
-    # pdb_atom_format = (
-    #     '{:6s}{:5d} {:^4s}{:1s}{:3s}{:1s} {:4d}{:1s}{:3s}'
-    #     '{:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}{:10s}{:>2s}'
-    # )
-    pdb_atom_format = "{:6s}{:5d} {:^4s}{:1s}{:3s} {:1s}{:4d}{:1s}   {:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}          {:>2s}{:2s}"
-    atomname = 0
+    if "residuenumbers" not in atoms.arrays.keys():
+        atoms.arrays["residuenumbers"] = np.array([1 for _ in range(len(atoms))])
+        atoms.arrays["residuenames"] = np.array(["M1" for _ in range(len(atoms))])
+
+    resnumbers = atoms.arrays["residuenumbers"]
+    resnames = atoms.arrays["residuenames"]
+    symbols = atoms.get_chemical_symbols()
+
     with open(f"{filename}", "w") as f:
-        Lx = atoms.cell.cellpar()[0]
-        Ly = atoms.cell.cellpar()[1]
-        Lz = atoms.cell.cellpar()[2]
-        alpha = atoms.cell.cellpar()[3]
-        beta = atoms.cell.cellpar()[4]
-        gamma = atoms.cell.cellpar()[5]
-
-        cryst_line = "CRYST1{:9.3f}{:9.3f}{:9.3f}{:7.2f}{:7.2f}{:7.2f} P 1  \n".format(
-            Lx, Ly, Lz, alpha, beta, gamma
+        Lx, Ly, Lz, alpha, beta, gamma = atoms.cell.cellpar()
+        f.write(
+            "CRYST1{:9.3f}{:9.3f}{:9.3f}{:7.2f}{:7.2f}{:7.2f} P 1  \n".format(
+                Lx, Ly, Lz, alpha, beta, gamma
+            )
         )
-        f.write(cryst_line)
         f.write("MODEL     1\n")
-        if "residuenumbers" not in atoms.arrays.keys():
-            atoms.arrays["residuenumbers"] = np.array([1 for _ in range(len(atoms))])
-            atoms.arrays["residuenames"] = np.array(["M1" for _ in range(len(atoms))])
 
+        atomname = 0
         for i, atom in enumerate(atoms):
-            if (
-                i > 0
-                and atoms.arrays["residuenumbers"][i - 1]
-                != atoms.arrays["residuenumbers"][i]
-            ):
+            # the per-atom counter restarts on every new residue
+            if i > 0 and resnumbers[i - 1] != resnumbers[i]:
                 atomname = 0
-            # single atom residue case
-            if (
-                np.count_nonzero(
-                    atoms.arrays["residuenumbers"] == atoms.arrays["residuenumbers"][i]
-                )
-                == 1
-            ):
-                atomname = atoms.get_chemical_symbols()[i]
-                atomline = pdb_atom_format.format(
-                    "ATOM",
-                    i + 1,
-                    str(atomname),
-                    " ",
-                    f'{atoms.arrays["residuenames"][i]}',
-                    " ",
-                    int(f'{atoms.arrays["residuenumbers"][i]}'),
-                    " ",
-                    atom.position[0],
-                    atom.position[1],
-                    atom.position[2],
-                    1.0,
-                    0.0,
-                    " ",
-                    atoms.get_chemical_symbols()[i],
-                )
+
+            if np.count_nonzero(resnumbers == resnumbers[i]) == 1:
+                # single atom residue case: the element alone is the atom name
+                atom_label = symbols[i]
                 atomname = 0
             else:
-                symbol = atoms.get_chemical_symbols()[i]
-                atomline = pdb_atom_format.format(
+                atom_label = symbols[i] + str(atomname)
+                atomname += 1
+
+            f.write(
+                _PDB_ATOM_FORMAT.format(
                     "ATOM",
                     i + 1,
-                    symbol + str(atomname),
+                    atom_label,
                     " ",
-                    f'{atoms.arrays["residuenames"][i]}',
+                    f"{resnames[i]}",
                     " ",
-                    int(f'{atoms.arrays["residuenumbers"][i]}'),
+                    int(f"{resnumbers[i]}"),
                     " ",
                     atom.position[0],
                     atom.position[1],
@@ -681,10 +656,10 @@ def aseatoms2pdb(filename, atoms):
                     1.0,
                     0.0,
                     " ",
-                    atoms.get_chemical_symbols()[i],
+                    symbols[i],
                 )
-                atomname += 1
-            f.write(atomline + "\n")
+                + "\n"
+            )
         f.write("ENDMDL\n")
 
 
@@ -701,12 +676,8 @@ def aseatoms2pdb_bonded(filename, atoms):
     pdb_omm = PDBFile(filename)
     atomlist_openmm = [a for a in pdb_omm.topology.atoms()]
     for b in bonds:
-        a1 = atomlist_openmm[b[0]]
-        a2 = atomlist_openmm[b[1]]
-        pdb_omm.topology.addBond(a1, a2)
-    PDBFile.writeFile(
-        pdb_omm.topology, pdb_omm.positions, open(filename, "w")
-    )
+        pdb_omm.topology.addBond(atomlist_openmm[b[0]], atomlist_openmm[b[1]])
+    PDBFile.writeFile(pdb_omm.topology, pdb_omm.positions, open(filename, "w"))
 
 
 def merge_asemols(asemols):
@@ -720,14 +691,13 @@ def merge_asemols(asemols):
 
     Returns
     -------
-    merge_asemols : ase.Atoms
+    merged : ase.Atoms
         Merged ase.Atoms object.
     """
-    merge_asemols = asemols[0].copy()
-    for i, mol in enumerate(asemols):
-        if i > 0:
-            merge_asemols.extend(mol)
-    return merge_asemols
+    merged = asemols[0].copy()
+    for mol in asemols[1:]:
+        merged.extend(mol)
+    return merged
 
 
 def expand_cell(atoms, length=30):
@@ -746,15 +716,40 @@ def expand_cell(atoms, length=30):
     atoms : ase.Atoms
         The expanded atoms object.
     """
-    La = atoms.cell.cellpar()[0]
-    Lb = atoms.cell.cellpar()[1]
-    Lc = atoms.cell.cellpar()[2]
-    a_dup = math.ceil(length / La)
-    b_dup = math.ceil(length / Lb)
-    c_dup = math.ceil(length / Lc)
-    print(a_dup, b_dup, c_dup)
-    atoms = atoms.repeat((a_dup, b_dup, c_dup))
-    return atoms
+    La, Lb, Lc = atoms.cell.cellpar()[:3]
+    duplication = (
+        math.ceil(length / La),
+        math.ceil(length / Lb),
+        math.ceil(length / Lc),
+    )
+    print(*duplication)
+    return atoms.repeat(duplication)
+
+
+def _total_mass(pdbfiles, nmols) -> float:
+    """Total mass (amu) of ``nmols[i]`` copies of each molecule in ``pdbfiles``."""
+    return sum(
+        read(pdb).get_masses().sum() * nmols[i] for i, pdb in enumerate(pdbfiles)
+    )
+
+
+def _cubic_cell_length(mass: float, density: float) -> float:
+    """Edge length of the cubic cell holding ``mass`` at the given density."""
+    return (mass / (density / (units.m**3 / units.kg))) ** (1 / 3)
+
+
+def _nmols_from_density(pdbfiles, nmols, cell, density) -> list:
+    """
+    Scale the molecule ratio up to the largest multiple that fits ``cell``
+    at the requested density.
+    """
+    gcd_value = math.gcd(*nmols)
+    nmols = [n // gcd_value for n in nmols]
+    mass = _total_mass(pdbfiles, nmols)
+    Nset = int(
+        density / (mass / (cell[0] * cell[1] * cell[2]) * units.m**3 / units.kg)
+    )
+    return [n * Nset for n in nmols]
 
 
 def pdb2packmol(
@@ -813,47 +808,21 @@ def pdb2packmol(
         )
 
     if fixed_property == "nmols" and priority_property == "cell":
+        # both the counts and the cell are given: nothing to derive
         pass
     elif fixed_property == "nmols" and priority_property == "density":
-        M = 0.0
-        for i, pdb in enumerate(pdbfiles):
-            atoms = read(pdb)
-            M += atoms.get_masses().sum() * nmols[i]
-        cell = [0.0, 0.0, 0.0]
-        cell[0] = (M / (density / (units.m**3/units.kg)))**(1/3)
-        cell[1] = (M / (density / (units.m**3/units.kg)))**(1/3)
-        cell[2] = (M / (density / (units.m**3/units.kg)))**(1/3)
+        # derive the cell from the fixed counts
+        length = _cubic_cell_length(_total_mass(pdbfiles, nmols), density)
+        cell = [length, length, length]
     elif fixed_property == "cell" and priority_property == "density":
-        gcd_value = math.gcd(*nmols)
-        nmols = [n // gcd_value for n in nmols]
-        M = 0.0
-        for i, pdb in enumerate(pdbfiles):
-            atoms = read(pdb)
-            M += atoms.get_masses().sum() * nmols[i]
-        Nset = int(
-            density
-            / (M / (cell[0] * cell[1] * cell[2]) * units.m**3 / units.kg)
-        )
-        nmols = [n * Nset for n in nmols]
+        # derive the counts from the fixed cell
+        nmols = _nmols_from_density(pdbfiles, nmols, cell, density)
     elif fixed_property == "density" and priority_property == "cell":
-        gcd_value = math.gcd(*nmols)
-        nmols = [n // gcd_value for n in nmols]
-        M = 0.0
-        for i, pdb in enumerate(pdbfiles):
-            atoms = read(pdb)
-            M += atoms.get_masses().sum() * nmols[i]
-        Nset = int(
-            density
-            / (M / (cell[0] * cell[1] * cell[2]) * units.m**3 / units.kg)
-        )
-        nmols = [n * Nset for n in nmols]
-        M = 0.0
-        for i, pdb in enumerate(pdbfiles):
-            atoms = read(pdb)
-            M += atoms.get_masses().sum() * nmols[i]
-        cell[0] = (M / (density / (units.m**3/units.kg)))**(1/3)
-        cell[1] = (M / (density / (units.m**3/units.kg)))**(1/3)
-        cell[2] = (M / (density / (units.m**3/units.kg)))**(1/3)
+        # derive the counts from the current cell, then rescale the cell so
+        # that the density is exactly reproduced
+        nmols = _nmols_from_density(pdbfiles, nmols, cell, density)
+        length = _cubic_cell_length(_total_mass(pdbfiles, nmols), density)
+        cell[0] = cell[1] = cell[2] = length
         print(cell[0])
 
     with open("pack_tmp.inp", mode="w") as f:
@@ -866,12 +835,13 @@ def pdb2packmol(
         bonds_top = []
         atomslist_mols = []
         molecule_list = []
-        for i in range(len(pdbfiles)):
-            atoms_pdb = read(pdbfiles[i])
+        for i, pdbfile in enumerate(pdbfiles):
+            atoms_pdb = read(pdbfile)
             n_atoms = len(atoms_pdb)
+            # make the atom types unique and give every species its own residue
             atoms_pdb.arrays["atomtypes"] = [
-                atoms_pdb.arrays["atomtypes"][i] + str(i + 1)
-                for i in range(len(atoms_pdb.arrays["atomtypes"]))
+                atomtype + str(j + 1)
+                for j, atomtype in enumerate(atoms_pdb.arrays["atomtypes"])
             ]
             atoms_pdb.arrays["residuenames"] = [
                 "M" + str(i + 1) for _ in range(len(atoms_pdb.arrays["residuenames"]))
@@ -879,15 +849,20 @@ def pdb2packmol(
             write(f"atoms_{i}.pdb", atoms_pdb)
             atomslist_mols.append(atoms_pdb)
             molecule_list.append([i])
+
+            # replicate the intramolecular bonds for every copy that packmol
+            # will place, shifting the atom indices of each copy
+            mol_bonds = asemol_wrapper(read(pdbfile)).get_bonds()
             for _ in range(nmols[i]):
-                bonds = asemol_wrapper(read(pdbfiles[i])).get_bonds()
-                bonds = [(b[0] + ntot_atoms, b[1] + ntot_atoms) for b in bonds]
+                bonds_top.extend(
+                    (b[0] + ntot_atoms, b[1] + ntot_atoms) for b in mol_bonds
+                )
                 ntot_atoms += n_atoms
-                for b in bonds:
-                    bonds_top.append(b)
+
             f.write(f"structure  atoms_{i}.pdb \n")
             f.write(f"  number  {nmols[i]} \n")
             f.write("end structure \n")
+
     _ = os.system("packmol < " + "pack_tmp.inp")
     atoms_packtmp = read("packmol_tmp.pdb")
     atoms_packtmp.cell = cell

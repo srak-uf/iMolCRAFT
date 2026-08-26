@@ -68,7 +68,7 @@ charge:
 
 forcefield:
   fftype: gaff-2.11           # Force field type
-  iontype: amber/ions/ionsff99_tip3p.xml  # Ion parameters (if needed)
+  iontype: amber/ions/ionsff99_tip3p.xml  # Ion parameters (the default; or Gmanr / Madrid / Wu-Wick / SMM for Li+)
   charge_scale_ion: 0.8       # Charge scaling for ionic interactions
   charge_scale_neutral: 1.0   # Charge scaling for neutral molecules
 
@@ -111,8 +111,13 @@ exporter(
   - `liquid.gro`: Structure file (GROMACS format)
   - `posre.itp`: Position restraint file
 
-- **LAMMPS** (`format="lmp"`):
+- **LAMMPS** (`format="lmp"`, *experimental*):
   - `liquid.data`: Data file
+
+```{warning}
+The LAMMPS exporter is experimental and not considered stable; verify its output before use.
+LAMMPS is not installed by `env.yml`. See {doc}`exporter` for details.
+```
 
 ## Key Parameters Reference
 
@@ -138,7 +143,7 @@ exporter(
 | Parameter | Type | Options | Description |
 |-----------|------|---------|-------------|
 | `fftype` | str | `gaff-2.11`, `gaff-2.1`, `gaff-1.81`, `gaff-1.8`, `gaff-1.4`   | Force field type |
-| `iontype` | str | Path to XML | Ion force field parameters |
+| `iontype` | str | `Gmanr`, `Madrid`, `Wu-Wick`, `SMM`, or a path to an XML file. Default `amber/ions/ionsff99_tip3p.xml` | Ion force field parameters. The four names each supply Li<sup>+</sup> alone; every other ion falls back to the default Amber library. A path is taken as it stands if it exists, otherwise as relative to the `ffxml` directory of openmmforcefields |
 | `charge_scale_ion` | float | 0.0-1.0 | Scale factor for ionic charges |
 | `charge_scale_neutral` | float | 0.0-1.0 | Scale factor for neutral charges |
 
@@ -261,7 +266,7 @@ exporter(
     format="gmx"
 )
 
-# Option 2: LAMMPS format  
+# Option 2: LAMMPS format (experimental, see the Exporter page)
 exporter(
     pdb="supercell_bonds.pdb",
     system="system.xml",

@@ -17,7 +17,7 @@ Overview
 * Point charge calculation
 * Creating supercells and liquid configurations
 * Optimization of force field parameters by static calculation and thermodynamic properties (RDF, density, etc.)
-* Compatability with LAMMPS, GROMACS, and OpenMM
+* Compatability with GROMACS and OpenMM (LAMMPS export is experimental)
 
 .. image:: _static/overview.png
 

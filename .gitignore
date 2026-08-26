@@ -1,151 +1,113 @@
 ### macOS ###
-# General
 .DS_Store
 .AppleDouble
 .LSOverride
 
 ### Python ###
-# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
+build/*
 
 ### Sphinx ###
-# Sphinx documentation
 docs/build/
-
-imolcryff.egg-info/
-train_state.pkl
-loop*xml
-test_*com
-test_*log
-build/*
-timer.dat
-epoch*.xml
-MOL_*.*
-
-# egg-info
-*.egg-info/
-
-# examples
-dmc_*png
-MOL_0_resp.mol2
-MOL_0.sdf
 
 ### Antechamber ###
 ANTECHAMBER_*
 ANTECHAMBER.FRCMOD
+ANTECHAMBER.ESP
 ATOMTYPE.INF
 molecule.frcmod
-fort.7
-ANTECHAMBER.ESP
-esout
 gaff.dat
+fort.7
+esout
 punch
 qout
 
 ### psi4 ###
 MOL_*psi4.*
-timer.dat
 psi4_*
 psi*.*.clean
-examples/trainer/dihedral/dmc/dmc1_best.xml
-examples/trainer/dihedral/dmc/dmc1_best1_best.xml
-examples/trainer/dihedral/dmc/loop-*.xml
-examples/trainer/dihedral/dmc/timer.dat
-examples/trainer/dihedral/dmc/xmlfiles/dmc1_best1.xml
-examples/trainer/distance_vsite/timer.dat
-examples/trainer/distance_vsite/train_state.pkl
-examples/trainer/distance_vsite/wovsite.pdb
-examples/trainer/distance_vsite/distance_scan/fort.7
-examples/trainer/distance_vsite/xmlfiles/merge.xml
-examples/trainer/distance_vsite/xmlfiles/merged.xml
-examples/trainer/distance_vsite/loop-*.xml
-examples/trainer/distance/distance_scan/fort.7
-examples/trainer/distance_vsite/hoge.pdb
+
+### Files written into the working directory by runs and tests ###
+MOL_*.*
+dmc_*png
+epoch*.xml
+loop*xml
+test_*com
+test_*log
+timer.dat
+train_state.pkl
+
+### tests ###
+tests/chkpoint.xml
+tests/gaffxml_0.xml
+tests/sn.cif
+tests/supercell.pdb
+tests/supercell_bonds.pdb
+tests/system.xml
+tests/vs_supercell_bonds.pdb
+tests/vs_temp.pdb
+tests/data/dmff_parsed.yaml
+tests/ethane/ethane.sdf
+tests/ethane/ethane.xyz
+tests/ethane/ethane_bonds.pdb
+tests/ethane/ethane_resp.mol2
+tests/ethane/ethane_resp.mol2.gaff
+tests/test_crafter/CH4.pdb
 tests/test_crafter/CH4_cell_density.pdb
 tests/test_crafter/CH4_density_cell.pdb
 tests/test_crafter/CH4_num_mols_cell.pdb
 tests/test_crafter/CH4_num_mols_density.pdb
-tests/test_crafter/CH4.pdb
-tests/test_crafter/gaff.dat
 tests/test_crafter/pack_tmp.inp
-imolcryff/calculator/xmlfiles/ethane1.xml
-imolcryff/calculator/ethane1_best.xml
-imolcryff/calculator/hoge.pdb
-examples/crafter/crystal/MOL_0/MOL_0.sdf
-examples/crafter/crystal/MOL_0/MOL_0_resp.mol2
-examples/crafter/crystal/MOL_0/MOL_0.sdf
-examples/crafter/crystal/MOL_0/MOL_0.xyz
-examples/crafter/crystal/MOL_1/MOL_1_resp.mol2
-examples/crafter/crystal/MOL_1/MOL_1.sdf
-examples/crafter/crystal/MOL_1/MOL_1.xyz
-examples/crafter/crystal/MOL_2/MOL_2_resp.mol2
-tests/xmlfiles/ethane1.xml
-tests/test_trainer/vs_temp.pdb
-tests/test_trainer/xmlfiles/ethane1.xml
-tests/test_trainer/xmlfiles/test_tp.xml
-tests/test_trainer/xtcfiles/.sample_0.xtc_offsets.npz
-tests/test_trainer/xtcfiles/sample_0.xtc
-tests/xmlfiles/test_tp.xml
-tests/xtcfiles/.sample_0.xtc_offsets.npz
-tests/xtcfiles/sample_0.xtc
-examples/crafter/crystal/MOL_*/*
-examples/crafter/crystal/MOL_*/*
-examples/crafter/crystal/MOL_*/*
-examples/crafter/crystal/MOL_*/*
-examples/crafter/crystal/MOL_*/*
-examples/crafter/crystal/MOL_*/*
-examples/crafter/crystal/MOL_*/*
-tests/supercell_bonds.pdb
-tests/supercell.pdb
-tests/system.xml
-tests/test_tp_best.xml
-tests/test_tp_learning_curve.png
-tests/vs_supercell_bonds.pdb
-tests/vs_temp.pdb
-tests/data/dmff_parsed.yaml
-tests/data/fsa_resp.mol2.gaff
-tests/ethane/ethane_bonds.pdb
-tests/ethane/ethane_resp.mol2
-tests/ethane/ethane_resp.mol2.gaff
-tests/data/dmff_parsed.yaml
-tests/ethane/ethane.sdf
-tests/ethane/ethane.xyz
-tests/test_trainer/ethane1_best.xml
 tests/test_trainer/gaffxml_0.xml
-tests/test_trainer/sample_0.png
-examples/trainer/distance/xmlfiles/SN1_Li1.xml
-examples/trainer/distance/xmlfiles/merged.xml
-examples/trainer/distance/vs_testtest.pdb
-examples/trainer/distance/SN1_Li1_best.xml
-examples/trainer/2rdf_1adf_density/loss_wrightfactor/dmff_parsed.yaml
-examples/trainer/2rdf_1adf_density/loss_wrightfactor/2rdf_1adf_density_best.xml
-examples/trainer/2rdf_1adf_density/loss_wrightfactor/2rdf_1adf_density_learning_curve.png
-examples/trainer/2rdf_1adf_density/loss_wrightfactor/sample_0.png
-examples/trainer/2rdf_1adf_density/loss_wrightfactor/sample_1.png
-examples/trainer/2rdf_1adf_density/loss_wrightfactor/vs_merged_supercell_bonds.pdb
-examples/trainer/distance/hoge.pdb
-examples/trainer/2rdf_1adf_density/loss_wrightfactor/xmlfiles/2rdf_1adf_density.xml
-examples/trainer/2rdf_1adf_density/loss_wrightfactor/xtcfiles/.sample_0.xtc_offsets.npz
-examples/trainer/2rdf_1adf_density/loss_wrightfactor/xtcfiles/sample_0.xtc
-tests/test_trainer/test_tp_learning_curve.png
-docs/timer.dat
-tests/sn.cif
-tests/gaffxml_0.xml
-tests/sample_0.png
-tests/data/dmff_parsed.yaml
 tests/test_trainer/sn.cif
 tests/test_trainer/supercell_bonds.pdb
 tests/test_trainer/system.xml
-tests/test_trainer/test_tp_best.xml
 tests/test_trainer/vs_supercell_bonds.pdb
-docs/timer.dat
+tests/test_trainer/vs_temp.pdb
+
+### examples ###
+examples/crafter/crystal/MOL_*/*
+examples/trainer/2rdf_1adf_density/loss_wrightfactor/dmff_parsed.yaml
+examples/trainer/2rdf_1adf_density/loss_wrightfactor/vs_merged_supercell_bonds.pdb
 examples/trainer/dihedral/dmc/vs_dmc.pdb
+examples/trainer/distance/hoge.pdb
 examples/trainer/distance/testtest.pdb
-tests/chkpoint.xml
-tests/ethane1_best.xml
-tests/logy_test_tp_learning_curve.png
-tests/logylogx_test_tp_learning_curve.png
-tests/data/dmff_parsed.yaml
-tests/data/dmff_parsed.yaml
+examples/trainer/distance/vs_testtest.pdb
+examples/trainer/distance_vsite/hoge.pdb
+examples/trainer/distance_vsite/wovsite.pdb
+
+### Run artefacts, by the name the code gives them ###
+# BaseTrainer.write_checkpoint / _render_loop_xml and friends name these after
+# the run label, so listing them one path at a time misses every new label.
+train_state_*.pkl
+chkpoint_*.xml
+*_best.xml
+*learning_curve.png
+sample_*.png
+validation_*.png
+xmlfiles/
+xtcfiles/
+mdlogs/
+# MDAnalysis caches the frame offsets of a trajectory next to it
+*_offsets.npz
+*_offsets.lock
+
+### Run artefacts dropped in the repository root ###
+# These names also belong to committed fixtures under tests/data/ and
+# examples/, so they are anchored to the root rather than matched anywhere.
+/CH4.pdb
+/sn.cif
+/supercell.pdb
+/supercell_bonds.pdb
+/gaffxml_0.xml
+/system.xml
+/vs_*.pdb
+/ethane/
+
+### Test fixtures ###
+# tests/data/ holds committed input data; exempt it from the generic
+# patterns above (test_*log in particular).
+!tests/data/test_dihed_0.log
