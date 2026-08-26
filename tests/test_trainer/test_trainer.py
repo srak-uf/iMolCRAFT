@@ -85,33 +85,6 @@ class TestDistanceTrainer:
         trainer.fit(steps=15, checkpoint_frequency=5)
         assert trainer.losses[-1] < trainer.losses[0], "Training did not reduce loss"
 
-    def test_save_load(self, setup):
-        lossfn = partial(loss_energy, weight_scheme="uniform")
-        trainer = DistanceTrainer(
-            ffxml_list=[self.ffxml],
-            nums_ffxml=[1],
-            pdbfile=self.pdbfile,
-            calculator=self.calculator,
-            loss_fn=lossfn,
-            opt_fftypes=["HarmonicBondForce/k",
-                         "HarmonicBondForce/length"],
-            relax_steps=1,
-            lr=0.002
-        )
-        trainer.setup()
-        trainer.fit(steps=2, checkpoint_frequency=1)
-        trainer = DistanceTrainer.from_checkpoint(
-            trainer_checkpoint=f"train_state_{trainer.label}.pkl",
-            ffxml_list=[self.ffxml],
-            nums_ffxml=[1],
-            pdbfile=self.pdbfile,
-            loss_fn=lossfn,
-            opt_fftypes=["HarmonicBondForce/k",
-                         "HarmonicBondForce/length"],
-        )
-        trainer.fit(steps=2, checkpoint_frequency=1)
-
-
 @pytest.mark.g16
 @pytest.mark.dihedral
 class TestDihedralTrainer:

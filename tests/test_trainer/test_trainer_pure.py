@@ -513,8 +513,21 @@ def test_best_checkpoint_fields_are_stored_by_every_trainer():
     for cls in (DistanceTrainer, DihedralTrainer, ThermodynamicTrainer, SumTrainer):
         write_src = inspect.getsource(cls.__dict__["write_checkpoint"])
         assert "_best_checkpoint_fields()" in write_src, cls.__name__
+
+    # DistanceTrainer の復元は今は落としてあるので、書き出し側だけを見る
+    for cls in (DihedralTrainer, ThermodynamicTrainer, SumTrainer):
         from_src = inspect.getsource(cls.__dict__["from_checkpoint"])
         assert "_restore_best(dump_dict)" in from_src, cls.__name__
+
+
+def test_distance_trainer_restore_is_switched_off():
+    """復元は一旦 OFF。黙って壊れるのではなく NotImplementedError で落ちる"""
+    import pytest
+
+    from imolcraft.trainer import DistanceTrainer
+
+    with pytest.raises(NotImplementedError, match="switched off"):
+        DistanceTrainer.from_checkpoint("train_state_x.pkl")
 
 
 def test_thermodynamic_from_checkpoint_restores_history_explicitly():

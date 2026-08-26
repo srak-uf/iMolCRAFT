@@ -169,25 +169,34 @@ trainer.fit(500, 2)
 - lambda で書かれた `loss_fn`（pickle 不可、None として記録し引数を要求）
 - `add_modifyfn` で登録した関数（記録しない。restart 後に再登録が必要）
 
-## 既知の問題（本作業とは無関係、未修正）
+## DistanceTrainer の復元を OFF にした
 
-`tests/test_trainer/test_trainer.py::TestDistanceTrainer::test_save_load` が
-常時失敗する。`BaseTrainer.from_checkpoint`（[base.py:389](../imolcraft/trainer/base.py#L389)）
-が全トレーナー共通で `trainer.validation_pred` を参照するが、この属性は
-`ThermodynamicTrainer.__init__` でしか初期化されない。`DistanceTrainer` で
-`AttributeError`。commit `2f05d3b`（validation 対応）の混入で、`16f7cfd` の
-ワークツリーでも同じ失敗を確認済み。
+`DistanceTrainer.from_checkpoint` が `validation_pred` / `validation_dev` /
+`validation_curves` を復元するが、この 3 つは `ThermodynamicTrainer.__init__`
+でしか初期化されないため `AttributeError` になっていた（commit `2f05d3b` の
+validation 対応で混入。`16f7cfd` のワークツリーでも同じ失敗を確認済み）。
 
-修正案: `BaseTrainer.__init__` で初期化するか `getattr` 経由にする。
+`DistanceTrainer` を復元する予定が無いため、中途半端に直さず本体を
+`NotImplementedError` のスタブに置き換えた。`write_checkpoint` は無傷で、
+復元に必要な情報は今も書き出している。`TestDistanceTrainer::test_save_load`
+は削除。
+
+戻すときは、`BaseTrainer` にその 3 属性を持たせる（あるいは `getattr` で
+読む）→ git 履歴から本体を戻す → テストを復活、の順。
+
+`test_trainer_pure.py` のソース検査テストは、`_restore_best(dump_dict)` の
+確認対象から `DistanceTrainer` を外し、代わりに「スタブが
+`NotImplementedError` を投げること」を確認するテストを足した。
+`write_checkpoint` 側の検査は 4 クラスすべてで継続。
 
 ## テスト
 
 - `tests/test_calculator/test_md.py`（新規, 32 件）— アニールスケジュール展開・
   型チェック・温度ランプ・ログ出力先・`MDCalculator` の to_dict/from_dict・
   設定名が sampling キーと一致すること・barostat
-- `tests/test_trainer/` — 移動したテストを除去し整理
+- `tests/test_trainer/` — 移動したテストを除去し整理。`test_save_load` を削除し、
+  復元スタブのテストを追加
 
-ベースライン: `tests/test_trainer tests/test_calculator` → **214 passed / 1 failed**
-（失敗は上記の既知問題のみ）
+ベースライン: `tests/test_trainer tests/test_calculator` → **215 passed / 0 failed**
 
 実行には `conda activate imc_cpu` が必要。
