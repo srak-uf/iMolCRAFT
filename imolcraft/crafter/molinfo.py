@@ -31,7 +31,7 @@ from .asemol import (
     merge_asemols,
     pdb2packmol,
 )
-from .ffxml import gafftemplate2xml
+from .ffxml import DEFAULT_ION_FFXML, gafftemplate2xml
 from ..provenance import provenance_fields
 from .gaffil_generators import GAFFilTemplateGenerator
 
@@ -60,9 +60,6 @@ MOLINFO_KEYS = {
 
 #: Top-level sections accepted in the input YAML file.
 YAML_SECTIONS = ["geoopt", "charge", "forcefield", "structure"]
-
-#: Default ion parameter file shipped with openmmforcefields.
-DEFAULT_ION_FFXML = "amber/ions/ionsff99_tip3p.xml"
 
 #: Partial charge schemes accepted by ``get_partial_charges``.
 VALID_CHARGE_TYPES = ["resp", "am1bcc"]

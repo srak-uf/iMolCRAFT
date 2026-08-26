@@ -18,6 +18,56 @@ _PF6_SMILES = "F[P-](F)(F)(F)(F)F"
 #: particles (``PDBFile.writeFile`` argument ``extraParticleIdentifier``).
 _EXTRA_PARTICLE_IDENTIFIER = "EP"
 
+#: Ion parameter library used unless ``iontype`` says otherwise, and the
+#: fallback for every element a named ion force field does not cover.
+#: Read relative to the ``ffxml`` directory of openmmforcefields.
+DEFAULT_ION_FFXML = "amber/ions/ionsff99_tip3p.xml"
+
+#: Ion force fields shipped with iMolCRAFT, selectable by name through the
+#: ``iontype`` key of the input YAML.  The names are matched case
+#: insensitively and each maps the elements it covers to a file name under
+#: ``imolcraft/data``.  An element that is absent here falls back to
+#: ``DEFAULT_ION_FFXML``, so ``iontype: Madrid`` reparameterizes lithium
+#: alone and leaves every other ion on the Amber library.
+#: The Li+ parameters come from https://doi.org/10.1021/acs.jpcb.3c05591
+BUNDLED_ION_FFXML = {
+    "gmanr": {"Li": "Gmanr_Li.xml"},
+    "madrid": {"Li": "Madrid_Li.xml"},
+    "wu-wick": {"Li": "Wu-Wick_Li.xml"},
+    "smm": {"Li": "SMM_Li.xml"},
+}
+
+
+def resolve_ion_ffxml(ion_ffxml: Optional[str], symbol: str) -> str:
+    """
+    Turn the ``iontype`` setting into the path of the XML file to use for the
+    ion ``symbol``.
+
+    ``ion_ffxml`` may be ``None``, in which case ``DEFAULT_ION_FFXML`` is
+    used, the name of an ion force field bundled with iMolCRAFT
+    (``BUNDLED_ION_FFXML``, e.g. ``Madrid``), or a path. A named force field
+    is consulted for ``symbol`` alone: it applies to the elements it covers
+    and every other element falls back to ``DEFAULT_ION_FFXML``. A path is
+    used as it stands when it exists, and is otherwise read relative to the
+    ``ffxml`` directory of openmmforcefields, as before.
+    """
+    if ion_ffxml is None:
+        ion_ffxml = DEFAULT_ION_FFXML
+
+    bundled = BUNDLED_ION_FFXML.get(ion_ffxml.lower())
+    if bundled is not None:
+        filename = bundled.get(symbol)
+        if filename is not None:
+            return os.path.join(imolcraft.__path__[0], "data", filename)
+        # the named force field says nothing about this element
+        ion_ffxml = DEFAULT_ION_FFXML
+
+    if os.path.exists(ion_ffxml):
+        return ion_ffxml
+    return os.path.join(
+        os.path.dirname(openmmforcefields.__file__), "ffxml", ion_ffxml
+    )
+
 
 def get_element_fromtype(ptype, ff):
     for at in ff.ffinfo["AtomTypes"]:
@@ -147,6 +197,7 @@ def _write_ion_xml(molecule: Molecule, ion_ffxml: str, outxml: str) -> None:
     ff = Hamiltonian(outxml)
     symbol = molecule.atoms[0].symbol
 
+    target_ptype = None
     for res in ff.ffinfo["Residues"]:
         if len(res["particles"]) == 1:
             ptype = res["particles"][0]["type"]
@@ -155,6 +206,12 @@ def _write_ion_xml(molecule: Molecule, ion_ffxml: str, outxml: str) -> None:
                     molecule.partial_charges[0].magnitude
                 )
                 target_ptype = ptype
+
+    if target_ptype is None:
+        raise ValueError(
+            f"No parameters for the ion {symbol} in {ion_ffxml}. "
+            "Please choose an ion force field that covers this element."
+        )
 
     for ii, at in enumerate(ff.ffinfo["AtomTypes"]):
         if at["class"] == target_ptype:
@@ -173,7 +230,17 @@ def _write_ion_xml(molecule: Molecule, ion_ffxml: str, outxml: str) -> None:
             ff.ffinfo["Forces"]["NonbondedForce"]["node"] = [atrib_def, nb]
             break
 
-    ff.generators["NonbondedForce"].atom_keys = [target_ptype]
+    # ``renderXML`` writes the Lennard-Jones parameters back positionally,
+    # walking ``atom_keys`` against the parameter arrays, so both have to be
+    # narrowed to the target entry. Truncating ``atom_keys`` alone would
+    # write the first entry of the library, whatever ion that happens to be.
+    nb_generator = ff.generators["NonbondedForce"]
+    target_index = nb_generator.atom_keys.index(target_ptype)
+    for holder in (ff.paramset.parameters, ff.paramset.mask):
+        entry = holder["NonbondedForce"]
+        for name in ("sigma", "epsilon"):
+            entry[name] = entry[name][target_index:target_index + 1]
+    nb_generator.atom_keys = [target_ptype]
     ff.renderXML(outxml)
 
 
@@ -203,7 +270,10 @@ def gafftemplate2xml(
     fftemplate_gen : openmmforcefields.GAFFTemplateGenerator
         GAFFTemplateGenerator object.
     ion_ffxml : str, optional
-        Path to the ion XML file. If None, it will use the default ion XML file.
+        Name of a bundled ion force field (``BUNDLED_ION_FFXML``), which is
+        applied to the elements it covers only, or the path to an ion XML
+        file, either existing or relative to the ``ffxml`` directory of
+        openmmforcefields. If None, ``DEFAULT_ION_FFXML`` is used.
 
     Returns
     -------
@@ -223,12 +293,11 @@ def gafftemplate2xml(
             with open(f"gaffxml_{i}.xml", "w") as f:
                 f.write(fftemplate_gen.generate_residue_template(molecule))
         else:  # single-atom ion
-            # NOTE: kept as an in-place rebind to preserve the original
-            # behaviour when several single-atom ions are present.
-            ion_ffxml = os.path.join(
-                os.path.dirname(openmmforcefields.__file__), "ffxml", ion_ffxml
+            _write_ion_xml(
+                molecule,
+                resolve_ion_ffxml(ion_ffxml, molecule.atoms[0].symbol),
+                outxml,
             )
-            _write_ion_xml(molecule, ion_ffxml, outxml)
 
         ffxmlfiles.append(outxml)
 

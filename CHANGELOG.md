@@ -11,6 +11,31 @@ fixes and backwards-compatible additions moves the patch number.
 
 ## [Unreleased]
 
+### Added
+
+- Four Li<sup>+</sup> ion force fields shipped with iMolCRAFT and selectable
+  by name through the existing `iontype` key: `Gmanr`, `Madrid`, `Wu-Wick` and
+  `SMM`, with parameters from <https://doi.org/10.1021/acs.jpcb.3c05591>. The
+  names are matched case insensitively and are resolved one ion at
+  a time: they supply lithium alone, and every other ion falls back to
+  `amber/ions/ionsff99_tip3p.xml`, which stays the default when `iontype` is
+  left out entirely. `iontype` still accepts a path — one that exists is used
+  as it stands, otherwise it is read relative to the `ffxml` directory of
+  openmmforcefields, as before.
+
+### Fixed
+
+- **Every single-atom ion but the first one in the `iontype` library was
+  given the wrong Lennard-Jones parameters.** The writer narrowed the atom
+  types of the library down to the ion at hand but left the parameter arrays
+  full length, and DMFF pairs the two positionally, so Na<sup>+</sup>,
+  K<sup>+</sup>, Cl<sup>-</sup> and the rest were all written out with the
+  sigma and epsilon of Li<sup>+</sup>, the first entry of
+  `amber/ions/ionsff99_tip3p.xml`. Charges were never affected.
+- Assigning an ion that the chosen `iontype` file has no parameters for raised
+  an `UnboundLocalError` from inside the writer. It now says which element is
+  missing from which file.
+
 ## [0.3.0] — 2026-08-26
 
 ### Added
