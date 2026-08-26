@@ -9,11 +9,11 @@ import os
 import mdtraj as md
 from jax import value_and_grad, jit
 from jax.tree_util import tree_map
+from ..calculator.md import MDCalculator, resolve_nonbondedmethod
 from ..trainer.dmff_utils import (
     update_rescharges_from_params,
     update_ffinfo_from_rescharges,
     update_ffinfo_from_params,
-    md_sample,
     get_target_pred_frame,
     get_target_gt,
     get_validation_gt,
@@ -21,58 +21,27 @@ from ..trainer.dmff_utils import (
     plot_compare,
     plot_validation,
     plot_validation_curves,
-    get_chgparams_from_rescharges
+    get_chgparams_from_rescharges,
 )
+from .loss import _NPT_ENSEMBLES
 from .base import BaseTrainer, plot_learning_curve
 from ..provenance import provenance_fields
 from ..calculator import DihedralCalculator, DistanceCalculator
 from openmm import unit
 
 
-def _optional_list(cast):
+def _picklable(value):
     """
-    Build a cast for an annealing schedule, keeping None as "no annealing".
+    ``value`` if it survives a pickle round trip, None if it does not.
 
-    A bare number is wrapped into a one-element list so a single-leg schedule
-    can be written without brackets.
+    A loss function written as a lambda cannot be pickled, and a checkpoint
+    that fails to write is worse than one missing a field it can ask for.
     """
-    def _cast(value):
-        if value is None:
-            return None
-        if isinstance(value, (list, tuple)):
-            return [cast(v) for v in value]
-        return [cast(value)]
-
-    return _cast
-
-
-#: Per-replica sampling settings, as (attribute name, type to cast to).
-_SAMPLING_FIELDS = (
-    ("T_K", float),
-    ("P_bar", float),
-    ("anneal_T", _optional_list(float)),
-    ("anneal_steps", _optional_list(int)),
-    ("anneal_interval", int),
-    ("relax_steps", int),
-    ("rc_nm", float),
-    ("dispcorr", bool),
-    ("prod_steps", float),
-    ("nstxout", int),
-    ("neff", int),
-    ("dt_fs", float),
-    ("ensemble", str),
-    ("nonbondedmethod", str),
-)
-
-#: Attribute names differing from the key used in the sampling parameters.
-_SAMPLING_KEYS = {
-    "T_K": "temperature_K",
-    "P_bar": "pressure_bar",
-    "rc_nm": "rcut_nm",
-}
-
-#: Nonbonded methods accepted in the sampling parameters.
-_NONBONDED_METHODS = {"PME": app.PME, "LJPME": app.LJPME}
+    try:
+        pickle.loads(pickle.dumps(value))
+    except Exception:
+        return None
+    return value
 
 
 def _state_name(idx: int) -> str:
@@ -91,16 +60,6 @@ def _validation_record(values_per_replica: List[dict], epoch: int) -> dict:
         for name, value in values.items():
             record[f"{_state_name(idx)}/{name}"] = value
     return record
-
-
-def _resolve_nonbondedmethod(name):
-    """Translate the nonbonded method name of the YAML into an OpenMM constant."""
-    if name not in _NONBONDED_METHODS:
-        raise ValueError(
-            f"Invalid nonbonded method: {name}. Must be one of "
-            f"{list(_NONBONDED_METHODS)}."
-        )
-    return _NONBONDED_METHODS[name]
 
 
 def _scan_positions_nm(ff_scan, potentials, num_vsites, dtype=jnp.float64):
@@ -717,13 +676,26 @@ class ThermodynamicTrainer(BaseTrainer):
             restart_xml=restart_xml
         )
 
+        # what from_checkpoint needs to rebuild this trainer. pdbfile is kept
+        # as it was given, since the per-replica structures overwrite the
+        # attribute a few lines below.
+        self._restart_args = {
+            "ffxml_list": self.ffxml_list,
+            "nums_ffxml": self.nums_ffxml,
+            "pdbfile": pdbfile,
+            "device": device,
+            "md_log": md_log,
+            "md_logfile": md_logfile,
+            "resample_freq": resample_freq,
+        }
+
         # MD + Energy function setup
         if isinstance(self.sampling_params, dict):
             self.pdb = [self.pdb]
             self.pdbfile = [self.pdbfile]
             self.pdbfile_vsite = [self.pdbfile_vsite]
             self.sampling_params = [self.sampling_params]
-            nonbondedmethod = _resolve_nonbondedmethod(
+            nonbondedmethod = resolve_nonbondedmethod(
                 self.sampling_params[0]["nonbondedmethod"]
             )
 
@@ -732,7 +704,9 @@ class ThermodynamicTrainer(BaseTrainer):
                     nonbondedMethod=nonbondedmethod,
                     nonbondedCutoff=self.sampling_params[0]["rcut_nm"]
                     * unit.nanometer,
-                    useDispersionCorrection=self.sampling_params[0]["dispcorr"],
+                    useDispersionCorrection=self.sampling_params[0].get(
+                        "dispcorr", False
+                    ),
                     )
             self.potentials = [pots]
             self.topology = [self.topology]
@@ -749,7 +723,7 @@ class ThermodynamicTrainer(BaseTrainer):
             for i, sampling_param in enumerate(self.sampling_params):
                 self.pdbfile.append(sampling_param["init_structure"])
                 self.pdb.append(app.PDBFile(self.pdbfile[i]))
-                nonbondedmethod = _resolve_nonbondedmethod(
+                nonbondedmethod = resolve_nonbondedmethod(
                     self.sampling_params[i]["nonbondedmethod"]
                 )
                 pots = self.ff.createPotential(
@@ -757,7 +731,9 @@ class ThermodynamicTrainer(BaseTrainer):
                         nonbondedMethod=nonbondedmethod,
                         nonbondedCutoff=self.sampling_params[i]["rcut_nm"]
                         * unit.nanometer,
-                        useDispersionCorrection=self.sampling_params[i]["dispcorr"],
+                        useDispersionCorrection=self.sampling_params[i].get(
+                            "dispcorr", False
+                        ),
                     )
                 self.potentials.append(pots)
                 self.efuncs.append(jit(pots.getPotentialFunc()))
@@ -781,17 +757,58 @@ class ThermodynamicTrainer(BaseTrainer):
                 f"{type(self.sampling_params).__name__}"
             )
 
-        # spread the per-replica sampling settings into parallel lists
-        for name, cast in _SAMPLING_FIELDS:
-            setattr(
-                self,
-                name,
-                [cast(p[_SAMPLING_KEYS.get(name, name)]) for p in self.sampling_params],
-            )
-
+        # what the trainer reads itself: these say which state is being
+        # sampled, so every replica must give them
+        self.T_K = [float(p["temperature_K"]) for p in self.sampling_params]
+        self.rc_nm = [float(p["rcut_nm"]) for p in self.sampling_params]
+        self.neff = [int(p["neff"]) for p in self.sampling_params]
+        self.ensemble = [str(p["ensemble"]) for p in self.sampling_params]
         self.nonbondedmethod = [
-            _resolve_nonbondedmethod(name) for name in self.nonbondedmethod
+            resolve_nonbondedmethod(p["nonbondedmethod"])
+            for p in self.sampling_params
         ]
+
+        # the dispersion correction is off unless it is asked for
+        self.dispcorr = [
+            bool(p.get("dispcorr", False)) for p in self.sampling_params
+        ]
+
+        # a pressure only means anything to a barostat, so a fixed-volume
+        # replica may leave it out and gets the zero PV term that implies
+        self.P_bar = [
+            float(p.get("pressure_bar", 0.0)) for p in self.sampling_params
+        ]
+        for idx, ensemble in enumerate(self.ensemble):
+            if ensemble in _NPT_ENSEMBLES and (
+                "pressure_bar" not in self.sampling_params[idx]
+            ):
+                raise KeyError(
+                    f"sampling parameters of replica {idx} run the {ensemble} "
+                    "ensemble, which needs a 'pressure_bar'"
+                )
+
+        # One calculator per replica, holding the whole recipe of its MD. The
+        # calculator names its settings as the sampling section does, so the
+        # MD half of a block is simply the keys it knows: neff and
+        # pressure_bar are not among them and stay behind, and a key left out
+        # gets the calculator's own default. It is built now rather than at
+        # the first run so a bad ensemble or a broken annealing schedule shows
+        # up while the trainer is still empty.
+        self.md_calculators = []
+        for params in self.sampling_params:
+            settings = {
+                key: value for key, value in params.items()
+                if key in MDCalculator.SETTINGS
+            }
+            # these three belong to the run rather than to the state
+            settings.update(
+                device=self.device,
+                md_log=self.md_log,
+                md_logfile=self.md_logfile,
+            )
+            self.md_calculators.append(
+                MDCalculator(params["init_structure"], **settings)
+            )
 
         # target
         if isinstance(self.target_params, dict):
@@ -833,26 +850,7 @@ class ThermodynamicTrainer(BaseTrainer):
 
     def _run_md(self, idx: int, state_name: str) -> str:
         """Run the MD of one replica with the current force field."""
-        return md_sample(
-            initialpdb=self.pdbfile[idx],
-            ffxml=self.ffxml,
-            trajectory=f"{state_name}.xtc",
-            rc=self.rc_nm[idx],
-            T=self.T_K[idx],
-            anneal_T=self.anneal_T[idx],
-            anneal_steps=self.anneal_steps[idx],
-            anneal_interval=self.anneal_interval[idx],
-            dt=self.dt_fs[idx],
-            nstxout=self.nstxout[idx],
-            relax_steps=self.relax_steps[idx],
-            prod_steps=self.prod_steps[idx],
-            ensemble=self.ensemble[idx],
-            nonbondedmethod=self.nonbondedmethod[idx],
-            useDispersionCorrection=self.dispcorr[idx],
-            device=self.device,
-            md_log=self.md_log,
-            md_logfile=self.md_logfile,
-        )
+        return self.md_calculators[idx].run(self.ffxml, f"{state_name}.xtc")
 
     def _add_sample(self, idx: int, state_name: str, xtcfile: str) -> None:
         """
@@ -1103,24 +1101,19 @@ class ThermodynamicTrainer(BaseTrainer):
             self.ff.renderXML(f"chkpoint_{self.label}.xml")
             with open(f"train_state_{self.label}.pkl", "wb") as f:
                 dump_dict = {
+                    # the recipe of every MD, defaults filled in, so a restart
+                    # samples exactly what this run sampled
+                    "md_params": [c.to_dict() for c in self.md_calculators],
+                    "restart_args": self._restart_args,
+                    "initial_ffxml": f"chkpoint_{self.label}.xml",
+                    "resample_counter": self.resample_counter,
+                    "loss_fn": _picklable(self.loss_fn),
                     "ffparams": self.ffparams,
                     "opt_state": self.opt_state,
                     "ffinfo": self.ff.ffinfo,
                     "rescharges": self.rescharges,
                     "pdb": self.pdb,
                     "topology": self.topology,
-                    "T_K": self.T_K,
-                    "P_bar": self.P_bar,
-                    "anneal_T": self.anneal_T,
-                    "anneal_steps": self.anneal_steps,
-                    "anneal_interval": self.anneal_interval,
-                    "relax_steps": self.relax_steps,
-                    "rc_nm": self.rc_nm,
-                    "prod_steps": self.prod_steps,
-                    "nstxout": self.nstxout,
-                    "neff": self.neff,
-                    "dt_fs": self.dt_fs,
-                    "ensemble": self.ensemble,
                     "target_params": self.target_params,
                     "validation_params": self.validation_params,
                     "sampling_params": self.sampling_params,
@@ -1174,10 +1167,10 @@ class ThermodynamicTrainer(BaseTrainer):
     def from_checkpoint(
         cls,
         trainer_checkpoint: str,
-        ffxml_list: Union[str, List[str]],
-        nums_ffxml: List[int],
-        pdbfile: str,
-        initial_ffxml: str,
+        ffxml_list: Optional[Union[str, List[str]]] = None,
+        nums_ffxml: Optional[List[int]] = None,
+        pdbfile: Optional[str] = None,
+        initial_ffxml: Optional[str] = None,
         loss_fn: Optional[Callable[..., float]] = None,
         sampling_params: Optional[List[Any]] = None,
         target_params: Optional[List[Any]] = None,
@@ -1186,37 +1179,90 @@ class ThermodynamicTrainer(BaseTrainer):
         optimizer_algo: Optional[str] = None,
         lr: Optional[Union[float, List[float]]] = None,
         clip: Optional[Union[float, List[float]]] = None,
+        device: Optional[str] = None,
+        md_log: Optional[str] = None,
+        md_logfile: Optional[str] = None,
+        resample_freq: Optional[int] = None,
+        setup: bool = True,
     ) -> "ThermodynamicTrainer":
+        """
+        Rebuild a trainer from a checkpoint and carry on training.
 
+        Every argument other than the checkpoint itself is optional: the
+        checkpoint records what the trainer was built with, so
+
+        >>> trainer = ThermodynamicTrainer.from_checkpoint("train_state_x.pkl")
+
+        picks the run up where it stopped. Passing an argument overrides what
+        the checkpoint says, which is how a run is resumed with a different
+        loss, a different learning rate or on a different device.
+
+        A loss function written as a lambda cannot be pickled and is recorded
+        as None, so such a run has to be handed its ``loss_fn`` again. The
+        same goes for anything registered with :meth:`add_modifyfn`, which is
+        never recorded and has to be registered again after the restart.
+
+        ``setup=False`` returns the trainer without running :meth:`setup`,
+        which is what to pass when something has to be changed before the MD
+        starts. The trainer cannot be fitted until setup has run, since it is
+        what fills the MBAR estimator.
+        """
         with open(trainer_checkpoint, "rb") as f:
             dump_dict = pickle.load(f)
 
+        # what the trainer was built with, unless the caller says otherwise
+        restart_args = dict(dump_dict.get("restart_args", {}))
+        given = {
+            "ffxml_list": ffxml_list,
+            "nums_ffxml": nums_ffxml,
+            "pdbfile": pdbfile,
+            "device": device,
+            "md_log": md_log,
+            "md_logfile": md_logfile,
+            "resample_freq": resample_freq,
+        }
+        restart_args.update({k: v for k, v in given.items() if v is not None})
+        missing = [k for k in ("ffxml_list", "nums_ffxml", "pdbfile")
+                   if restart_args.get(k) is None]
+        if missing:
+            raise KeyError(
+                f"{trainer_checkpoint} predates the self-contained checkpoint "
+                f"and does not record {', '.join(missing)}; pass them as "
+                "arguments"
+            )
+
+        if initial_ffxml is None:
+            initial_ffxml = dump_dict.get("initial_ffxml")
+            if initial_ffxml is None:
+                raise KeyError(
+                    f"{trainer_checkpoint} does not record its force field; "
+                    "pass initial_ffxml"
+                )
+
         if lr is None:
             lr = dump_dict["lr"]
-            del dump_dict["lr"]
         if clip is None:
             clip = dump_dict["clip"]
-            del dump_dict["clip"]
         if optimizer_algo is None:
             optimizer_algo = dump_dict["optimizer_algo"]
-            del dump_dict["optimizer_algo"]
         if opt_fftypes is None:
             opt_fftypes = dump_dict["opt_fftypes"]
-            del dump_dict["opt_fftypes"]
         if sampling_params is None:
             sampling_params = dump_dict["sampling_params"]
-            del dump_dict["sampling_params"]
         if target_params is None:
             target_params = dump_dict["target_params"]
-            del dump_dict["target_params"]
         # checkpoints written before the validation section have no such key
         if validation_params is None:
-            validation_params = dump_dict.pop("validation_params", None)
-        
+            validation_params = dump_dict.get("validation_params")
+        if loss_fn is None:
+            loss_fn = dump_dict.get("loss_fn")
+            if loss_fn is None:
+                raise ValueError(
+                    f"{trainer_checkpoint} carries no loss function, which "
+                    "happens when it was written as a lambda; pass loss_fn"
+                )
+
         trainer = cls(
-            ffxml_list=ffxml_list,
-            nums_ffxml=nums_ffxml,
-            pdbfile=pdbfile,
             loss_fn=loss_fn,
             sampling_params=sampling_params,
             target_params=target_params,
@@ -1227,17 +1273,40 @@ class ThermodynamicTrainer(BaseTrainer):
             lr=lr,
             clip=clip,
             restart_xml=initial_ffxml,
+            **restart_args,
         )
+
+        # the MD is restored from the recorded recipe rather than re-derived
+        # from the sampling parameters, so a default that changed since the
+        # checkpoint was written cannot change what gets sampled
+        if "md_params" in dump_dict:
+            trainer.md_calculators = [
+                MDCalculator.from_dict(record) for record in dump_dict["md_params"]
+            ]
+            # these three belong to the run rather than to the state, so an
+            # override given here wins over what the record happens to hold
+            for calculator in trainer.md_calculators:
+                calculator.device = trainer.device
+                calculator.md_log = trainer.md_log
+                calculator.md_logfile = trainer.md_logfile
 
         # the force field itself comes from initial_ffxml, which BaseTrainer
         # already loaded, so only the history is taken from the checkpoint
+        trainer.ffxml = initial_ffxml
+
+        # setup samples the restored force field and fills the MBAR estimator,
+        # without which the trainer cannot be fitted. It also initializes the
+        # optimizer, so the recorded state is put back afterwards.
+        if setup:
+            trainer.setup()
+
         trainer.losses = dump_dict["losses"]
         trainer.epochs = dump_dict["epochs"]
-
-        # order is important
-        trainer.ffxml = initial_ffxml
         trainer.opt_state = dump_dict["opt_state"]
         trainer._epoch = dump_dict["epoch"]
+        trainer.resample_counter = dump_dict.get("resample_counter", 0)
+        trainer.validation_history = dump_dict.get("validation_history", [])
+        trainer.validation_dev_history = dump_dict.get("validation_dev_history", [])
         trainer._restore_best(dump_dict)
 
         return trainer

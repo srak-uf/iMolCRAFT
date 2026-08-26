@@ -7,7 +7,8 @@ import pytest
 
 from imolcraft.trainer import dmff_utils
 from imolcraft.trainer.base import _broadcast_lr_clip, _nan_recovery_gradients
-from imolcraft.trainer.dmff_utils import VALID_ENSEMBLES, neutralize
+from imolcraft.calculator.md import VALID_ENSEMBLES
+from imolcraft.trainer.dmff_utils import neutralize
 from imolcraft.trainer.properties import (
     DISTRIBUTION_TARGETS,
     PROPERTY_KEYS,
@@ -156,24 +157,6 @@ def test_a_validated_distribution_always_needs_its_reference():
         assert ("gt" in REQUIRED_VALIDATION_KEYS[name]) is (kind == "distribution")
 
 
-@pytest.mark.parametrize(
-    "ensemble, expected",
-    [
-        ("nvt", type(None)),
-        ("nve", type(None)),
-        ("isonpt", "MonteCarloBarostat"),
-        ("anisonpt", "MonteCarloAnisotropicBarostat"),
-        ("trinpt", "MonteCarloFlexibleBarostat"),
-    ],
-)
-def test_make_barostat(ensemble, expected):
-    barostat = dmff_utils._make_barostat(ensemble, 300.0)
-    if expected is type(None):
-        assert barostat is None
-    else:
-        assert type(barostat).__name__ == expected
-
-
 # ----------------------------------------------------------------- base.py
 def test_broadcast_lr_clip_expands_scalars():
     lr, clip = _broadcast_lr_clip(0.01, 0.1, ["a", "b", "c"])
@@ -218,17 +201,6 @@ def test_ffparams_without_charge_strips_charge_and_vsite():
         "NonbondedForce": {"sigma": 2, "epsilon": 3},
         "HarmonicBondForce": {"k": 4},
     }
-
-
-def test_resolve_nonbondedmethod():
-    from openmm import app
-
-    from imolcraft.trainer.trainer import _resolve_nonbondedmethod
-
-    assert _resolve_nonbondedmethod("PME") is app.PME
-    assert _resolve_nonbondedmethod("LJPME") is app.LJPME
-    with pytest.raises(ValueError, match="Invalid nonbonded method"):
-        _resolve_nonbondedmethod("NoCutoff")
 
 
 def test_qm_energies_stacks_the_scans():

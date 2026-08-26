@@ -330,12 +330,16 @@ trainer = ThermodynamicTrainer(
         "temperature_K": 300.0,
         "pressure_bar": 1.0,
         "rcut_nm": 0.8,
+        "dt_fs": 1.0,
         "ensemble": "anisonpt",
-        "relax_steps": 20000
+        "relax_steps": 20000,
         "prod_steps": 100000,
         "nstxout": 1000,
         "neff": 50,
-        "dispcorr": True
+        "dispcorr": True,
+        # Optional: heat to 500 K over 50000 steps, then cool back over 100000
+        "anneal_T": [300.0, 500.0, 300.0],
+        "anneal_steps": [50000, 100000],
     }],
     target_params=[{
         "density_gcm3": {"gt": 0.8, "weight": 0.01},
@@ -391,6 +395,108 @@ trainer.add_modifyfn("after_update", ffparams_modify)
 trainer.setup()
 trainer.fit(num_epochs=100, checkpoint_freq=10)
 ```
+
+#### Sampling Parameters
+
+`sampling_params` carries one block per replica. Only the settings that say
+which state is being sampled are required, since guessing one would quietly fit
+something else:
+
+| Key | Meaning |
+| --- | --- |
+| `init_structure` | PDB or CIF the replica starts from. |
+| `temperature_K` | Temperature of the state. |
+| `rcut_nm` | Nonbonded cutoff. |
+| `nonbondedmethod` | `"PME"` or `"LJPME"`. |
+| `ensemble` | One of `nve`, `nvt`, `isonpt`, `anisonpt`, `trinpt`. |
+| `neff` | Effective sample count below which the replica is resampled. |
+
+Everything else may be left out:
+
+| Key | Left out |
+| --- | --- |
+| `pressure_bar` | No PV term, which is what a fixed volume means. Required for the NPT ensembles, where a barostat needs it. |
+| `dispcorr` | No dispersion correction. |
+| `dt_fs`, `nstxout`, `relax_steps`, `prod_steps` | `MDCalculator` uses its own defaults. |
+| `anneal_T`, `anneal_steps`, `anneal_interval` | No annealing. |
+
+Each block becomes one `imolcraft.calculator.MDCalculator`, which is what
+actually runs the MD. The calculator names its settings exactly as the keys
+above are named, so a sampling block needs no translation and the defaults of
+the second half live in `MDCalculator.SETTINGS` rather than being restated
+here. `neff` and `pressure_bar` are not settings of the MD and stay with the
+trainer.
+
+#### Restarting from a Checkpoint
+
+A checkpoint records the complete recipe of every replica's MD, defaults
+filled in, alongside the arguments the trainer was built with. Restarting
+therefore needs nothing but the checkpoint:
+
+```python
+trainer = ThermodynamicTrainer.from_checkpoint("train_state_ff_opt.pkl")
+trainer.fit(500, 2)
+```
+
+`from_checkpoint` runs `setup()` itself, so the returned trainer samples the
+restored force field and is ready to fit. Pass `setup=False` to get it back
+without running the MD. Any argument given overrides what the checkpoint says,
+which is how a run is resumed with a different learning rate or on a different
+device.
+
+Two things cannot be recorded and have to be supplied again:
+
+- a `loss_fn` written as a lambda, since it cannot be pickled. It is stored as
+  None and `from_checkpoint` then asks for it. A `partial` of a module-level
+  loss, as in the example above, is recorded fine.
+- anything registered with `add_modifyfn`, which has to be registered again
+  after the restart.
+
+The MD is rebuilt from the recorded recipe rather than re-derived from
+`sampling_params`, so a default that changed since the checkpoint was written
+cannot silently change what gets sampled.
+
+#### Simulated Annealing
+
+Each replica may walk its thermostat through an arbitrary temperature schedule
+before the relaxation at `temperature_K` begins. Two sampling keys describe it:
+
+| Key | Meaning |
+| --- | --- |
+| `anneal_T` | Temperature corners of the schedule, in kelvin. |
+| `anneal_steps` | MD steps spent on each leg between them, so one entry fewer than `anneal_T`. |
+| `anneal_interval` | How often, in MD steps, the set point is refreshed along a leg (default 100). |
+
+`anneal_T: [300, 500, 300]` with `anneal_steps: [50000, 100000]` heats from
+300 K to 500 K over 50000 steps and cools back over 100000. The set point moves
+linearly along each leg and lands exactly on the corner, so the ramp reads as
+continuous rather than as a handful of jumps. Leaving `anneal_T` or
+`anneal_steps` out, or setting either to `null`, skips the annealing entirely.
+Both are sequences, a list in the YAML or a list or tuple from Python: a ramp
+needs a temperature to start from and one to end at, so a bare number is
+rejected rather than read as a one-leg schedule.
+
+The schedule is per replica, so a multi-state fit can anneal each state
+differently, and it is recorded in the checkpoint alongside the other sampling
+settings.
+
+#### MD Logging
+
+The MD of every replica reports its progress and per-step state data through
+one destination, chosen with the `md_log` argument of `ThermodynamicTrainer`:
+
+| `md_log` | Destination |
+| --- | --- |
+| `"stdout"` | The terminal (default). |
+| `"file"` | `md_logfile`, or `mdlogs/<state name>.log` when that is left out, giving one file per replica. |
+| `"none"` | Nothing is written and no reporter is attached at all. |
+
+```python
+trainer = ThermodynamicTrainer(..., md_log="file")
+```
+
+Passing an explicit `md_logfile` makes every replica share, and overwrite, that
+one file; leave it out to keep the per-replica default.
 
 #### Gradient and Parameter Modification Functions
 
