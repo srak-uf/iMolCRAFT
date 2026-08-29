@@ -820,7 +820,7 @@ def test_sub_after_grad_hook_still_applies(sum_trainer_env):
 
 
 # ------------------------------------ ThermodynamicTrainer の validation 記録
-def _validation_stub(params, pred, dev=None, epoch=0, label="t"):
+def _validation_stub(params, pred, dev=None, label="t", ffxml="epoch_t-3.xml"):
     import types
 
     return types.SimpleNamespace(
@@ -830,8 +830,8 @@ def _validation_stub(params, pred, dev=None, epoch=0, label="t"):
         validation_curves=[{} for _ in params],
         validation_history=[],
         validation_dev_history=[],
+        ffxml=ffxml,
         label=label,
-        _epoch=epoch,
     )
 
 
@@ -842,12 +842,16 @@ def test_record_validation_labels_the_values_by_replica():
     stub = _validation_stub(
         [{"dself_Li": {}}, {"dself_Li": {}}],
         [{"dself_Li": 1.0}, {"dself_Li": 2.0}],
-        epoch=3,
     )
-    ThermodynamicTrainer._record_validation(stub)
+    ThermodynamicTrainer._record_validation(stub, 3)
 
     assert stub.validation_history == [
-        {"epoch": 3, "sample_0/dself_Li": 1.0, "sample_1/dself_Li": 2.0}
+        {
+            "epoch": 3,
+            "ffxml": "epoch_t-3.xml",
+            "sample_0/dself_Li": 1.0,
+            "sample_1/dself_Li": 2.0,
+        }
     ]
 
 
@@ -858,16 +862,18 @@ def test_record_validation_keeps_the_values_of_the_untouched_replicas():
     stub = _validation_stub(
         [{"dself_Li": {}}, {"dself_Li": {}}],
         [{"dself_Li": 1.0}, {"dself_Li": 2.0}],
-        epoch=3,
     )
-    ThermodynamicTrainer._record_validation(stub)
-    # sample_0 だけ再サンプリングされた状況
+    ThermodynamicTrainer._record_validation(stub, 3)
+    # sample_0 だけ再サンプリングされた状況。力場はそのとき使ったものを残す
     stub.validation_pred[0] = {"dself_Li": 1.5}
-    stub._epoch = 8
-    ThermodynamicTrainer._record_validation(stub)
+    stub.ffxml = "epoch_t-8.xml"
+    ThermodynamicTrainer._record_validation(stub, 8)
 
     assert stub.validation_history[-1] == {
-        "epoch": 8, "sample_0/dself_Li": 1.5, "sample_1/dself_Li": 2.0
+        "epoch": 8,
+        "ffxml": "epoch_t-8.xml",
+        "sample_0/dself_Li": 1.5,
+        "sample_1/dself_Li": 2.0,
     }
 
 
@@ -876,7 +882,7 @@ def test_record_validation_is_skipped_without_any_target():
     from imolcraft.trainer import ThermodynamicTrainer
 
     stub = _validation_stub([{}, {}], [{}, {}])
-    ThermodynamicTrainer._record_validation(stub)
+    ThermodynamicTrainer._record_validation(stub, 0)
 
     assert stub.validation_history == []
 
@@ -894,6 +900,35 @@ def test_update_validation_is_skipped_without_any_target():
     assert stub.validation_curves == [{}]
 
 
+def test_resample_records_the_epoch_of_the_force_field_it_sampled_with(monkeypatch):
+    """記録の epoch は、再サンプリングに使った xml の番号 (= _epoch + 1)"""
+    import types
+    from imolcraft.trainer import ThermodynamicTrainer
+    from imolcraft.trainer import trainer as trainer_mod
+
+    monkeypatch.setattr(trainer_mod, "get_target_pred_frame", lambda *a, **k: {})
+
+    recorded = []
+    stub = types.SimpleNamespace(
+        _epoch=180,
+        ffxml="xmlfiles/epoch_t-181.xml",
+        estimator=types.SimpleNamespace(states=[], optimize_mbar=lambda: None),
+        sampling_params=[{}],
+        target_params=[{}],
+        pdbfile_vsite=["x.pdb"],
+        target_pred_frame=[{}],
+        _resample_indices=lambda: [0],
+        _run_md=lambda idx, name: "sample_0.xtc",
+        _add_sample=lambda idx, name, xtc: None,
+        _update_validation=lambda idx, xtc: None,
+        _record_validation=lambda epoch: recorded.append(epoch),
+    )
+    ThermodynamicTrainer._resample(stub)
+
+    # after_step が epoch-181.xml を書いてから採った軌跡なので、181 で残す
+    assert recorded == [181]
+
+
 def test_record_validation_keeps_the_deviations_in_their_own_history():
     """ズレは値とは別の履歴に、項目ごとに分かれたまま残る"""
     from imolcraft.trainer import ThermodynamicTrainer
@@ -902,12 +937,18 @@ def test_record_validation_keeps_the_deviations_in_their_own_history():
         [{"rho": {}, "rdf_Li_O": {}}],
         [{"rho": 1.5}],
         dev=[{"rho": -0.05, "rdf_Li_O": 0.02}],
-        epoch=3,
     )
-    ThermodynamicTrainer._record_validation(stub)
+    ThermodynamicTrainer._record_validation(stub, 3)
 
     # 値を持つのはスカラーだけ、ズレは分布も含めて全部
-    assert stub.validation_history == [{"epoch": 3, "sample_0/rho": 1.5}]
+    assert stub.validation_history == [
+        {"epoch": 3, "ffxml": "epoch_t-3.xml", "sample_0/rho": 1.5}
+    ]
     assert stub.validation_dev_history == [
-        {"epoch": 3, "sample_0/rho": -0.05, "sample_0/rdf_Li_O": 0.02}
+        {
+            "epoch": 3,
+            "ffxml": "epoch_t-3.xml",
+            "sample_0/rho": -0.05,
+            "sample_0/rdf_Li_O": 0.02,
+        }
     ]

@@ -49,13 +49,20 @@ def _state_name(idx: int) -> str:
     return f"sample_{idx}"
 
 
-def _validation_record(values_per_replica: List[dict], epoch: int) -> dict:
+def _validation_record(
+    values_per_replica: List[dict], epoch: int, ffxml: str
+) -> dict:
     """
     One history record out of the per-replica validation values, keyed by the
     replica the value belongs to so that the entries of two replicas sharing a
     name stay apart.
+
+    Besides the values, a record says which force field they were measured on:
+    ``epoch`` as a number to plot against, ``ffxml`` as the file itself, so a
+    record can be traced back to the parameters that produced it even when the
+    XML files have been renamed or a restart broke the numbering.
     """
-    record = {"epoch": epoch}
+    record = {"epoch": epoch, "ffxml": ffxml}
     for idx, values in enumerate(values_per_replica):
         for name, value in values.items():
             record[f"{_state_name(idx)}/{name}"] = value
@@ -856,7 +863,7 @@ class ThermodynamicTrainer(BaseTrainer):
         for name, deviation in self.validation_dev[idx].items():
             print(f"Validation {_state_name(idx)}/{name} deviation: {deviation:.6e}")
 
-    def _record_validation(self) -> None:
+    def _record_validation(self, epoch: int) -> None:
         """
         Append the current validation values, and their deviations from the
         references, to their histories.
@@ -869,14 +876,22 @@ class ThermodynamicTrainer(BaseTrainer):
         Only the replicas resampled in this round have fresh values; the others
         keep the ones of their last sampling, so a record always describes every
         replica. The histories ride in the checkpoint, next to the losses.
+
+        The force field the values were measured on is recorded with them:
+        ``self.ffxml``, which is the one every trajectory of this round was
+        sampled with, and ``epoch``, its epoch. That is not necessarily the
+        epoch being run: :meth:`after_step` renders the force field of the next
+        epoch before resampling with it. The number is passed in rather than
+        read off the file name because a restart starts from
+        ``chkpoint_*.xml``, whose name carries none.
         """
         if not any(self.validation_params):
             return
         self.validation_history.append(
-            _validation_record(self.validation_pred, self._epoch)
+            _validation_record(self.validation_pred, epoch, self.ffxml)
         )
         self.validation_dev_history.append(
-            _validation_record(self.validation_dev, self._epoch)
+            _validation_record(self.validation_dev, epoch, self.ffxml)
         )
 
     def setup(self) -> None:
@@ -902,7 +917,8 @@ class ThermodynamicTrainer(BaseTrainer):
                         xtcfile, self.pdbfile_vsite[i], self.target_params[i]
                     )
                 )
-        self._record_validation()
+        # the force field the trainer starts from is the one of this epoch
+        self._record_validation(self._epoch)
         self.estimator.optimize_mbar()
         self.opt_state = self.optimizer.init(self.ffparams)
 
@@ -980,7 +996,9 @@ class ThermodynamicTrainer(BaseTrainer):
             )
             self._add_sample(idx, state_name, xtcfile)
             self._update_validation(idx, xtcfile)
-        self._record_validation()
+        # resampling runs on the force field rendered by after_step, which is
+        # the one of the next epoch, so that is what the record describes
+        self._record_validation(self._epoch + 1)
         self.estimator.optimize_mbar()
 
     def _needs_resample(self, ii: int, ieff: dict) -> bool:

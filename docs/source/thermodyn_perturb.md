@@ -293,7 +293,13 @@ trainer = ThermodynamicTrainer(
 The results live in the checkpoint, like the rest of the training state:
 
 - `validation_history` / `validation_dev_history`: one record per resampling of
-  the values and of their deviations, keyed `sample_{i}/{entry}`
+  the values and of their deviations, keyed `sample_{i}/{entry}`. Every record
+  also says which force field it describes: `epoch`, and `ffxml`, the file
+  itself. That is the force field the trajectories were sampled with, which is
+  the one written at the end of the epoch that resampled -- the number printed
+  by `Resampling ... by xmlfiles/epoch_LABEL-N.xml` -- and not the epoch being
+  run at the time. The first record comes from `setup`, on the force field the
+  run starts from
 - `validation_pred` / `validation_dev` / `validation_curves`: the latest values,
   the latest deviations, and the curves they came from, the MSD as
   `(lagtime_ps, msd_A2)` columns and a distribution as `(x, pred, gt)` columns

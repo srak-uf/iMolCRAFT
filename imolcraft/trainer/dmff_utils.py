@@ -400,8 +400,8 @@ def plot_validation(history: list, gt: dict = None, label="validation",
     Parameters
     ----------
     history : list of dict
-        Records written by the trainer, each with an ``epoch`` key and one key
-        per value.
+        Records written by the trainer, each with an ``epoch`` and an ``ffxml``
+        key describing the force field measured, and one key per value.
     gt : dict, optional
         Reference values, keyed like the records. A dashed line is drawn for
         the values that have one.
@@ -413,10 +413,15 @@ def plot_validation(history: list, gt: dict = None, label="validation",
         reference.
     """
     # a replica resampled for the first time adds its keys mid-history, so the
-    # columns are collected over every record rather than from the first one
+    # columns are collected over every record rather than from the first one.
+    # epoch and ffxml say which force field the record describes, they are not
+    # values to plot
     keys = []
     for record in history:
-        keys.extend(key for key in record if key != "epoch" and key not in keys)
+        keys.extend(
+            key for key in record
+            if key not in ("epoch", "ffxml") and key not in keys
+        )
     if len(keys) == 0:
         return
 

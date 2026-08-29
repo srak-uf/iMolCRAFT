@@ -11,6 +11,28 @@ fixes and backwards-compatible additions moves the patch number.
 
 ## [Unreleased]
 
+### Added
+
+- Every validation record of `ThermodynamicTrainer` now carries an `ffxml`
+  key next to `epoch`: the force field file the values were measured on. It
+  traces a record back to its parameters even when the XML files have been
+  renamed or a restart broke the numbering. `plot_validation` skips it, as it
+  does `epoch`, so it draws no panel for it.
+
+### Fixed
+
+- **The validation history of `ThermodynamicTrainer` labelled every record one
+  epoch behind the force field it was measured on.** `after_step` renders the
+  force field of the next epoch, `xmlfiles/epoch_<label>-<N+1>.xml`, and
+  resamples with it, but the record was stamped with the epoch being run, `N`.
+  A record now carries the epoch of the force field that produced it, so it
+  matches both the number in the XML file name printed by `Resampling ... by`
+  and the epoch of the loss measured on that same force field. The record
+  written by `setup` keeps epoch 0, the initial force field, which also
+  removes the duplicate epoch 0 that appeared when the first epoch resampled.
+  Histories restored from a checkpoint written before this fix keep their old
+  labels, so a run continued across it mixes the two conventions.
+
 ## [0.3.1] — 2026-08-26
 
 ### Added

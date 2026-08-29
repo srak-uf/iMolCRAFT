@@ -254,6 +254,21 @@ class TestThermodynamicTrainer:
             'sample_0/dself_C' in record and 'sample_0/rho' in record
             for record in self.trainer.validation_dev_history
         )
+        # 記録の epoch は、その値を採った力場の xml 番号。setup の記録だけが
+        # 初期力場の 0 で、以降は重複せず、走った epoch の範囲に収まる
+        epochs = [record['epoch'] for record in self.trainer.validation_history]
+        assert epochs[0] == 0
+        assert epochs == sorted(set(epochs))
+        assert epochs[-1] <= self.trainer._epoch
+        assert all(
+            os.path.exists(f"xmlfiles/epoch_test_tp-{epoch}.xml")
+            for epoch in epochs[1:]
+        )
+        # 使った力場そのものも記録に残るので、番号と突き合わせられる
+        assert all(
+            record['ffxml'] == f"xmlfiles/epoch_test_tp-{record['epoch']}.xml"
+            for record in self.trainer.validation_history[1:]
+        )
         # ズレは既定の relerr、つまり (pred - gt) / gt
         assert self.trainer.validation_dev[0]['rho'] == pytest.approx(
             (self.trainer.validation_pred[0]['rho'] - 0.4) / 0.4
