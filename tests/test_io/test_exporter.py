@@ -18,7 +18,7 @@ def test_exporter_rejects_unknown_format(tmp_path):
 
 
 def test_exporter_accepts_fmt_as_keyword(tmp_path, monkeypatch):
-    """公開 API のキーワード名は fmt（ノートブックがこの名前で呼ぶ）"""
+    """The public API keyword is named fmt (the notebooks call it by this name)"""
     pytest.importorskip("openff.interchange")
     monkeypatch.chdir(tmp_path)
     exporter(pdb=PDB, system=SYSTEM, filename="kw", fmt="lmp")
@@ -38,7 +38,7 @@ def test_exporter_writes_files(fmt, suffixes, tmp_path, monkeypatch):
 
 
 def test_exporter_lmp_header(tmp_path, monkeypatch):
-    """LAMMPS data ファイルの見出しが期待どおりの並びで書かれる"""
+    """The LAMMPS data file headers are written in the expected order"""
     pytest.importorskip("openff.interchange")
     monkeypatch.chdir(tmp_path)
     exporter(PDB, SYSTEM, "out", "lmp")
@@ -53,7 +53,7 @@ def test_exporter_lmp_header(tmp_path, monkeypatch):
 
 @pytest.fixture
 def interchange(tmp_path, monkeypatch):
-    """exporter_lmp が組み立てた Interchange を横取りして取り出す"""
+    """Intercept and grab the Interchange that exporter_lmp assembled"""
     pytest.importorskip("openff.interchange")
     captured = {}
     real = exporter_lmp_module.to_lammps_non_rectangular
@@ -76,7 +76,7 @@ def _box_lines(path):
 
 
 def test_to_lammps_non_rectangular_without_box(interchange, tmp_path):
-    """box が無いと 100 A の立方セルが書かれる（傾きはゼロ）"""
+    """Without a box a 100 A cubic cell is written (zero tilt)"""
     interchange.box = None
     out = tmp_path / "nobox.data"
     to_lammps_non_rectangular(interchange, str(out))
@@ -101,7 +101,7 @@ def test_to_lammps_non_rectangular_orthogonal(interchange, tmp_path):
 
 
 def test_to_lammps_non_rectangular_triclinic(interchange, tmp_path):
-    """三斜晶は LAMMPS の傾き因子 xy / xz / yz に変換される"""
+    """A triclinic cell is converted into the LAMMPS tilt factors xy / xz / yz"""
     from openff.toolkit.topology.molecule import unit
 
     interchange.box = numpy.array(

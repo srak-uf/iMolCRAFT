@@ -225,7 +225,7 @@ class BaseTrainer:
         self.best_epoch = None
         self.best_loss = None
         self._modifyfns = {}
-        # self._modifyfns["after_grad"]は与えられたgradをそのまま返す
+        # self._modifyfns["after_grad"] returns the given grads unchanged
         self._modifyfns["after_grad"] = lambda grads: grads
         self._modifyfns["after_update"] = lambda ffparams: ffparams
 
@@ -316,7 +316,7 @@ class BaseTrainer:
         _print_memory("grad obtained....")
         if jnp.isnan(self.loss) or jnp.isinf(self.loss):
             print("Warning: Loss is NaN or Inf. Skipping this step.")
-            # self.ffparamsを0.01%ランダムにずらす
+            # Randomly perturb self.ffparams by 0.01%
             grads = _nan_recovery_gradients(self.ffparams)
 
         grads = self._do_modify("after_grad", grads)
@@ -509,7 +509,7 @@ class SumTrainer(BaseTrainer):
         self.loss, grads = self.get_loss_gradients()
         if jnp.isnan(self.loss) or jnp.isinf(self.loss):
             print("Warning: Loss is NaN or Inf. Skipping this step.")
-            # self.ffparamsを0.01%ランダムにずらす
+            # Randomly perturb self.ffparams by 0.01%
             grads = _nan_recovery_gradients(self.ffparams)
 
         grads = self._do_modify("after_grad", grads)

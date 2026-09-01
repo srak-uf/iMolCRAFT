@@ -710,7 +710,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 else:
                     self.topology[i] = self.pdb[i].topology
                     pos = self.pdb[i].positions
-                # self.pdbfile[i]のbasenameにvs_をつけて保存
+                # Save with "vs_" prefixed to the basename of self.pdbfile[i]
                 vs_pdbfile = f"vs_{os.path.basename(self.pdbfile[i])}"
                 with open(vs_pdbfile, "w") as f:
                     app.PDBFile.writeFile(self.topology[i], pos, f)
@@ -1052,7 +1052,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 if self._needs_resample(ii, ieff):
                     self.resample[ii] = True
                     print(f"  {ii} -> Resample")
-                # TODO: Vsiteのposition update (self.estimator._input***)
+                # TODO: update vsite positions (self.estimator._input***)
             except Exception:
                 print("Warning: Error in estimating effective sample size")
                 self.estimator.states = []

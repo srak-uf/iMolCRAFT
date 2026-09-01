@@ -703,7 +703,7 @@ def update_ffinfo_from_params(ff, params):
             w1_ave3 = jnp.ones(w2_ave3.shape) - w2_ave3 - w3_ave3
             ave3_idx = 0
 
-        # "vsite_w2_type_2, vsite_w2_type_3, vsite_w3_type_3"以外のkeyがあればエラー
+        # Error out on keys other than vsite_w2_type_2/w2_type_3/w3_type_3
         for key in params["VirtualSite"].keys():
             if key not in ["vsite_w2_type_2", "vsite_w2_type_3", "vsite_w3_type_3"]:
                 raise ValueError(f"Unknown key in VirtualSite params: {key}")
@@ -784,7 +784,7 @@ def vsiteinfo_to_params(ff, params):
                 for key, value in ff.ffinfo["Residues"][i_res]["vsites"][i_vs].items()
                 if key.startswith("weight")
             ]
-            # weights_tmpのすべての要素をweightsに追加
+            # Append every element of weights_tmp to weights
             weights.extend(weights_tmp)
 
     params["VirtualSite"] = {}
@@ -953,7 +953,7 @@ def plot_compare(target_gt, target_pred_frame, label="sample"):
             x = ["GT", "FF"]
             y = [target_gt[key]["gt"], target_pred_frame[key].mean()]
             axis.bar(x, y, width=0.35)
-            # barごとに値を表示
+            # Show the value on each bar
             for i, v in enumerate(y):
                 axis.text(i, v + 0.01, str(round(v, 3)), ha="center", va="bottom")
             axis.set_ylim(0, y[0] * 1.2)

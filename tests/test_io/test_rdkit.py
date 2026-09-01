@@ -26,8 +26,8 @@ def test_il_assign_detects_known_ions(smiles, nc, expected_keys):
     [
         ("CC", 0),
         ("CC", -1),
-        ("[F][P-](F)(F)(F)(F)F", 0),  # 陰イオンでも nc >= 0 なら判定しない
-        ("[O-]S(=O)(=O)C", -1),  # S はあるが FSA の N-S 骨格ではない
+        ("[F][P-](F)(F)(F)(F)F", 0),  # an anion is not classified when nc >= 0
+        ("[O-]S(=O)(=O)C", -1),  # has S, but not the N-S backbone of FSA
     ],
 )
 def test_il_assign_returns_none_for_others(smiles, nc):
@@ -38,17 +38,17 @@ def test_il_assign_returns_none_for_others(smiles, nc):
     "smiles, nc",
     [
         ("CC", -1),
-        # P を含むがPF6ではない陰イオン。判定前に書き換えると P に -1 が付き、
-        # RDKit が原子価を合わせるため暗黙の水素が生えて分子式が変わる
-        ("[O-]P(=O)(O)O", -1),          # リン酸二水素イオン
-        ("[O-]P(=O)(F)F", -1),          # ジフルオロリン酸イオン
-        ("[O-]P(=O)([O-])[O-]", -3),    # リン酸イオン
-        # Cl に O が 4 つ付くが 1 つはエステル酸素なので ClO4 ではない
+        # Anions containing P but not PF6. Rewriting before the check puts -1 on P,
+        # and RDKit grows implicit hydrogens to fix the valence, changing the formula
+        ("[O-]P(=O)(O)O", -1),          # dihydrogen phosphate ion
+        ("[O-]P(=O)(F)F", -1),          # difluorophosphate ion
+        ("[O-]P(=O)([O-])[O-]", -3),    # phosphate ion
+        # Four O on Cl, but one is an ester oxygen, so this is not ClO4
         ("CO[Cl+3]([O-])([O-])[O-]", -1),
     ],
 )
 def test_il_assign_leaves_unmatched_molecule_untouched(smiles, nc):
-    """どのイオンにも該当しない分子は一切書き換えられない"""
+    """A molecule matching none of the ions is not rewritten at all"""
     mol = Chem.MolFromSmiles(smiles)
     before_charges = [a.GetFormalCharge() for a in mol.GetAtoms()]
     before_bonds = [str(b.GetBondType()) for b in mol.GetBonds()]
@@ -70,7 +70,7 @@ def test_il_assign_leaves_unmatched_molecule_untouched(smiles, nc):
     ],
 )
 def test_il_assign_index_layout(smiles, nc, expected):
-    """中心原子と配位子の index が昇順で返る"""
+    """The central atom and ligand indices come back in ascending order"""
     assert _il_assign(Chem.MolFromSmiles(smiles), nc) == expected
 
 
@@ -80,7 +80,7 @@ def test_central_ion_indices_requires_terminal_ligands():
     bare = Chem.MolFromSmiles("[O-][Cl+3]([O-])([O-])[O-]")
     assert _central_ion_indices(bare.GetAtoms(), "Cl", "O", 4) == (1, [0, 2, 3, 4])
 
-    # エステル酸素は Cl 以外とも結合しているので終端ではない
+    # The ester oxygen is bonded to more than Cl, so it is not terminal
     ester = Chem.MolFromSmiles("CO[Cl+3]([O-])([O-])[O-]")
     assert _central_ion_indices(ester.GetAtoms(), "Cl", "O", 4) is None
 
@@ -108,7 +108,7 @@ def test_atoms2rdkit_single_atom(symbol, nc):
     "nc", [1, np.int64(1), np.int32(1), np.int8(1), np.uint8(1)]
 )
 def test_atoms2rdkit_accepts_numpy_integers(nc):
-    """numpy 整数でも通ること。RDKit のバインディングは受け付けないので内部で int 化する"""
+    """numpy integers work too: the RDKit bindings reject them, so cast to int"""
     mol, _, _ = atoms2rdkit(Atoms("Li", positions=[[0, 0, 0]]), nc=nc)
     assert mol.GetAtomWithIdx(0).GetFormalCharge() == 1
 

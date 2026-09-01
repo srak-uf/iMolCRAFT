@@ -1,4 +1,4 @@
-"""MDCalculator とアニール・ログまわりのユニットテスト"""
+"""Unit tests for MDCalculator and the annealing / logging behaviour"""
 import sys
 
 import pytest
@@ -8,7 +8,7 @@ from imolcraft.calculator import md
 
 
 def test_anneal_schedule_expands_the_corners_into_legs():
-    """温度点 N 個と各レグのステップ数 N-1 個が (T_from, T_to, nsteps) になる"""
+    """N temperature points and N-1 leg step counts become (T_from, T_to, nsteps)"""
     assert md._anneal_schedule([100, 1000, 300], [50000, 30000]) == [
         (100.0, 1000.0, 50000),
         (1000.0, 300.0, 30000),
@@ -16,7 +16,7 @@ def test_anneal_schedule_expands_the_corners_into_legs():
 
 
 def test_anneal_schedule_without_a_schedule_is_empty():
-    """アニール指定なしはレグ 0 個、つまり何もしない"""
+    """No annealing spec means zero legs, i.e. nothing happens"""
     assert md._anneal_schedule(None, None) == []
     assert md._anneal_schedule([], []) == []
     assert md._anneal_schedule([300, 400], None) == []
@@ -28,13 +28,13 @@ def test_anneal_schedule_without_a_schedule_is_empty():
     ("300,400", [1000]),
 ])
 def test_anneal_schedule_rejects_a_bare_value(anneal_T, anneal_steps):
-    """温度点もステップ数も列で書く。裸の数値を黙って1要素に包んだりしない"""
+    """Temperatures and step counts are lists; a bare number is not silently wrapped"""
     with pytest.raises(TypeError, match="must be a list or a tuple"):
         md._anneal_schedule(anneal_T, anneal_steps)
 
 
 def test_anneal_schedule_takes_tuples_too():
-    """Python から呼ぶときのタプルも列として受ける"""
+    """A tuple, as used when calling from Python, is accepted as a list too"""
     assert md._anneal_schedule((100, 1000, 300), (50000, 30000)) == [
         (100.0, 1000.0, 50000),
         (1000.0, 300.0, 30000),
@@ -70,7 +70,7 @@ class _FakeSimulation:
 
 
 def test_ramp_temperature_lands_exactly_on_the_target():
-    """レグの最後がちょうど T_to になり、MD ステップ数の合計も一致する"""
+    """A leg ends exactly at T_to and the total MD step count matches"""
     integrator, simulation = _FakeIntegrator(), _FakeSimulation()
     md._ramp_temperature(simulation, integrator, 300.0, 400.0, 1000, 250)
 
@@ -80,7 +80,7 @@ def test_ramp_temperature_lands_exactly_on_the_target():
 
 
 def test_ramp_temperature_keeps_the_last_chunk_short():
-    """interval が割り切れなくても、余りを詰めて合計ステップ数を守る"""
+    """Even when interval does not divide evenly, the remainder keeps the total"""
     integrator, simulation = _FakeIntegrator(), _FakeSimulation()
     md._ramp_temperature(simulation, integrator, 300.0, 400.0, 250, 100)
 
@@ -90,7 +90,7 @@ def test_ramp_temperature_keeps_the_last_chunk_short():
 
 
 def test_ramp_temperature_skips_a_zero_length_leg():
-    """0 ステップのレグは MD を回さず、設定温度も触らない"""
+    """A zero-step leg runs no MD and does not touch the set temperature"""
     integrator, simulation = _FakeIntegrator(), _FakeSimulation()
     md._ramp_temperature(simulation, integrator, 300.0, 400.0, 0, 100)
 
@@ -111,7 +111,7 @@ def test_open_md_log_stdout_yields_stdout():
 
 
 def test_open_md_log_file_names_the_log_after_the_trajectory(tmp_path, monkeypatch):
-    """既定のログ名はトラジェクトリ由来なので、レプリカ同士で衝突しない"""
+    """The default log name derives from the trajectory, so replicas do not clash"""
     monkeypatch.chdir(tmp_path)
     with md._open_md_log("file", None, "sample_0.xtc") as stream:
         stream.write("hello")
@@ -134,14 +134,14 @@ def test_open_md_log_rejects_an_unknown_mode():
 
 
 def test_calculator_records_every_setting_including_the_defaults():
-    """to_dict は省略された設定も既定値込みで書き出す。既定値が変わっても再現できる"""
+    """to_dict writes omitted settings with their defaults, so runs stay reproducible"""
     calc = md.MDCalculator("start.pdb", temperature_K=350.0, prod_steps=1000)
     record = calc.to_dict()
 
     assert record["init_structure"] == "start.pdb"
     assert record["temperature_K"] == 350.0
     assert record["prod_steps"] == 1000
-    # 触っていない設定も全部入る
+    # The untouched settings are all included as well
     assert set(record) == {"init_structure"} | set(md.MDCalculator.SETTINGS)
     assert record["dt_fs"] == md.MDCalculator.SETTINGS["dt_fs"]
 
@@ -155,7 +155,7 @@ def test_calculator_round_trips_through_a_record():
 
 
 def test_calculator_rejects_an_unknown_setting():
-    """設定名の打ち間違いが黙って無視されない"""
+    """A misspelled setting name is not silently ignored"""
     with pytest.raises(TypeError, match="unknown MD settings: temperature"):
         md.MDCalculator("start.pdb", temperature=350.0)
 
@@ -166,7 +166,7 @@ def test_calculator_rejects_an_unknown_ensemble():
 
 
 def test_calculator_expands_the_annealing_schedule_on_construction():
-    """壊れたスケジュールは run を待たず構築時に落ちる"""
+    """A broken schedule fails at construction time, without waiting for run"""
     calc = md.MDCalculator("start.pdb", anneal_T=[300, 400], anneal_steps=[50])
     assert calc.anneal_legs == [(300.0, 400.0, 50)]
 
@@ -180,7 +180,7 @@ def test_calculator_expands_the_annealing_schedule_on_construction():
 ])
 def test_resolve_nonbondedmethod(name, expected):
     assert md.resolve_nonbondedmethod(name) is expected
-    # 解決済みの定数をもう一度通しても素通りする
+    # Passing an already resolved constant through again is a no-op
     assert md.resolve_nonbondedmethod(expected) is expected
 
 
@@ -212,7 +212,7 @@ def test_valid_ensembles_cover_the_barostat_flavours():
 
 
 def test_calculator_settings_are_named_as_the_sampling_section_is():
-    """設定名が YAML の sampling キーと一致するので、変換表が要らない"""
+    """The setting names match the YAML sampling keys, so no translation table"""
     sampling = {
         "init_structure": "start.pdb",
         "temperature_K": 233.15,
@@ -227,7 +227,7 @@ def test_calculator_settings_are_named_as_the_sampling_section_is():
         "anneal_T": [233.15, 400.0],
         "anneal_steps": [50],
         "anneal_interval": 25,
-        # MD の設定ではないので拾われない
+        # Not an MD setting, so it is not picked up
         "neff": 30,
         "pressure_bar": 1.0,
     }
