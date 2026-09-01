@@ -898,6 +898,14 @@ class ThermodynamicTrainer(BaseTrainer):
         """
         Set up the trainer by running MD simulations and preparing MBAR estimator.
         """
+        if self.num_vsites > 0 and any(
+            t.startswith("VirtualSite") for t in self.opt_fftypes
+        ):
+            # the pairs are cached per resampling, the vsites move every step
+            print(
+                "Warning: neighbour list not rebuilt as the vsite weights move, "
+                "only at the next resample"
+            )
         self.estimator = MBAREstimator()
         if len(self.target_gt) == 0:
             has_target_gt = False
@@ -1052,7 +1060,8 @@ class ThermodynamicTrainer(BaseTrainer):
                 if self._needs_resample(ii, ieff):
                     self.resample[ii] = True
                     print(f"  {ii} -> Resample")
-                # TODO: update vsite positions (self.estimator._input***)
+                # TODO: rebuild the cached neighbour list when the vsite
+                # weights have moved the virtual sites (estimator._input)
             except Exception:
                 print("Warning: Error in estimating effective sample size")
                 self.estimator.states = []
