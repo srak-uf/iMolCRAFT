@@ -952,3 +952,110 @@ def test_record_validation_keeps_the_deviations_in_their_own_history():
             "sample_0/rdf_Li_O": 0.02,
         }
     ]
+
+
+# ---------------------------------------------------------- target history
+def _target_stub(target_log, fresh=(True,)):
+    """A two-target stub replica: a density and one RDF, both reweighted"""
+    import types
+
+    n = len(fresh)
+    return types.SimpleNamespace(
+        _epoch=4,
+        target_log=target_log,
+        loss=3.0,
+        losses_per_replica=[1.5 for _ in range(n)],
+        wresults=[
+            {"density_gcm3": 0.9, "rdf": {"Li-O": jnp.ones(5)}} for _ in range(n)
+        ],
+        target_pred_frame=[
+            {"density_gcm3": jnp.ones(3), "rdf": {"Li-O": jnp.ones((3, 5))}}
+            for _ in range(n)
+        ],
+        _fresh_frames=list(fresh),
+        sampling_params=[{} for _ in range(n)],
+        target_history=[],
+    )
+
+
+def _record_targets(stub, neff=None):
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    if neff is None:
+        neff = [{"sample_0": 40.0, "total": 40.0}] * len(stub.sampling_params)
+    ThermodynamicTrainer._record_targets(stub, "xmlfiles/epoch_t-4.xml", neff)
+
+
+def test_target_record_low_keeps_the_scalars_only():
+    """low: losses, neff, the resampled flag and the scalar targets"""
+    stub = _target_stub("low")
+    _record_targets(stub)
+
+    assert stub.target_history == [
+        {
+            "epoch": 4,
+            "ffxml": "xmlfiles/epoch_t-4.xml",
+            "loss": 3.0,
+            "sample_0/loss": 1.5,
+            "sample_0/neff": {"sample_0": 40.0, "total": 40.0},
+            "sample_0/resampled": True,
+            "sample_0/density_gcm3": 0.9,
+        }
+    ]
+
+
+def test_target_record_medium_adds_the_distribution_curves():
+    stub = _target_stub("medium")
+    _record_targets(stub)
+
+    record = stub.target_history[0]
+    assert record["sample_0/rdf/Li-O"].shape == (5,)
+    # the reweighted curve, not the per-frame ones
+    assert not any(key.startswith("sample_0/frames/") for key in record)
+
+
+def test_target_record_all_adds_the_frames_of_the_fresh_replicas_only():
+    """all: per-frame values ride along once per resampling, per replica"""
+    stub = _target_stub("all", fresh=(True, False))
+    _record_targets(stub, neff=[{"sample_0": 40.0}, None])
+
+    record = stub.target_history[0]
+    assert record["sample_0/resampled"] is True
+    assert record["sample_1/resampled"] is False
+    assert record["sample_1/neff"] is None
+    assert record["sample_0/frames/density_gcm3"].shape == (3,)
+    assert record["sample_0/frames/rdf/Li-O"].shape == (3, 5)
+    assert "sample_1/frames/density_gcm3" not in record
+    assert record["sample_1/rdf/Li-O"].shape == (5,)
+    # recorded, so the frames count as seen: the next record has none
+    assert stub._fresh_frames == [False, False]
+    _record_targets(stub, neff=[{"sample_0": 40.0}, None])
+    assert not any(
+        key.startswith("sample_0/frames/") for key in stub.target_history[1]
+    )
+
+
+def test_target_record_none_records_nothing_but_clears_the_flags():
+    stub = _target_stub("none")
+    _record_targets(stub)
+
+    assert stub.target_history == []
+    assert stub._fresh_frames == [False]
+
+
+def test_thermodynamic_records_the_targets_before_resampling():
+    """after_step records with the ffxml of this epoch, before rendering the next"""
+    import inspect
+
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    src = inspect.getsource(ThermodynamicTrainer.__dict__["after_step"])
+    assert src.index("ffxml = self.ffxml") < src.index("renderXML")
+    assert src.index("self._record_targets(ffxml, neff)") < src.index(
+        "self._resample()"
+    )
+    # the history rides in the checkpoint and a restart puts it back
+    src = inspect.getsource(ThermodynamicTrainer.__dict__["write_checkpoint"])
+    assert '"target_history": self.target_history' in src
+    src = inspect.getsource(ThermodynamicTrainer.__dict__["from_checkpoint"])
+    assert 'dump_dict.get("target_history", [])' in src

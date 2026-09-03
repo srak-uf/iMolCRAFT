@@ -312,6 +312,53 @@ reference. Three figures are written next to the learning curve:
 zero, and `validation_curves_LABEL_{i}.png`, the curves behind them -- the one
 to look at to check that the MSD is straight over the fitted window.
 
+## Target history
+
+Besides the loss, the trainer keeps what the force field of every epoch gives
+for the targets themselves: the reweighted density, cell lengths, RDF and ADF
+curves the loss is computed from. They are appended to
+`trainer.target_history`, one record per epoch, and saved in the checkpoint as
+`target_history`, next to `target_gt`:
+
+```python
+import pickle
+
+with open("train_state_ff_opt.pkl", "rb") as f:
+    state = pickle.load(f)
+
+state["target_gt"]   # the references, one dict per replica
+history = state["target_history"]
+epochs = [record["epoch"] for record in history]
+rho = [record["sample_0/density_gcm3"] for record in history]
+rdf_last = history[-1]["sample_0/rdf/Li_O"]   # the reweighted curve
+```
+
+A record carries `epoch` and `ffxml`, the force field whose parameters the
+loss of that epoch was measured with (the file rendered at the end of the
+previous epoch, or the one the run started from for epoch 0), `loss`, and per
+replica, keyed `sample_{i}/...`: the replica's own `loss`, its effective sample
+sizes `neff` (keyed by state name, None when the estimate failed), `resampled`,
+whether its frames were freshly sampled for this epoch, and the reweighted
+targets, a scalar as `sample_{i}/{target}` and a distribution as
+`sample_{i}/{target}/{kind}`. How much of that is kept is chosen with the
+`target_log` argument of `ThermodynamicTrainer`:
+
+| `target_log` | Recorded per epoch |
+| --- | --- |
+| `"none"` | Nothing. |
+| `"low"` | `epoch`, `ffxml`, the losses, `neff`, `resampled` and the reweighted scalar targets. |
+| `"medium"` (default) | `"low"` plus the reweighted RDF and ADF curves, one per kind. |
+| `"all"` | `"medium"` plus the per-frame values every target was reweighted from, under `sample_{i}/frames/...`, recorded for a replica in the epoch its frames were resampled and left out until the next resampling. |
+
+```python
+trainer = ThermodynamicTrainer(..., target_log="all")
+```
+
+`"all"` adds one curve per frame at every resampling, so the checkpoint grows
+by frames × bins per distribution each time; it is meant for a run one wants
+to re-analyse offline. The history is restored by `from_checkpoint`, and
+passing `target_log` there changes the mode for the continued run.
+
 ## Usage Example
 ### 1. Parameter optimization
 ```python
