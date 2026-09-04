@@ -13,6 +13,26 @@ fixes and backwards-compatible additions moves the patch number.
 
 ### Added
 
+- **A `ThermodynamicTrainer` epoch whose loss comes out NaN or Inf is now
+  resampled and computed again** instead of being given up on right away.
+  The loss is an MBAR-reweighted average over the stored trajectories, so it
+  degenerates once the parameters have drifted away from the state those were
+  sampled in; the recovery runs the MD of every replica again with `ffxml`,
+  the force field the loss was measured with, and recomputes the loss of the
+  same epoch, leaving the parameters untouched. The new
+  `nan_resample_retries` argument says how many such rounds are allowed
+  (default `1`, `0` switches the recovery off); `from_checkpoint` takes it as
+  an override and it rides in the checkpoint with the other restart
+  arguments. A loss that survives the retrying falls back to the previous
+  behaviour, the parameters being perturbed and the epoch recorded as NaN,
+  and `after_step` no longer resamples a second time for a NaN the recovery
+  has already resampled for. Note that this cannot rescue a NaN coming out of
+  the parameters themselves, such as a sigma that has crossed zero: the MD is
+  reseeded on every run, but the force field decides whether the energies are
+  finite.
+  `BaseTrainer` gained the hook behind it, `recover_from_invalid_loss`, whose
+  default does nothing, so the scan trainers are unaffected. `SumTrainer`
+  retries each half through the sub-trainer that owns the data.
 - `ThermodynamicTrainer` keeps a **target history**: one record per epoch of
   what the force field of that epoch gives for every target, next to the
   loss. A record carries `epoch`, `ffxml`, `loss` and, per replica, the loss,
@@ -32,6 +52,11 @@ fixes and backwards-compatible additions moves the patch number.
 
 ### Fixed
 
+- Removed a dead NaN check in `ThermodynamicTrainer.get_loss_gradients`. It
+  read `if jnp.isnan(loss) is True:`, which compares a JAX array with `True`
+  by identity and is therefore never taken, and it duplicated what
+  `after_step` already does. Behaviour is unchanged, the recovery described
+  above having taken its place.
 - **The validation history of `ThermodynamicTrainer` labelled every record one
   epoch behind the force field it was measured on.** `after_step` renders the
   force field of the next epoch, `xmlfiles/epoch_<label>-<N+1>.xml`, and

@@ -74,6 +74,11 @@ def _build_optimizer(ffparams, opt_fftypes, optimizer_algo, lr, clip):
     return grad_transform, optax.masked(grad_transform, mask)
 
 
+def _loss_is_invalid(loss) -> bool:
+    """Whether a loss value came out NaN or Inf."""
+    return bool(jnp.isnan(loss)) or bool(jnp.isinf(loss))
+
+
 def _nan_recovery_gradients(ffparams):
     """
     Replace the gradients by a small random nudge.
@@ -116,6 +121,14 @@ class BaseTrainer:
     This class manages the setup, optimization, and checkpointing of force field
     parameters using differentiable molecular force fields and JAX-based optimizers.
     """
+
+    #: How many times a step whose loss came out NaN or Inf may be recovered
+    #: and computed again, see :meth:`recover_from_invalid_loss`. Zero means
+    #: no recovery is attempted, which is all a trainer without fresh data to
+    #: fall back on can do; :class:`~imolcraft.trainer.ThermodynamicTrainer`
+    #: overrides it per instance.
+    nan_resample_retries: int = 0
+
     def __init__(
         self,
         ffxml_list: Union[str, List[str]],
@@ -307,14 +320,70 @@ class BaseTrainer:
         """
         pass
 
+    def recover_from_invalid_loss(self, attempt: int) -> bool:
+        """
+        Try to put the trainer in a state where the loss can be computed again.
+
+        Called by :meth:`training_step` when the loss came out NaN or Inf,
+        before the step is given up on. The default does nothing: a trainer
+        fitting a fixed set of reference points has the same data on every
+        attempt, so recomputing the loss would only reproduce the NaN.
+        Subclasses whose loss depends on data they can renew override this,
+        see :meth:`ThermodynamicTrainer.recover_from_invalid_loss`.
+
+        Parameters
+        ----------
+        attempt : int
+            Which attempt this is, counting from one. Only for reporting.
+
+        Returns
+        -------
+        bool
+            Whether anything was done. False stops the retrying, so that a
+            trainer with nothing to renew does not recompute the same loss
+            ``nan_resample_retries`` times.
+        """
+        return False
+
+    def _retry_invalid_loss(self, loss, grads) -> Tuple[Any, Any]:
+        """
+        Recompute a NaN or Inf loss after letting the trainer recover.
+
+        Up to ``nan_resample_retries`` rounds of
+        :meth:`recover_from_invalid_loss` followed by a fresh
+        :meth:`get_loss_gradients` are run. A valid loss ends the loop, and so
+        does a recovery that reports it could do nothing. The parameters are
+        left alone throughout, so a successful retry is the loss of this very
+        step rather than of a step already taken.
+
+        Returns the loss and gradients to carry on with, which are the ones
+        passed in when no retrying happened.
+        """
+        attempt = 0
+        while _loss_is_invalid(loss) and attempt < self.nan_resample_retries:
+            attempt += 1
+            print(
+                f"Warning: Loss is NaN or Inf. Recovery attempt "
+                f"{attempt}/{self.nan_resample_retries}."
+            )
+            if not self.recover_from_invalid_loss(attempt):
+                break
+            loss, grads = self.get_loss_gradients()
+            _print_memory(f"grad obtained after recovery {attempt}....")
+        return loss, grads
+
     def training_step(self) -> None:
         """
         Perform a single training step: compute loss, gradients, and update parameters.
-        Handles NaN/Inf loss by perturbing parameters.
+
+        A NaN or Inf loss is first retried through
+        :meth:`recover_from_invalid_loss`; one that survives the retrying is
+        given up on and the parameters are perturbed instead.
         """
         self.loss, grads = self.get_loss_gradients()
         _print_memory("grad obtained....")
-        if jnp.isnan(self.loss) or jnp.isinf(self.loss):
+        self.loss, grads = self._retry_invalid_loss(self.loss, grads)
+        if _loss_is_invalid(self.loss):
             print("Warning: Loss is NaN or Inf. Skipping this step.")
             # Randomly perturb self.ffparams by 0.01%
             grads = _nan_recovery_gradients(self.ffparams)
@@ -478,7 +547,10 @@ class SumTrainer(BaseTrainer):
         """
         loss, grads = trainer.get_loss_gradients()
         print(f"{name}: {loss}")
-        if jnp.isnan(loss) or jnp.isinf(loss):
+        # the recovery belongs to the sub-trainer, which is the one holding
+        # the data the NaN came out of, and only its own half is recomputed
+        loss, grads = trainer._retry_invalid_loss(loss, grads)
+        if _loss_is_invalid(loss):
             print("Warning: Loss is NaN or Inf. Skipping this step.")
             grads = _nan_recovery_gradients(trainer.ffparams)
 
@@ -504,10 +576,13 @@ class SumTrainer(BaseTrainer):
     def training_step(self):
         """
         Perform a single training step: compute loss, gradients, and update parameters.
-        Handles NaN/Inf loss by perturbing parameters.
+
+        A NaN or Inf loss of either half was already retried by
+        :meth:`_substep`, so one arriving here has survived the recovery and
+        the parameters are perturbed instead.
         """
         self.loss, grads = self.get_loss_gradients()
-        if jnp.isnan(self.loss) or jnp.isinf(self.loss):
+        if _loss_is_invalid(self.loss):
             print("Warning: Loss is NaN or Inf. Skipping this step.")
             # Randomly perturb self.ffparams by 0.01%
             grads = _nan_recovery_gradients(self.ffparams)

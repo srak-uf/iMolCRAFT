@@ -193,6 +193,36 @@ Adaptive resampling is triggered when:
 
 This ensures the method remains stable across the optimization landscape.
 
+#### Recovering from a NaN Loss
+
+The loss is an MBAR-reweighted average over the stored trajectories, so it
+degenerates into NaN or Inf once the parameters have drifted away from the
+state those trajectories were sampled in. Rather than giving the epoch up,
+the trainer resamples and computes the same loss again:
+
+1. every replica is resampled with `trainer.ffxml`, the very force field the
+   NaN was measured with, so the new trajectories belong to the epoch being
+   retried and their validation record is filed under it;
+2. the loss and its gradients are computed again from the fresh frames. The
+   parameters are not touched in between, so a successful retry is the loss
+   of this epoch rather than of one already stepped past.
+
+`nan_resample_retries` (default `1`) says how many such rounds are allowed;
+`0` switches the recovery off. Each round runs the MD of every replica, so it
+costs a full resampling. A loss that is still NaN after the last round is
+given up on the way it always was: the parameters are perturbed by a small
+random nudge, the epoch is recorded as NaN and the run carries on.
+
+This cannot rescue a NaN that comes out of the parameters themselves — a
+sigma that has crossed zero, an epsilon that has gone negative, a charge that
+has run away. OpenMM reseeds both the Langevin noise and the initial
+velocities on every run, so a resampling really is an independent trajectory,
+but it is the force field that decides whether the energies are finite. If
+the loss stays NaN through the retries, or comes back on a restart from the
+same checkpoint, look at the parameters rather than at the sampling: an
+`after_update` hook that keeps `sigma` and `epsilon` positive, a smaller `lr`
+or a tighter `clip` is what helps there.
+
 #### Validation Properties
 
 Properties listed in the optional `validation` section of the YAML are computed

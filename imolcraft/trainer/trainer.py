@@ -24,7 +24,7 @@ from ..trainer.dmff_utils import (
     get_chgparams_from_rescharges,
 )
 from .loss import _NPT_ENSEMBLES
-from .base import BaseTrainer, plot_learning_curve
+from .base import BaseTrainer, _loss_is_invalid, plot_learning_curve
 from ..provenance import provenance_fields
 from ..calculator import DihedralCalculator, DistanceCalculator
 from openmm import unit
@@ -583,6 +583,7 @@ class ThermodynamicTrainer(BaseTrainer):
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
         resample_freq: int = 50,
+        nan_resample_retries: int = 1,
         restart_xml: str = None,
         device: str = "CPU",
         md_log: str = "stdout",
@@ -622,6 +623,13 @@ class ThermodynamicTrainer(BaseTrainer):
             Learning rate(s) for optimizer (default: 0.0001).
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
+        nan_resample_retries : int, optional
+            How many times an epoch whose loss came out NaN or Inf is
+            resampled and recomputed before the step is given up on
+            (default: 1). Zero keeps the parameters perturbed and the epoch
+            recorded as NaN, which is what happened before this existed.
+            Every retry runs the MD of every replica again, so it costs a
+            full resampling.
         restart_xml : str, optional
             Path to the XML file for restarting the training.
         md_log : {'stdout', 'file', 'none'}, optional
@@ -645,6 +653,10 @@ class ThermodynamicTrainer(BaseTrainer):
         self.validation_params = validation_params
         self.resample_freq = resample_freq
         self.resample_counter = 0
+        self.nan_resample_retries = nan_resample_retries
+        # whether recover_from_invalid_loss already resampled within this
+        # step, read and cleared by after_step
+        self._nan_resampled = False
 
         self.device = device
         self.md_log = md_log
@@ -680,6 +692,7 @@ class ThermodynamicTrainer(BaseTrainer):
             "md_log": md_log,
             "md_logfile": md_logfile,
             "resample_freq": resample_freq,
+            "nan_resample_retries": nan_resample_retries,
             "target_log": self.target_log,
         }
 
@@ -1032,8 +1045,6 @@ class ThermodynamicTrainer(BaseTrainer):
             self.utarget.append(utarget)
             self.wresults.append(wresults)
             self.losses_per_replica.append(loss_tmp)
-        if jnp.isnan(loss) is True:
-            self.resample = [True for i in range(len(self.sampling_params))]
 
         return loss, grads
 
@@ -1048,7 +1059,7 @@ class ThermodynamicTrainer(BaseTrainer):
             return [i for i, flag in enumerate(self.resample) if flag]
         return list(range(len(self.sampling_params)))
 
-    def _resample(self) -> None:
+    def _resample(self, record_epoch: Optional[int] = None) -> None:
         """
         Resample MD trajectories and update MBAR estimator if needed.
 
@@ -1056,6 +1067,16 @@ class ThermodynamicTrainer(BaseTrainer):
         ``estimator.states``: removing and re-adding a state moves it to the
         end of that list, so the positions stop matching the replica indices
         after the first resampling.
+
+        Parameters
+        ----------
+        record_epoch : int, optional
+            Epoch the validation record of these trajectories is filed under.
+            The default, ``self._epoch + 1``, is the one of the routine call
+            from :meth:`after_step`, which resamples with the force field it
+            has just rendered for the next epoch. A recovery resampling
+            passes ``self._epoch``, since it samples the force field of the
+            epoch being retried.
         """
         self.resample_counter = 0
         registered = {state.name for state in self.estimator.states}
@@ -1074,7 +1095,9 @@ class ThermodynamicTrainer(BaseTrainer):
             self._update_validation(idx, xtcfile)
         # resampling runs on the force field rendered by after_step, which is
         # the one of the next epoch, so that is what the record describes
-        self._record_validation(self._epoch + 1)
+        self._record_validation(
+            self._epoch + 1 if record_epoch is None else record_epoch
+        )
         self.estimator.optimize_mbar()
 
     def _needs_resample(self, ii: int, ieff: dict) -> bool:
@@ -1088,6 +1111,44 @@ class ThermodynamicTrainer(BaseTrainer):
         own = ieff.get(_state_name(ii))
         return own is not None and own < self.neff[ii]
 
+    def recover_from_invalid_loss(self, attempt: int) -> bool:
+        """
+        Resample every replica so that the loss of this epoch can be computed
+        again.
+
+        The loss is an MBAR-reweighted average over the stored trajectories.
+        Once the parameters have drifted away from the state those were
+        sampled in, the weights degenerate and the average comes out NaN,
+        which fresh trajectories at the current force field cure. ``ffxml``
+        still names the force field this epoch's loss was measured with, so
+        the new trajectories belong to the epoch being retried and their
+        validation record is filed under it rather than under the next one.
+
+        Note that this cannot help against a NaN coming out of the parameters
+        themselves, such as a sigma that has crossed zero: the MD is reseeded
+        on every run, but it is the force field that decides whether the
+        energies are finite. If the loss stays NaN through the retries, look
+        at the parameters rather than at the sampling.
+
+        Returns
+        -------
+        bool
+            True once the resampling has run. False when there is no
+            estimator yet, i.e. :meth:`setup` has not been called, since
+            there is then nothing to resample into.
+        """
+        if getattr(self, "estimator", None) is None:
+            return False
+        print(
+            f"Resampling every replica with {self.ffxml} and recomputing the "
+            f"loss of epoch {self._epoch} (attempt {attempt})"
+        )
+        self.resample = [True for _ in range(len(self.sampling_params))]
+        self._resample(record_epoch=self._epoch)
+        self.resample = [False for _ in range(len(self.sampling_params))]
+        self._nan_resampled = True
+        return True
+
     def after_step(self) -> None:
         """
         Update force field, input arrays, and resample if necessary after each
@@ -1099,15 +1160,17 @@ class ThermodynamicTrainer(BaseTrainer):
         if self.resample_counter >= self.resample_freq:
             self.resample = [True for i in range(len(self.sampling_params))]
         loss_value = getattr(self, "loss", None)
-        loss_is_invalid = loss_value is not None and (
-            bool(jnp.isnan(loss_value)) or bool(jnp.isinf(loss_value))
-        )
-        if loss_is_invalid:
+        loss_is_invalid = loss_value is not None and _loss_is_invalid(loss_value)
+        # a recovery resampling has already run within this step, on the very
+        # force field the loss was measured with, so doing it again here would
+        # only repeat it with the perturbed parameters
+        if loss_is_invalid and not self._nan_resampled:
             print(
                 "Warning: Loss is NaN or Inf. "
                 "Resampling with the last valid force field XML."
             )
             self.resample = [True for i in range(len(self.sampling_params))]
+        self._nan_resampled = False
 
         self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
         self.rescharges = update_rescharges_from_params(self.rescharges, self.ffparams)
@@ -1242,6 +1305,7 @@ class ThermodynamicTrainer(BaseTrainer):
         md_log: Optional[str] = None,
         md_logfile: Optional[str] = None,
         resample_freq: Optional[int] = None,
+        nan_resample_retries: Optional[int] = None,
         target_log: Optional[str] = None,
         setup: bool = True,
     ) -> "ThermodynamicTrainer":
@@ -1280,6 +1344,7 @@ class ThermodynamicTrainer(BaseTrainer):
             "md_log": md_log,
             "md_logfile": md_logfile,
             "resample_freq": resample_freq,
+            "nan_resample_retries": nan_resample_retries,
             "target_log": target_log,
         }
         restart_args.update({k: v for k, v in given.items() if v is not None})
