@@ -69,6 +69,22 @@ def _validation_record(
     return record
 
 
+TARGET_LOG_MODES = ("none", "low", "medium", "all")
+
+
+def _flatten_targets(values: dict, prefix: str, distributions: bool) -> dict:
+    """One replica's targets as ``prefix/target`` keys, a distribution as
+    ``prefix/target/kind`` or left out when ``distributions`` is False."""
+    flat = {}
+    for target, value in values.items():
+        if not isinstance(value, dict):
+            flat[f"{prefix}/{target}"] = value
+        elif distributions:
+            for kind, curve in value.items():
+                flat[f"{prefix}/{target}/{kind}"] = curve
+    return flat
+
+
 def _scan_positions_nm(ff_scan, potentials, num_vsites, dtype=jnp.float64):
     """
     Coordinates of every scan point in nanometre, with the virtual sites
@@ -571,6 +587,7 @@ class ThermodynamicTrainer(BaseTrainer):
         device: str = "CPU",
         md_log: str = "stdout",
         md_logfile: Optional[str] = None,
+        target_log: str = "medium",
     ) -> None:
         """
         Initialize the ThermodynamicTrainer.
@@ -615,6 +632,12 @@ class ThermodynamicTrainer(BaseTrainer):
             Log file used when ``md_log='file'``. Default is
             ``mdlogs/<state name>.log``, one file per replica. Note that a
             single explicit path makes all replicas share (and overwrite) it.
+        target_log : {'none', 'low', 'medium', 'all'}, optional
+            How much of the target predictions of every epoch goes into
+            ``target_history``, saved in the checkpoint: the losses,
+            effective sample sizes and reweighted scalars (``'low'``), plus
+            the reweighted RDF/ADF curves (``'medium'``, default), plus the
+            per-frame values of every resampled replica (``'all'``, large).
         """
         # params
         self.sampling_params = sampling_params
@@ -626,6 +649,12 @@ class ThermodynamicTrainer(BaseTrainer):
         self.device = device
         self.md_log = md_log
         self.md_logfile = md_logfile
+        if target_log not in TARGET_LOG_MODES:
+            raise ValueError(
+                f"target_log must be one of {list(TARGET_LOG_MODES)}, got "
+                f"{target_log!r}"
+            )
+        self.target_log = target_log
 
         super().__init__(
             ffxml_list=ffxml_list,
@@ -651,6 +680,7 @@ class ThermodynamicTrainer(BaseTrainer):
             "md_log": md_log,
             "md_logfile": md_logfile,
             "resample_freq": resample_freq,
+            "target_log": self.target_log,
         }
 
         # MD + Energy function setup
@@ -808,6 +838,11 @@ class ThermodynamicTrainer(BaseTrainer):
         self.validation_history = []
         self.validation_dev_history = []
 
+        # target history, see _record_targets
+        self.target_history = []
+        self.losses_per_replica = []
+        self._fresh_frames = [False for _ in self.sampling_params]
+
         # loss function
         if not isinstance(self.loss_fn, list):
             self.loss_fn = [self.loss_fn for _ in range(len(self.sampling_params))]
@@ -838,6 +873,7 @@ class ThermodynamicTrainer(BaseTrainer):
         traj = md.load(xtcfile, top=self.pdbfile_vsite[idx])
         self.estimator.add_state(state)
         self.estimator.add_sample(Sample(traj, state_name))
+        self._fresh_frames[idx] = True
 
     def _update_validation(self, idx: int, xtcfile: str) -> None:
         """
@@ -894,6 +930,36 @@ class ThermodynamicTrainer(BaseTrainer):
             _validation_record(self.validation_dev, epoch, self.ffxml)
         )
 
+    def _record_targets(self, ffxml: str, neff: List[Optional[dict]]) -> None:
+        """
+        Append what the force field ``ffxml`` of this epoch gives for the
+        targets to ``target_history``.
+
+        A record holds ``epoch``, ``ffxml``, ``loss`` and, per replica, its
+        loss, ``neff``, ``resampled`` and the reweighted targets as
+        ``sample_{i}/{target}[/{kind}]``. ``target_log`` decides whether the
+        distributions (``medium``) and the per-frame values of a freshly
+        sampled replica (``all``, under ``sample_{i}/frames/``) go in.
+        """
+        fresh = self._fresh_frames
+        self._fresh_frames = [False for _ in self.sampling_params]
+        if self.target_log == "none":
+            return
+
+        record = {"epoch": self._epoch, "ffxml": ffxml, "loss": self.loss}
+        distributions = self.target_log in ("medium", "all")
+        for idx, weighted in enumerate(self.wresults):
+            name = _state_name(idx)
+            record[f"{name}/loss"] = self.losses_per_replica[idx]
+            record[f"{name}/neff"] = neff[idx]
+            record[f"{name}/resampled"] = fresh[idx]
+            record.update(_flatten_targets(weighted, name, distributions))
+            if self.target_log == "all" and fresh[idx]:
+                record.update(
+                    _flatten_targets(self.target_pred_frame[idx], f"{name}/frames", True)
+                )
+        self.target_history.append(record)
+
     def setup(self) -> None:
         """
         Set up the trainer by running MD simulations and preparing MBAR estimator.
@@ -945,6 +1011,7 @@ class ThermodynamicTrainer(BaseTrainer):
         loss = 0.0
         self.utarget = []
         self.wresults = []
+        self.losses_per_replica = []
         for i in range(len(self.sampling_params)):
             (loss_tmp, (utarget, wresults)), grads_tmp = value_and_grad(
                 self.loss_fn[i], argnums=0, has_aux=True
@@ -964,6 +1031,7 @@ class ThermodynamicTrainer(BaseTrainer):
             grads = tree_map(lambda x, y: x + y, grads, grads_tmp)
             self.utarget.append(utarget)
             self.wresults.append(wresults)
+            self.losses_per_replica.append(loss_tmp)
         if jnp.isnan(loss) is True:
             self.resample = [True for i in range(len(self.sampling_params))]
 
@@ -1026,6 +1094,7 @@ class ThermodynamicTrainer(BaseTrainer):
         optimization step.
         Handles periodic XML output and effective sample size checks.
         """
+        ffxml = self.ffxml  # the one this epoch's loss was measured with
         self.resample_counter += 1
         if self.resample_counter >= self.resample_freq:
             self.resample = [True for i in range(len(self.sampling_params))]
@@ -1050,11 +1119,13 @@ class ThermodynamicTrainer(BaseTrainer):
         self.ffparams = get_chgparams_from_rescharges(self.ffparams, self.rescharges)
 
         print("Effective sample sizes:")
+        neff = [None for _ in self.sampling_params]
         for ii in range(len(self.sampling_params)):
             try:
                 ieff = self.estimator.estimate_effective_sample(
                     self.utarget[ii], decompose=True
                 )
+                neff[ii] = ieff
                 for k, v in ieff.items():
                     print(f"  {k}: {v}")
                 if self._needs_resample(ii, ieff):
@@ -1067,6 +1138,8 @@ class ThermodynamicTrainer(BaseTrainer):
                 self.estimator.states = []
                 self.estimator.samples = []
                 self.resample = [True for i in range(len(self.sampling_params))]
+
+        self._record_targets(ffxml, neff)
 
         if True in self.resample:
             self._resample()
@@ -1116,6 +1189,8 @@ class ThermodynamicTrainer(BaseTrainer):
                     "validation_curves": self.validation_curves,
                     "validation_history": self.validation_history,
                     "validation_dev_history": self.validation_dev_history,
+                    "target_log": self.target_log,
+                    "target_history": self.target_history,
                     **self._best_checkpoint_fields(),
                     **provenance_fields(),
                 }
@@ -1167,6 +1242,7 @@ class ThermodynamicTrainer(BaseTrainer):
         md_log: Optional[str] = None,
         md_logfile: Optional[str] = None,
         resample_freq: Optional[int] = None,
+        target_log: Optional[str] = None,
         setup: bool = True,
     ) -> "ThermodynamicTrainer":
         """
@@ -1204,6 +1280,7 @@ class ThermodynamicTrainer(BaseTrainer):
             "md_log": md_log,
             "md_logfile": md_logfile,
             "resample_freq": resample_freq,
+            "target_log": target_log,
         }
         restart_args.update({k: v for k, v in given.items() if v is not None})
         missing = [k for k in ("ffxml_list", "nums_ffxml", "pdbfile")
@@ -1291,6 +1368,7 @@ class ThermodynamicTrainer(BaseTrainer):
         trainer.resample_counter = dump_dict.get("resample_counter", 0)
         trainer.validation_history = dump_dict.get("validation_history", [])
         trainer.validation_dev_history = dump_dict.get("validation_dev_history", [])
+        trainer.target_history = dump_dict.get("target_history", [])
         trainer._restore_best(dump_dict)
 
         return trainer

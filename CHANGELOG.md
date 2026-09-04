@@ -13,6 +13,17 @@ fixes and backwards-compatible additions moves the patch number.
 
 ### Added
 
+- `ThermodynamicTrainer` keeps a **target history**: one record per epoch of
+  what the force field of that epoch gives for every target, next to the
+  loss. A record carries `epoch`, `ffxml`, `loss` and, per replica, the loss,
+  the effective sample sizes, whether the frames were freshly sampled, and
+  the MBAR-reweighted targets keyed `sample_{i}/{target}` (a distribution as
+  `sample_{i}/{target}/{kind}`). It lives in `trainer.target_history`, is
+  saved in the checkpoint as `target_history` and comes back through
+  `from_checkpoint`. The new `target_log` argument picks how much is kept:
+  `"low"` the scalars only, `"medium"` (default) the RDF and ADF curves as
+  well, `"all"` also the per-frame values behind them whenever a replica was
+  resampled, `"none"` nothing.
 - Every validation record of `ThermodynamicTrainer` now carries an `ffxml`
   key next to `epoch`: the force field file the values were measured on. It
   traces a record back to its parameters even when the XML files have been
