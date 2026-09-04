@@ -577,6 +577,45 @@ This function is called after parameter updates to enforce chemical constraints:
   - `target_charges`: Target net charge for each group (e.g., -1.0 for BF₄⁻)
 - **Purpose**: Ensures that any numerical drift from charge updates is corrected, maintaining chemical validity
 
+**Lower bounds on the parameters**
+
+A Lennard-Jones sigma divides a distance and a negative epsilon turns the
+well into a barrier, so neither may be driven through zero by an optimizer
+step. After every step the trainer checks the parameters against a lower
+bound and puts an entry that fell through it back to the value it held before
+the step -- not onto the bound itself, where a switched-off site has no
+gradient left and the optimizer could never climb back out. The correction
+prints what it hit:
+
+```
+Warning: NonbondedForce/sigma was pushed below 0.001 in 2 place(s), the lowest to -0.00417. Held at the values of the previous step. Repeated warnings mean lr or clip is too large for this parameter.
+```
+
+One such line is the optimizer overshooting once. A run full of them means
+`lr` or `clip` is too large for that parameter type, and the fit is being
+held together by the bound rather than by the gradient.
+
+The bounds are the `param_floors` argument, keyed by the same
+`Force/parameter` names as `opt_fftypes`:
+
+| `param_floors` | Effect |
+| --- | --- |
+| omitted (`None`) | `imolcraft.trainer.base.DEFAULT_PARAM_FLOORS`: `NonbondedForce/sigma` at `1e-3` nm, `NonbondedForce/epsilon` at `0` kJ/mol. |
+| `{}` | Nothing is bounded. |
+| `{"NonbondedForce/sigma": 0.05, "HarmonicBondForce/k": 0.0}` | Exactly these, replacing the defaults. |
+
+```python
+trainer = ThermodynamicTrainer(..., param_floors={"NonbondedForce/sigma": 0.05})
+```
+
+A bound naming a force the field does not carry is ignored, so the same
+default is harmless for a trainer fitting torsions alone. Charges are
+deliberately not bounded, being signed, and neither is a torsion force
+constant, which is free to change sign. The correction runs *before* the
+`"after_update"` hook below, so a hook registered for a hard constraint still
+has the last word. Every checkpoint records the bounds it was given, so a
+restart does not fall back to the defaults.
+
 **`trainer.add_modifyfn(hook_point, function)` - API for registering modifications**
 
 This method registers custom modification functions at specific points in the optimization loop:
