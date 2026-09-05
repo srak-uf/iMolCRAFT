@@ -1107,14 +1107,16 @@ def test_base_trainer_attempts_no_recovery_and_thermodynamic_retries_once():
 @pytest.mark.parametrize(
     "retries, losses, recoveries, expected_calls, expect_nan",
     [
-        # a finite loss is never retried
         (3, [1.5, 2.5], None, {"loss": 0, "recover": 0}, False),
-        # a loss that stays invalid is handed back after the allowed rounds
         (2, [float("nan")] * 4, None, {"loss": 2, "recover": 2}, True),
-        # a recovery that could do nothing stops the retrying
         (3, [float("nan")] * 2, [False], {"loss": 0, "recover": 1}, True),
-        # zero retries switches the recovery off
         (0, [float("nan"), 1.0], None, {"loss": 0, "recover": 0}, True),
+    ],
+    ids=[
+        "finite-never-retried",
+        "stays-invalid-after-rounds",
+        "recovery-did-nothing",
+        "zero-retries",
     ],
 )
 def test_the_retry_loop_stops_where_it_should(
@@ -1130,6 +1132,8 @@ def test_the_retry_loop_stops_where_it_should(
     if expected_calls["loss"] == 0:
         # nothing was recomputed, so the input comes back as it was
         assert out_grads == {"grads": 0}
+        if not expect_nan:
+            assert out_loss == pytest.approx(losses[0], rel=1e-6, abs=1e-12)
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
