@@ -284,17 +284,19 @@ def sum_trainer_env(tmp_path, monkeypatch):
     pdbfile = _ethane_pdb(tmp_path / "ethane.pdb")
     DummyTrainer = _dummy_trainer_cls()
 
-    def make(label):
-        return DummyTrainer(
-            ffxml_list=[ffxml],
-            nums_ffxml=[1],
-            pdbfile=pdbfile,
-            loss_fn=None,
-            opt_fftypes=["NonbondedForce/charge"],
-            label=label,
-            lr=0.01,
-            clip=0.1,
-        )
+    def make(label, **kwargs):
+        options = {
+            "ffxml_list": [ffxml],
+            "nums_ffxml": [1],
+            "pdbfile": pdbfile,
+            "loss_fn": None,
+            "opt_fftypes": ["NonbondedForce/charge"],
+            "label": label,
+            "lr": 0.01,
+            "clip": 0.1,
+        }
+        options.update(kwargs)
+        return DummyTrainer(**options)
 
     return make
 
@@ -1059,8 +1061,6 @@ def test_thermodynamic_records_the_targets_before_resampling():
     assert '"target_history": self.target_history' in src
     src = inspect.getsource(ThermodynamicTrainer.__dict__["from_checkpoint"])
     assert 'dump_dict.get("target_history", [])' in src
-
-
 # ------------------------------------------- NaN loss recovery by resampling
 def _retry_stub(retries, losses, recoveries=None):
     """
@@ -1274,3 +1274,229 @@ def test_resample_files_the_validation_record_under_the_given_epoch(monkeypatch)
     recorded.clear()
     ThermodynamicTrainer._resample(stub)
     assert recorded == [12, "mbar"]
+
+
+# --------------------------------------- lower bounds on physical parameters
+def _tree(sigma, epsilon, charge=(0.5, -0.5)):
+    return {
+        "NonbondedForce": {
+            "sigma": jnp.array(sigma, dtype=jnp.float64),
+            "epsilon": jnp.array(epsilon, dtype=jnp.float64),
+            "charge": jnp.array(charge, dtype=jnp.float64),
+        }
+    }
+
+
+def test_the_defaults_bound_sigma_and_epsilon_only():
+    """A charge is signed and a torsion constant may change sign, so neither is bound"""
+    from imolcraft.trainer.base import DEFAULT_PARAM_FLOORS
+
+    assert set(DEFAULT_PARAM_FLOORS) == {
+        "NonbondedForce/sigma",
+        "NonbondedForce/epsilon",
+    }
+    # a sigma divides a distance, so it has to stay clear of zero, while a
+    # switched-off Lennard-Jones site is a legitimate epsilon of zero
+    assert DEFAULT_PARAM_FLOORS["NonbondedForce/sigma"] > 0.0
+    assert DEFAULT_PARAM_FLOORS["NonbondedForce/epsilon"] == 0.0
+
+
+def test_none_asks_for_the_defaults_and_an_empty_dict_for_nothing():
+    from imolcraft.trainer.base import DEFAULT_PARAM_FLOORS, _resolve_param_floors
+
+    tree = _tree([0.3, 0.3], [0.5, 0.5])
+    assert _resolve_param_floors(tree, None) == {
+        name: float(floor) for name, floor in DEFAULT_PARAM_FLOORS.items()
+    }
+    assert _resolve_param_floors(tree, {}) == {}
+
+
+def test_a_bound_the_force_field_does_not_carry_is_dropped():
+    """A trainer fitting torsions alone carries no sigma, and must not raise"""
+    from imolcraft.trainer.base import _resolve_param_floors
+
+    torsions = {"PeriodicTorsionForce": {"proper_k": jnp.array([1.0])}}
+    assert _resolve_param_floors(torsions, None) == {}
+    assert _resolve_param_floors(
+        torsions, {"HarmonicBondForce/k": 0.0, "PeriodicTorsionForce/proper_k": -5.0}
+    ) == {"PeriodicTorsionForce/proper_k": -5.0}
+
+
+def test_a_feasible_step_is_left_untouched():
+    from imolcraft.trainer.base import _resolve_param_floors, enforce_param_floors
+
+    previous = _tree([0.30, 0.31], [0.5, 0.6])
+    stepped = _tree([0.29, 0.32], [0.4, 0.0])
+    floors = _resolve_param_floors(stepped, None)
+
+    out, report = enforce_param_floors(stepped, previous, floors)
+    assert report == {}
+    # the very same tree comes back, so nothing was copied for nothing
+    assert out is stepped
+    # an epsilon of zero is on its bound, not below it
+    assert float(out["NonbondedForce"]["epsilon"][1]) == 0.0
+
+
+def test_a_parameter_pushed_below_its_bound_is_held_at_the_previous_value():
+    """Not parked on the bound: a sigma at the bound has no gradient left"""
+    from imolcraft.trainer.base import _resolve_param_floors, enforce_param_floors
+
+    previous = _tree([0.30, 0.31], [0.5, 0.6])
+    stepped = _tree([-0.02, 0.32], [0.4, -0.1])
+    floors = _resolve_param_floors(stepped, None)
+
+    out, report = enforce_param_floors(stepped, previous, floors)
+
+    assert list(out["NonbondedForce"]["sigma"]) == [0.30, 0.32]
+    assert list(out["NonbondedForce"]["epsilon"]) == [0.4, 0.6]
+    assert report["NonbondedForce/sigma"] == {"count": 1, "lowest": -0.02}
+    assert report["NonbondedForce/epsilon"]["count"] == 1
+
+
+def test_holding_a_parameter_leaves_the_previous_tree_alone():
+    from imolcraft.trainer.base import _resolve_param_floors, enforce_param_floors
+
+    previous = _tree([0.30, 0.31], [0.5, 0.6])
+    stepped = _tree([-0.02, 0.32], [0.4, 0.6])
+    floors = _resolve_param_floors(stepped, None)
+
+    enforce_param_floors(stepped, previous, floors)
+    assert list(previous["NonbondedForce"]["sigma"]) == [0.30, 0.31]
+    assert list(stepped["NonbondedForce"]["sigma"]) == [-0.02, 0.32]
+
+
+def test_a_previous_value_below_the_bound_is_raised_onto_it():
+    """A force field that started out unphysical still comes out feasible"""
+    from imolcraft.trainer.base import (
+        DEFAULT_PARAM_FLOORS,
+        _resolve_param_floors,
+        enforce_param_floors,
+    )
+
+    previous = _tree([-0.5, 0.31], [0.5, 0.6])
+    stepped = _tree([-0.6, 0.32], [0.5, 0.6])
+    floors = _resolve_param_floors(stepped, None)
+
+    out, _ = enforce_param_floors(stepped, previous, floors)
+    assert float(out["NonbondedForce"]["sigma"][0]) == pytest.approx(
+        DEFAULT_PARAM_FLOORS["NonbondedForce/sigma"]
+    )
+
+
+def test_charges_are_never_held_back():
+    from imolcraft.trainer.base import _resolve_param_floors, enforce_param_floors
+
+    previous = _tree([0.30], [0.5], charge=(0.4,))
+    stepped = _tree([0.30], [0.5], charge=(-1.2,))
+    floors = _resolve_param_floors(stepped, None)
+
+    out, report = enforce_param_floors(stepped, previous, floors)
+    assert float(out["NonbondedForce"]["charge"][0]) == -1.2
+    assert report == {}
+
+
+def test_bounding_nothing_short_circuits():
+    from imolcraft.trainer.base import enforce_param_floors
+
+    stepped = _tree([-1.0], [-1.0])
+    out, report = enforce_param_floors(stepped, _tree([0.3], [0.5]), {})
+    assert out is stepped and report == {}
+
+
+def test_the_bounds_are_applied_before_the_after_update_hook():
+    """A hook registered for a hard constraint keeps the last word"""
+    import inspect
+
+    from imolcraft.trainer.base import BaseTrainer, SumTrainer
+
+    for cls in (BaseTrainer, SumTrainer):
+        src = inspect.getsource(cls.__dict__["training_step"])
+        assert "enforce_param_floors" in src, cls.__name__
+        assert src.index("apply_updates") < src.index("enforce_param_floors"), (
+            cls.__name__
+        )
+        # the call, not the mention of the hook in the docstring
+        assert src.index("enforce_param_floors") < src.index(
+            '_do_modify("after_update"'
+        ), cls.__name__
+
+
+def test_sumtrainer_bounds_the_joint_tree_before_splitting_it():
+    import inspect
+
+    from imolcraft.trainer.base import SumTrainer
+
+    src = inspect.getsource(SumTrainer.__dict__["training_step"])
+    assert src.index("enforce_param_floors") < src.index("_scatter_to_subtrainers")
+
+
+def test_a_real_trainer_resolves_the_bounds_of_its_force_field(sum_trainer_env):
+    from imolcraft.trainer.base import DEFAULT_PARAM_FLOORS
+
+    trainer = sum_trainer_env("t1")
+    assert trainer.param_floors == {
+        name: float(floor) for name, floor in DEFAULT_PARAM_FLOORS.items()
+    }
+    assert trainer.param_floors_given is None
+
+
+def test_a_trainer_can_be_asked_to_bound_nothing(sum_trainer_env):
+    trainer = sum_trainer_env("t1", param_floors={})
+    assert trainer.param_floors == {}
+    assert trainer.param_floors_given == {}
+
+
+def test_every_trainer_records_the_bounds_it_was_given():
+    """A restart must not silently drop back to the defaults"""
+    import inspect
+
+    from imolcraft.trainer import DihedralTrainer, DistanceTrainer
+    from imolcraft.trainer.base import SumTrainer
+
+    for cls in (DistanceTrainer, DihedralTrainer, SumTrainer):
+        src = inspect.getsource(cls.__dict__["write_checkpoint"])
+        assert '"param_floors": self.param_floors_given' in src, cls.__name__
+
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    # this one rebuilds itself from restart_args rather than from loose keys
+    src = inspect.getsource(ThermodynamicTrainer.__dict__["__init__"])
+    assert '"param_floors": param_floors' in src
+    src = inspect.getsource(ThermodynamicTrainer.__dict__["from_checkpoint"])
+    assert '"param_floors": param_floors' in src
+
+
+def test_the_bounds_survive_a_sumtrainer_restart(sum_trainer_env, tmp_path):
+    from imolcraft.trainer.base import SumTrainer
+
+    make = sum_trainer_env
+    trainer = SumTrainer(
+        make("t1"), make("t2"), opt_fftypes=["NonbondedForce/charge"],
+        weight=[1.0, 1.0], lr=0.01, clip=0.1,
+        param_floors={"NonbondedForce/sigma": 0.05},
+    )
+    trainer.setup()
+    trainer.write_checkpoint(1)
+
+    restored = SumTrainer.from_checkpoint(
+        f"train_state_{trainer.label}.pkl", make("t1"), make("t2")
+    )
+    assert restored.param_floors == {"NonbondedForce/sigma": 0.05}
+
+
+def test_a_real_step_cannot_drive_sigma_negative(sum_trainer_env, capsys):
+    """End to end: the optimizer overshoots by far, and sigma stays physical"""
+    trainer = sum_trainer_env(
+        "sig", opt_fftypes=["NonbondedForce/sigma"], lr=1.0, clip=10.0
+    )
+    trainer.setup()
+    before = [float(v) for v in trainer.ffparams["NonbondedForce"]["sigma"]]
+    trainer.fit(steps=1, checkpoint_frequency=1000)
+    after = [float(v) for v in trainer.ffparams["NonbondedForce"]["sigma"]]
+
+    # a learning rate of 1 nm per step takes every sigma well below zero
+    assert all(value > 0.0 for value in after)
+    assert after == before
+    out = capsys.readouterr().out
+    assert "NonbondedForce/sigma was pushed below" in out
+    assert "lr or clip is too large" in out

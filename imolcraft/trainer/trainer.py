@@ -224,6 +224,7 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.01,
         clip: Union[float, List[float]] = 0.1,
+        param_floors: Optional[dict] = None,
     ) -> None:
 
         super().__init__(
@@ -237,6 +238,7 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
             label=label,
             lr=lr,
             clip=clip,
+            param_floors=param_floors,
         )
         self.relax_steps = relax_steps
         self.inputs = {"positions": [], "pairs": [], "dihed_index": []}
@@ -311,6 +313,7 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
                     "opt_fftypes": self.opt_fftypes,
                     "lr": self.lr,
                     "clip": self.clip,
+                    "param_floors": self.param_floors_given,
                     **self._best_checkpoint_fields(),
                     **provenance_fields(),
                 }
@@ -362,6 +365,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.01,
         clip: Union[float, List[float]] = 0.1,
+        param_floors: Optional[dict] = None,
     ) -> None:
         """
         Initialize the DihedralTrainer.
@@ -388,6 +392,11 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
             Learning rate(s) for optimizer (default: 0.0001).
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
+        param_floors : dict, optional
+            Lower bound per ``Force/parameter`` name, see
+            :class:`~imolcraft.trainer.base.BaseTrainer`. The torsion
+            parameters fitted here carry none of the defaults, a torsion
+            force constant being free to change sign.
         """
         super().__init__(
             ffxml_list=[ffxml],
@@ -400,6 +409,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
             label=label,
             lr=lr,
             clip=clip,
+            param_floors=param_floors,
         )
 
         self.relax_steps = relax_steps
@@ -480,6 +490,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
                         "opt_fftypes": self.opt_fftypes,
                         "lr": self.lr,
                         "clip": self.clip,
+                        "param_floors": self.param_floors_given,
                         **self._best_checkpoint_fields(),
                         **provenance_fields(),
                     },
@@ -497,6 +508,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
         optimizer_algo: Optional[str] = None,
         lr: Optional[Union[float, List[float]]] = None,
         clip: Optional[Union[float, List[float]]] = None,
+        param_floors: Optional[dict] = None,
     ) -> "DihedralTrainer":
         """
         Rebuild a DihedralTrainer from a checkpoint.
@@ -514,7 +526,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
             Path to the PDB file.
         loss_fn : callable, optional
             Loss function; the stored one cannot be pickled, so it is passed in.
-        opt_fftypes, optimizer_algo, lr, clip : optional
+        opt_fftypes, optimizer_algo, lr, clip, param_floors : optional
             Override the values stored in the checkpoint.
 
         Returns
@@ -540,6 +552,12 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
             label=dump_dict["label"],
             lr=dump_dict["lr"] if lr is None else lr,
             clip=dump_dict["clip"] if clip is None else clip,
+            # a checkpoint written before the bounds existed carries no key,
+            # and None is what asks for the defaults anyway
+            param_floors=(
+                dump_dict.get("param_floors") if param_floors is None
+                else param_floors
+            ),
         )
 
         trainer.GT_scans = _qm_energies(trainer.calculator.qm_scan)
@@ -582,6 +600,7 @@ class ThermodynamicTrainer(BaseTrainer):
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
+        param_floors: Optional[dict] = None,
         resample_freq: int = 50,
         nan_resample_retries: int = 1,
         restart_xml: str = None,
@@ -630,6 +649,12 @@ class ThermodynamicTrainer(BaseTrainer):
             recorded as NaN, which is what happened before this existed.
             Every retry runs the MD of every replica again, so it costs a
             full resampling.
+        param_floors : dict, optional
+            Lower bound per ``Force/parameter`` name of the parameters that
+            must not go below it. Default is
+            :data:`~imolcraft.trainer.base.DEFAULT_PARAM_FLOORS`, which keeps
+            the Lennard-Jones sigma clear of zero and epsilon from turning
+            negative; ``{}`` bounds nothing.
         restart_xml : str, optional
             Path to the XML file for restarting the training.
         md_log : {'stdout', 'file', 'none'}, optional
@@ -678,6 +703,7 @@ class ThermodynamicTrainer(BaseTrainer):
             label=label,
             lr=lr,
             clip=clip,
+            param_floors=param_floors,
             restart_xml=restart_xml
         )
 
@@ -693,6 +719,7 @@ class ThermodynamicTrainer(BaseTrainer):
             "md_logfile": md_logfile,
             "resample_freq": resample_freq,
             "nan_resample_retries": nan_resample_retries,
+            "param_floors": param_floors,
             "target_log": self.target_log,
         }
 
@@ -1306,6 +1333,7 @@ class ThermodynamicTrainer(BaseTrainer):
         md_logfile: Optional[str] = None,
         resample_freq: Optional[int] = None,
         nan_resample_retries: Optional[int] = None,
+        param_floors: Optional[dict] = None,
         target_log: Optional[str] = None,
         setup: bool = True,
     ) -> "ThermodynamicTrainer":
@@ -1345,6 +1373,7 @@ class ThermodynamicTrainer(BaseTrainer):
             "md_logfile": md_logfile,
             "resample_freq": resample_freq,
             "nan_resample_retries": nan_resample_retries,
+            "param_floors": param_floors,
             "target_log": target_log,
         }
         restart_args.update({k: v for k, v in given.items() if v is not None})

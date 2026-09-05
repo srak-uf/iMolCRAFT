@@ -27,6 +27,20 @@ from matplotlib.ticker import MaxNLocator
 #: Relative size of the random nudge applied when the loss turns NaN or Inf.
 _NAN_RECOVERY_SCALE = 0.0001
 
+#: Lower bound of the optimized parameters that cannot go below it without
+#: making the energies meaningless, keyed by the ``Force/parameter`` name that
+#: names them in ``opt_fftypes``. A Lennard-Jones sigma divides a distance, so
+#: it has to stay clear of zero, and a negative epsilon turns the well into a
+#: barrier. Both are in the DMFF units, nanometre and kJ/mol. Which of them
+#: apply is decided per trainer: a bound naming a force the parameter tree does
+#: not carry is simply dropped. Pass ``param_floors`` to move one, to add one
+#: (``{"HarmonicBondForce/k": 0.0}`` is a natural addition) or, as ``{}``, to
+#: bound nothing at all.
+DEFAULT_PARAM_FLOORS = {
+    "NonbondedForce/sigma": 1e-3,
+    "NonbondedForce/epsilon": 0.0,
+}
+
 
 def _print_memory(tag: str) -> None:
     """Report the resident set size of this process, for tracking JAX leaks."""
@@ -59,11 +73,15 @@ def _build_optimizer(ffparams, opt_fftypes, optimizer_algo, lr, clip):
     """
     multiTrans = MultiTransform(ffparams)
     for i, opt_fftype in enumerate(opt_fftypes):
+        # DMFF's own nonzero switch appends optax.keep_params_nonnegative,
+        # which needs the parameters handed to update() and would bound every
+        # type alike, charges included. The bounds that actually apply are
+        # enforced after the step instead, see enforce_param_floors.
         multiTrans[opt_fftype] = genOptimizer(
             optimizer=optimizer_algo,
             learning_rate=lr[i],
             clip=clip[i],
-            nonzero=False,  # Should be True
+            nonzero=False,
         )
     multiTrans.finalize()
 
@@ -91,6 +109,92 @@ def _nan_recovery_gradients(ffparams):
         + _NAN_RECOVERY_SCALE * jax.random.normal(jax.random.PRNGKey(1), shape=x.shape),
         ffparams,
     )
+
+
+def _resolve_param_floors(ffparams, param_floors):
+    """
+    The lower bounds that apply to one parameter tree.
+
+    A bound naming a force or a parameter the tree does not carry is dropped
+    rather than raising: :data:`DEFAULT_PARAM_FLOORS` lists what a
+    Lennard-Jones force field has, and a trainer fitting torsions alone
+    carries none of it. ``None`` asks for the defaults, ``{}`` for no bound.
+    """
+    floors = DEFAULT_PARAM_FLOORS if param_floors is None else param_floors
+    resolved = {}
+    for name, floor in floors.items():
+        force, _, parameter = name.partition("/")
+        if parameter and parameter in ffparams.get(force, {}):
+            resolved[name] = float(floor)
+    return resolved
+
+
+def enforce_param_floors(ffparams, previous, floors):
+    """
+    Hold every bounded parameter at or above its lower bound.
+
+    An entry the update has pushed below its bound is put back to the value it
+    held before the update rather than parked on the bound itself: a sigma
+    sitting just above zero is a Lennard-Jones site switched off, and its
+    gradient has vanished with it, so the optimizer could never climb back
+    out, whereas the previous value is one the force field was still physical
+    at. A previous value that is below the bound as well, which is a force
+    field that started out that way, is raised onto it.
+
+    Parameters
+    ----------
+    ffparams : dict
+        Parameters as the optimizer step left them.
+    previous : dict
+        The same tree as it was before the step.
+    floors : dict
+        Bound per ``Force/parameter`` name, as :func:`_resolve_param_floors`
+        returns it.
+
+    Returns
+    -------
+    (ffparams, report) : (dict, dict)
+        The parameters to carry on with, and per bounded parameter type the
+        number of entries that were held and the lowest value that was
+        rejected. An empty report means the step needed no correction.
+    """
+    if not floors:
+        return ffparams, {}
+
+    corrected = ffparams
+    report = {}
+    for name, floor in floors.items():
+        force, _, parameter = name.partition("/")
+        value = corrected[force][parameter]
+        below = value < floor
+        count = int(jnp.count_nonzero(below))
+        if count == 0:
+            continue
+        report[name] = {"count": count, "lowest": float(jnp.min(value))}
+        fallback = jnp.maximum(previous[force][parameter], floor)
+        # only the branch that changed is rebuilt: the tree is shared with the
+        # caller's previous parameters, which must keep their own values
+        corrected = dict(corrected)
+        corrected[force] = dict(corrected[force])
+        corrected[force][parameter] = jnp.where(below, fallback, value)
+    return corrected, report
+
+
+def _report_param_floors(report, floors):
+    """
+    Say which parameters had to be held back.
+
+    Worth a line every time: one such step is the optimizer overshooting,
+    a run full of them is a learning rate or a clip too large for that
+    parameter.
+    """
+    for name, entry in report.items():
+        print(
+            f"Warning: {name} was pushed below {floors[name]:g} in "
+            f"{entry['count']} place(s), the lowest to {entry['lowest']:.6g}. "
+            "Held at the values of the previous step. Repeated warnings mean "
+            "lr or clip is too large for this parameter."
+        )
 
 
 def plot_learning_curve(epochs, losses, label: str) -> None:
@@ -141,6 +245,7 @@ class BaseTrainer:
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
+        param_floors: Optional[dict] = None,
         restart_xml: Optional[str] = None
     ) -> None:
 
@@ -169,6 +274,12 @@ class BaseTrainer:
             Learning rate(s) for optimizer (default: 0.0001).
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
+        param_floors : dict, optional
+            Lower bound per ``Force/parameter`` name of the parameters that
+            must not go below it, such as ``{"NonbondedForce/sigma": 1e-3}``.
+            Default is :data:`DEFAULT_PARAM_FLOORS`, which bounds the
+            Lennard-Jones sigma and epsilon; ``{}`` bounds nothing. A bound
+            naming something the force field does not carry is ignored.
         restart_xml : str, optional
             Path to the XML file for restarting the training.
         """
@@ -225,6 +336,10 @@ class BaseTrainer:
         self.ffparams = get_chgparams_from_rescharges(ffparams, self.rescharges)
 
         self.loss_fn = loss_fn
+        # resolved against the parameter tree, which is what says whether a
+        # bound applies at all, and kept as given for the checkpoint
+        self.param_floors_given = param_floors
+        self.param_floors = _resolve_param_floors(self.ffparams, param_floors)
         self.lr, self.clip = _broadcast_lr_clip(lr, clip, opt_fftypes)
         self.optimizer_algo = optimizer_algo
         self.grad_transform, self.optimizer = _build_optimizer(
@@ -379,6 +494,11 @@ class BaseTrainer:
         A NaN or Inf loss is first retried through
         :meth:`recover_from_invalid_loss`; one that survives the retrying is
         given up on and the parameters are perturbed instead.
+
+        A step that pushed a bounded parameter below its floor -- a negative
+        Lennard-Jones sigma or epsilon -- is corrected before the "after_update"
+        hook runs, so that a hook registered for a hard constraint keeps the
+        last word.
         """
         self.loss, grads = self.get_loss_gradients()
         _print_memory("grad obtained....")
@@ -391,7 +511,12 @@ class BaseTrainer:
         grads = self._do_modify("after_grad", grads)
         _print_memory("grad modify....")
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
+        previous = self.ffparams
         self.ffparams = optax.apply_updates(self.ffparams, updates)
+        self.ffparams, floored = enforce_param_floors(
+            self.ffparams, previous, self.param_floors
+        )
+        _report_param_floors(floored, self.param_floors)
         self.ffparams = self._do_modify("after_update", self.ffparams)
         _print_memory("update finished....")
 
@@ -467,6 +592,7 @@ class SumTrainer(BaseTrainer):
                  optimizer_algo: str = "adam",
                  lr: Union[float, List[float]] = 0.0001,
                  clip: Union[float, List[float]] = 0.1,
+                 param_floors: Optional[dict] = None,
                  restart_xml: Optional[str] = None
                  ):
         self.trainer1 = trainer1
@@ -514,6 +640,10 @@ class SumTrainer(BaseTrainer):
         self._modifyfns["after_update"] = lambda ffparams: ffparams
 
         self.opt_fftypes = opt_fftypes
+        # the joint tree is the one this optimizer steps, so the bounds are
+        # resolved against it rather than against either half
+        self.param_floors_given = param_floors
+        self.param_floors = _resolve_param_floors(self.ffparams, param_floors)
         self.lr, self.clip = _broadcast_lr_clip(lr, clip, opt_fftypes)
         self.optimizer_algo = optimizer_algo
         self.grad_transform, self.optimizer = _build_optimizer(
@@ -589,7 +719,14 @@ class SumTrainer(BaseTrainer):
 
         grads = self._do_modify("after_grad", grads)
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
+        previous = self.ffparams
         self.ffparams = optax.apply_updates(self.ffparams, updates)
+        # corrected on the joint tree, before it is split, so that neither
+        # half is ever handed a negative sigma or epsilon
+        self.ffparams, floored = enforce_param_floors(
+            self.ffparams, previous, self.param_floors
+        )
+        _report_param_floors(floored, self.param_floors)
 
         self._scatter_to_subtrainers()
         # the sub hooks run on their own half first, then the joint hook sees
@@ -655,6 +792,7 @@ class SumTrainer(BaseTrainer):
         optimizer_algo: Optional[str] = None,
         lr: Optional[Union[float, List[float]]] = None,
         clip: Optional[Union[float, List[float]]] = None,
+        param_floors: Optional[dict] = None,
         restart_xml: Optional[str] = None,
     ) -> "SumTrainer":
         """
@@ -672,7 +810,7 @@ class SumTrainer(BaseTrainer):
             Path of the pickle written by :meth:`write_checkpoint`.
         trainer1, trainer2 : BaseTrainer
             The sub-trainers, already restored from their own checkpoints.
-        opt_fftypes, weight, optimizer_algo, lr, clip : optional
+        opt_fftypes, weight, optimizer_algo, lr, clip, param_floors : optional
             Override the values stored in the checkpoint.
         restart_xml : str, optional
             Force field XML to resume from, instead of merging the original ones.
@@ -698,6 +836,12 @@ class SumTrainer(BaseTrainer):
             ),
             lr=dump_dict["lr"] if lr is None else lr,
             clip=dump_dict["clip"] if clip is None else clip,
+            # a checkpoint written before the bounds existed carries no key,
+            # and None is what asks for the defaults anyway
+            param_floors=(
+                dump_dict.get("param_floors") if param_floors is None
+                else param_floors
+            ),
             restart_xml=restart_xml,
         )
 
@@ -740,6 +884,7 @@ class SumTrainer(BaseTrainer):
                     "opt_fftypes": self.opt_fftypes,
                     "lr": self.lr,
                     "clip": self.clip,
+                    "param_floors": self.param_floors_given,
                     "weight": self.weight,
                     **self._best_checkpoint_fields(),
                     **provenance_fields(),

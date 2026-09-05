@@ -33,6 +33,29 @@ fixes and backwards-compatible additions moves the patch number.
   `BaseTrainer` gained the hook behind it, `recover_from_invalid_loss`, whose
   default does nothing, so the scan trainers are unaffected. `SumTrainer`
   retries each half through the sub-trainer that owns the data.
+- **A Lennard-Jones sigma can no longer be driven to zero or below, nor an
+  epsilon turned negative, by an optimizer step.** Every trainer now checks
+  the parameters after the step against a lower bound per
+  `Force/parameter` name and puts an entry that fell through it back to the
+  value it held before the step, rather than parking it on the bound itself,
+  where a switched-off site has no gradient left to climb back out with. A
+  correction prints which parameter type it hit, in how many places and how
+  far, since a run full of them means `lr` or `clip` is too large. The bounds
+  come from the new `param_floors` argument of `ThermodynamicTrainer`,
+  `DistanceTrainer`, `DihedralTrainer` and `SumTrainer`; the default,
+  `imolcraft.trainer.base.DEFAULT_PARAM_FLOORS`, bounds
+  `NonbondedForce/sigma` at `1e-3` nm and `NonbondedForce/epsilon` at `0`,
+  `{}` bounds nothing and a dict of its own moves or adds a bound
+  (`{"HarmonicBondForce/k": 0.0}`). A bound naming a force the field does not
+  carry is ignored, so a torsion fit is unaffected — a torsion force constant
+  is free to change sign and is deliberately not bounded, and neither is a
+  charge. The correction runs before the `after_update` hook, which therefore
+  keeps the last word, and every checkpoint records the bounds it was given
+  so a restart does not fall back to the defaults.
+  Note that this changes the trajectory of a run that previously walked
+  through a negative epsilon and kept going; a run that reached a
+  non-positive sigma crashed or produced NaN energies before.
+
 - `ThermodynamicTrainer` keeps a **target history**: one record per epoch of
   what the force field of that epoch gives for every target, next to the
   loss. A record carries `epoch`, `ffxml`, `loss` and, per replica, the loss,
