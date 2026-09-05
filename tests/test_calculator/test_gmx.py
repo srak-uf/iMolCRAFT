@@ -455,13 +455,13 @@ def test_export_inputs_writes_top_and_gro_from_an_ffxml(tmp_path):
 
 
 def test_run_refuses_a_force_field_with_virtual_sites(tmp_path, monkeypatch):
-    """parmed drops virtual sites, so a vsite ffxml is refused before any GROMACS call"""
+    """Virtual sites are not translated to [ virtual_sites2 ], so a vsite ffxml is refused before any GROMACS call"""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(gmx.shutil, "which", lambda name: "/fake/gmx")
     calls = []
     monkeypatch.setattr(gmx, "_run_command", lambda *a, **k: calls.append(a))
     calc = GMXCalculator(PDB, md_log="none")
-    with pytest.raises(ValueError, match="virtual sites"):
+    with pytest.raises(ValueError, match="virtual sites are not supported yet"):
         calc.run(VSITE_FFXML, "s_0.xtc")
     assert calls == []
 

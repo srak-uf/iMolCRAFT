@@ -29,8 +29,9 @@ fixes and backwards-compatible additions moves the patch number.
   `.cpt` files of every stage are kept under `workdir` (default
   `gmxfiles/`). Hydrogen constraints are applied from the mdp
   (`constraints = h-bonds`) rather than baked into the exported System. A
-  force field with virtual sites is refused with a `ValueError`, because the
-  GROMACS exporter (parmed) drops them. `anneal_interval` and `rigidWater`
+  force field with virtual sites is refused with a `ValueError`: the GROMACS
+  exporter does not translate OpenMM virtual sites to `[ virtual_sites2 ]`,
+  a known limitation of this first version. `anneal_interval` and `rigidWater`
   are accepted for compatibility and have no effect. GROMACS-specific
   settings (`pressure_bar`, `compressibility_bar`,
   `tau_t_ps`, `tau_p_ps`, `tcoupl`, `pcoupl`, `min_steps`, `emtol`,

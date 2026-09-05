@@ -630,9 +630,10 @@ class GMXCalculator:
         The System of :meth:`_build_system` is serialized to ``system.xml``,
         the (extra-particle complete) topology and positions to a ``.pdb``,
         and both go through :func:`imolcraft.io.exporter` with ``fmt="gmx"``.
-        A force field with virtual sites is refused: parmed drops the
-        massless particles when writing the ``.top`` / ``.gro``, so the
-        exported topology would not be the one OpenMM samples.
+        A force field with virtual sites is refused: the GROMACS exporter
+        does not translate OpenMM virtual sites to ``[ virtual_sites2 ]``
+        (parmed's ``load_topology`` keeps them as extra points and fails when
+        writing the ``.gro``), so such force fields are not supported yet.
         """
         topology, positions, system = self._build_system(ffxml)
         n_vsites = sum(
@@ -641,8 +642,9 @@ class GMXCalculator:
         if n_vsites:
             raise ValueError(
                 f"{ffxml} places {n_vsites} virtual sites; the GROMACS exporter "
-                "(parmed) does not write virtual sites, so GMXCalculator cannot "
-                "sample this force field. Use MDCalculator for it."
+                "does not translate OpenMM virtual sites to [ virtual_sites2 ], "
+                "so force fields with virtual sites are not supported yet. Use "
+                "MDCalculator for this force field."
             )
         pdbfile = os.path.join(tmpdir, "system.pdb")
         with open(pdbfile, "w") as handle:
