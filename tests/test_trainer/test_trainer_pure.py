@@ -1167,25 +1167,53 @@ def test_retrying_is_off_when_no_retries_are_allowed():
     assert calls == {"loss": 0, "recover": 0}
 
 
-def test_training_step_retries_before_giving_up_on_the_step():
-    """The perturbation is the fallback, reached only after the retrying"""
-    import inspect
+def test_each_trainer_retries_its_own_loss_before_giving_up(sum_trainer_env,
+                                                             monkeypatch):
+    """The retry runs on the trainer holding the data; the perturbation after it"""
+    import jax
 
-    from imolcraft.trainer.base import BaseTrainer
+    import imolcraft.trainer.base as base
+    from imolcraft.trainer.base import BaseTrainer, SumTrainer
 
-    src = inspect.getsource(BaseTrainer.__dict__["training_step"])
-    assert src.index("_retry_invalid_loss") < src.index("_nan_recovery_gradients")
+    make = sum_trainer_env
+    events = []
+    rescued = {"loss": jnp.float32(jnp.nan)}
 
+    def retry(self, loss, grads):
+        events.append(("retry", self.label))
+        return rescued["loss"], grads
 
-def test_sumtrainer_retries_each_half_on_its_own_data():
-    """The recovery runs on the sub-trainer holding the data, not on the sum"""
-    import inspect
+    def nan_loss(trainer):
+        return lambda: (
+            jnp.float32(jnp.nan),
+            jax.tree_util.tree_map(jnp.zeros_like, trainer.ffparams),
+        )
 
-    from imolcraft.trainer.base import SumTrainer
+    monkeypatch.setattr(BaseTrainer, "_retry_invalid_loss", retry)
+    monkeypatch.setattr(
+        base, "_nan_recovery_gradients",
+        lambda ffparams: events.append(("perturb",)) or ffparams,
+    )
 
-    src = inspect.getsource(SumTrainer.__dict__["_substep"])
-    assert "trainer._retry_invalid_loss(loss, grads)" in src
-    assert src.index("_retry_invalid_loss") < src.index("_nan_recovery_gradients")
+    # the retry fails: the perturbation follows it, once
+    solo = make("solo")
+    solo.setup()
+    solo.get_loss_gradients = nan_loss(solo)
+    solo.training_step()
+    assert events == [("retry", "solo"), ("perturb",)]
+
+    # the retry rescues each half on its own, so nothing is perturbed
+    events.clear()
+    rescued["loss"] = jnp.float32(0.5)
+    joint = SumTrainer(
+        make("t1"), make("t2"),
+        opt_fftypes=["NonbondedForce/charge"], weight=[1.0, 1.0], lr=0.01, clip=0.1,
+    )
+    joint.setup()
+    for sub in (joint.trainer1, joint.trainer2):
+        sub.get_loss_gradients = nan_loss(sub)
+    joint.training_step()
+    assert sorted(events) == [("retry", "t1"), ("retry", "t2")]
 
 
 def _recovery_stub(n=2, epoch=5, estimator=True):
@@ -1403,31 +1431,39 @@ def test_bounding_nothing_short_circuits():
     assert out is stepped and report == {}
 
 
-def test_the_bounds_are_applied_before_the_after_update_hook():
-    """A hook registered for a hard constraint keeps the last word"""
-    import inspect
-
-    from imolcraft.trainer.base import BaseTrainer, SumTrainer
-
-    for cls in (BaseTrainer, SumTrainer):
-        src = inspect.getsource(cls.__dict__["training_step"])
-        assert "enforce_param_floors" in src, cls.__name__
-        assert src.index("apply_updates") < src.index("enforce_param_floors"), (
-            cls.__name__
-        )
-        # the call, not the mention of the hook in the docstring
-        assert src.index("enforce_param_floors") < src.index(
-            '_do_modify("after_update"'
-        ), cls.__name__
-
-
-def test_sumtrainer_bounds_the_joint_tree_before_splitting_it():
-    import inspect
-
+def test_the_after_update_hook_sees_the_corrected_parameters(sum_trainer_env):
+    """The floors come before the hook, on the joint tree of a SumTrainer too"""
     from imolcraft.trainer.base import SumTrainer
 
-    src = inspect.getsource(SumTrainer.__dict__["training_step"])
-    assert src.index("enforce_param_floors") < src.index("_scatter_to_subtrainers")
+    make = sum_trainer_env
+    seen = {}
+
+    def hook_for(name):
+        def hook(ffparams):
+            seen[name] = [float(v) for v in ffparams["NonbondedForce"]["sigma"]]
+            return ffparams
+
+        return hook
+
+    # a learning rate of 1 nm per step takes every sigma well below zero
+    solo = make("solo", opt_fftypes=["NonbondedForce/sigma"], lr=1.0, clip=10.0)
+    solo.add_modifyfn("after_update", hook_for("solo"))
+    solo.setup()
+    before = [float(v) for v in solo.ffparams["NonbondedForce"]["sigma"]]
+    solo.training_step()
+    assert seen["solo"] == before
+
+    joint = SumTrainer(
+        make("t1", opt_fftypes=["NonbondedForce/sigma"]),
+        make("t2", opt_fftypes=["NonbondedForce/sigma"]),
+        opt_fftypes=["NonbondedForce/sigma"], weight=[1.0, 1.0], lr=1.0, clip=10.0,
+    )
+    joint.trainer1.add_modifyfn("after_update", hook_for("t1"))
+    joint.add_modifyfn("after_update", hook_for("joint"))
+    joint.setup()
+    joint.training_step()
+    assert set(seen) == {"solo", "t1", "joint"}
+    assert all(value > 0.0 for values in seen.values() for value in values)
 
 
 def test_a_real_trainer_resolves_the_bounds_of_its_force_field(sum_trainer_env):

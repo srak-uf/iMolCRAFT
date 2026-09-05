@@ -94,7 +94,7 @@ def _build_optimizer(ffparams, opt_fftypes, optimizer_algo, lr, clip):
 
 def _loss_is_invalid(loss) -> bool:
     """Whether a loss value came out NaN or Inf."""
-    return bool(jnp.isnan(loss)) or bool(jnp.isinf(loss))
+    return not bool(jnp.isfinite(loss))
 
 
 def _nan_recovery_gradients(ffparams):
@@ -109,6 +109,17 @@ def _nan_recovery_gradients(ffparams):
         + _NAN_RECOVERY_SCALE * jax.random.normal(jax.random.PRNGKey(1), shape=x.shape),
         ffparams,
     )
+
+
+def _guard_gradients(loss, grads, ffparams):
+    """
+    The gradients to step with: ``grads`` when loss and gradients are finite,
+    the random nudge of :func:`_nan_recovery_gradients` otherwise.
+    """
+    if _loss_is_invalid(loss) or not tree_is_finite(grads):
+        print("Warning: Loss or gradients are NaN or Inf. Skipping this step.")
+        return _nan_recovery_gradients(ffparams)
+    return grads
 
 
 def tree_is_finite(tree) -> bool:
@@ -173,30 +184,10 @@ def restore_nonfinite_params(ffparams, previous):
             if n_bad == 0:
                 continue
             count += n_bad
-            # only the branch that changed is rebuilt: the tree is shared with
-            # the caller's previous parameters, which must keep their values
-            if restored is ffparams:
-                restored = dict(ffparams)
-            if restored[force] is parameters:
-                restored[force] = dict(parameters)
+            restored = dict(restored)
+            restored[force] = dict(restored[force])
             restored[force][name] = jnp.where(bad, previous[force][name], value)
     return restored, count
-
-
-def _report_nonfinite_params(count: int) -> None:
-    """
-    Say that non-finite parameters had to be put back.
-
-    Worth a line every time: it means the gradients or the optimizer state
-    have gone bad, and the run is only carrying on because the previous
-    values were kept.
-    """
-    if count:
-        print(
-            f"Warning: {count} parameter(s) came out NaN or Inf after the "
-            "update and were put back to the values of the previous step. "
-            "Repeated warnings mean the loss or the gradients are diverging."
-        )
 
 
 def _resolve_param_floors(ffparams, param_floors):
@@ -268,23 +259,6 @@ def enforce_param_floors(ffparams, previous, floors):
     return corrected, report
 
 
-def _report_param_floors(report, floors):
-    """
-    Say which parameters had to be held back.
-
-    Worth a line every time: one such step is the optimizer overshooting,
-    a run full of them is a learning rate or a clip too large for that
-    parameter.
-    """
-    for name, entry in report.items():
-        print(
-            f"Warning: {name} was pushed below {floors[name]:g} in "
-            f"{entry['count']} place(s), the lowest to {entry['lowest']:.6g}. "
-            "Held at the values of the previous step. Repeated warnings mean "
-            "lr or clip is too large for this parameter."
-        )
-
-
 def plot_learning_curve(epochs, losses, label: str) -> None:
     """Write the loss history on linear, log-y and log-log axes."""
     for prefix, xscale, yscale in (
@@ -314,11 +288,8 @@ class BaseTrainer:
     parameters using differentiable molecular force fields and JAX-based optimizers.
     """
 
-    #: How many times a step whose loss came out NaN or Inf may be recovered
-    #: and computed again, see :meth:`recover_from_invalid_loss`. Zero means
-    #: no recovery is attempted, which is all a trainer without fresh data to
-    #: fall back on can do; :class:`~imolcraft.trainer.ThermodynamicTrainer`
-    #: overrides it per instance.
+    #: Retries of a NaN or Inf loss, see :meth:`recover_from_invalid_loss`.
+    #: Zero disables it.
     nan_resample_retries: int = 0
 
     def __init__(
@@ -457,34 +428,23 @@ class BaseTrainer:
         """
         Restore the best-so-far snapshot from a checkpoint.
 
-        Without it a restarted run forgets the best model of the previous one:
-        ``fit`` compares against the smallest finite loss of the history,
-        which is restored, but ``best_params`` would stay None until that
-        minimum is beaten again.
-
-        A checkpoint written before the snapshot was recorded carries no
-        ``best_loss``. The loss and its epoch are then read off the restored
-        history, so that such a restart reports the best epoch it has had
-        rather than None; ``best_params`` stays None, the parameters of that
-        epoch being recorded nowhere. Called after ``losses`` and ``epochs``
-        have been restored, which every caller does.
+        Without it a restarted run forgets the best model of the previous one
+        and ``best_params`` would stay None until the historical minimum is
+        beaten again. A checkpoint without ``best_loss`` takes it from the
+        finite losses of the restored history; ``best_params`` stays None.
         """
         self.best_params = dump_dict.get("best_params")
         self.best_epoch = dump_dict.get("best_epoch")
         self.best_loss = dump_dict.get("best_loss")
-        if self.best_loss is not None:
-            return
-        finite = [
-            (loss, index)
-            for index, loss in enumerate(self.losses)
-            if not _loss_is_invalid(loss)
-        ]
-        if not finite:
-            return
-        loss, index = min(finite, key=lambda entry: entry[0])
-        self.best_loss = loss
-        if index < len(self.epochs):
-            self.best_epoch = self.epochs[index]
+        if self.best_loss is None:
+            finite = [
+                (loss, index)
+                for index, loss in enumerate(self.losses)
+                if not _loss_is_invalid(loss)
+            ]
+            if finite:
+                self.best_loss, index = min(finite, key=lambda entry: entry[0])
+                self.best_epoch = self.epochs[index]
 
     def add_modifyfn(self, type_fn: str, fn: Callable[[Any], Any]) -> None:
         """
@@ -622,26 +582,40 @@ class BaseTrainer:
         self.loss, grads = self.get_loss_gradients()
         _print_memory("grad obtained....")
         self.loss, grads = self._retry_invalid_loss(self.loss, grads)
-        if _loss_is_invalid(self.loss) or not tree_is_finite(grads):
-            print("Warning: Loss or gradients are NaN or Inf. Skipping this step.")
-            # Randomly perturb self.ffparams by 0.01%
-            grads = _nan_recovery_gradients(self.ffparams)
-
+        grads = _guard_gradients(self.loss, grads, self.ffparams)
         grads = self._do_modify("after_grad", grads)
         _print_memory("grad modify....")
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
-        previous = self.ffparams
-        self.ffparams = optax.apply_updates(self.ffparams, updates)
-        # non-finite entries go first: NaN < floor is False, so a NaN would
-        # walk straight through the floor check below
-        self.ffparams, restored = restore_nonfinite_params(self.ffparams, previous)
-        _report_nonfinite_params(restored)
-        self.ffparams, floored = enforce_param_floors(
-            self.ffparams, previous, self.param_floors
-        )
-        _report_param_floors(floored, self.param_floors)
+        self._apply_update(updates)
         self.ffparams = self._do_modify("after_update", self.ffparams)
         _print_memory("update finished....")
+
+    def _apply_update(self, updates) -> None:
+        """
+        Apply the update, then put non-finite entries back and hold the
+        bounded ones at their floors.
+        """
+        previous = self.ffparams
+        self.ffparams = optax.apply_updates(self.ffparams, updates)
+        # non-finite entries first: NaN < floor is False, so a NaN would pass
+        # the floor check untouched
+        self.ffparams, count = restore_nonfinite_params(self.ffparams, previous)
+        if count:
+            print(
+                f"Warning: {count} parameter(s) came out NaN or Inf after the "
+                "update and were put back to the values of the previous step. "
+                "Repeated warnings mean the loss or the gradients are diverging."
+            )
+        self.ffparams, report = enforce_param_floors(
+            self.ffparams, previous, self.param_floors
+        )
+        for name, entry in report.items():
+            print(
+                f"Warning: {name} was pushed below {self.param_floors[name]:g} in "
+                f"{entry['count']} place(s), the lowest to {entry['lowest']:.6g}. "
+                "Held at the values of the previous step. Repeated warnings mean "
+                "lr or clip is too large for this parameter."
+            )
 
     def before_step(self) -> None:
         """
@@ -692,12 +666,8 @@ class BaseTrainer:
             self.before_step()
             self.training_step()
             self.after_step()
-            # a NaN in the history would make min() return NaN and every
-            # later comparison False, freezing the best force field for good,
-            # so the best is tracked over the finite losses only
-            finite = [loss for loss in self.losses if not _loss_is_invalid(loss)]
             if not _loss_is_invalid(self.loss) and (
-                len(finite) == 0 or self.loss < min(finite)
+                self.best_loss is None or self.loss < self.best_loss
             ):
                 self.best_params = self.ffparams
                 self.best_epoch = self._epoch
@@ -810,10 +780,7 @@ class SumTrainer(BaseTrainer):
         # the recovery belongs to the sub-trainer, which is the one holding
         # the data the NaN came out of, and only its own half is recomputed
         loss, grads = trainer._retry_invalid_loss(loss, grads)
-        if _loss_is_invalid(loss) or not tree_is_finite(grads):
-            print("Warning: Loss or gradients are NaN or Inf. Skipping this step.")
-            grads = _nan_recovery_gradients(trainer.ffparams)
-
+        grads = _guard_gradients(loss, grads, trainer.ffparams)
         return loss, trainer._do_modify("after_grad", grads)
 
     def get_loss_gradients(self):
@@ -845,23 +812,10 @@ class SumTrainer(BaseTrainer):
         parameter the force field cannot be written with.
         """
         self.loss, grads = self.get_loss_gradients()
-        if _loss_is_invalid(self.loss) or not tree_is_finite(grads):
-            print("Warning: Loss or gradients are NaN or Inf. Skipping this step.")
-            # Randomly perturb self.ffparams by 0.01%
-            grads = _nan_recovery_gradients(self.ffparams)
-
+        grads = _guard_gradients(self.loss, grads, self.ffparams)
         grads = self._do_modify("after_grad", grads)
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
-        previous = self.ffparams
-        self.ffparams = optax.apply_updates(self.ffparams, updates)
-        # corrected on the joint tree, before it is split, so that neither
-        # half is ever handed a non-finite or a negative sigma or epsilon
-        self.ffparams, restored = restore_nonfinite_params(self.ffparams, previous)
-        _report_nonfinite_params(restored)
-        self.ffparams, floored = enforce_param_floors(
-            self.ffparams, previous, self.param_floors
-        )
-        _report_param_floors(floored, self.param_floors)
+        self._apply_update(updates)
 
         self._scatter_to_subtrainers()
         # the sub hooks run on their own half first, then the joint hook sees
