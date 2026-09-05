@@ -33,11 +33,11 @@ fixes and backwards-compatible additions moves the patch number.
   `fourierspacing` are derived from OpenMM's error tolerance (5e-4) so that
   the splitting parameter is identical; `"LJPME"` writes
   `lj-pme-comb-rule = Geometric` and `vdw-modifier = Potential-Shift`
-  explicitly. The pair-list buffer is left to GROMACS (`verlet-buffer-tolerance`
-  at its default; the template's `-1` is dropped), so grompp and mdrun set
-  `rlist` and `nstlist` themselves; the written `rlist`, 1.2 times the cutoff
-  truncated to one decimal, applies only when the buffer is pinned through
-  `mdp_extra`. A single-point energy test against OpenMM (bonded terms agree
+  explicitly. The pair-list radius is left to GROMACS: neither `rlist` nor
+  `verlet-buffer-tolerance` is written (the template's `rlist = 1.4` and
+  `-1` are dropped), so grompp and mdrun set `rlist` and `nstlist` from the
+  default tolerance; pass both `verlet-buffer-tolerance = -1` and `rlist`
+  through `mdp_extra` to fix the list manually. A single-point energy test against OpenMM (bonded terms agree
   to < 1e-3 kJ/mol, Lennard-Jones to < 1e-3 kJ/mol with PME and < 5e-3
   kJ/mol with LJPME, Coulomb to 3e-5 relative) is
   part of the `gmx`-marked tests. A
