@@ -458,13 +458,33 @@ class BaseTrainer:
         Restore the best-so-far snapshot from a checkpoint.
 
         Without it a restarted run forgets the best model of the previous one:
-        ``fit`` compares against ``min(self.losses)``, which is restored, but
-        ``best_params`` would stay None until the historical minimum is beaten
-        again. Checkpoints written before this was stored simply carry None.
+        ``fit`` compares against the smallest finite loss of the history,
+        which is restored, but ``best_params`` would stay None until that
+        minimum is beaten again.
+
+        A checkpoint written before the snapshot was recorded carries no
+        ``best_loss``. The loss and its epoch are then read off the restored
+        history, so that such a restart reports the best epoch it has had
+        rather than None; ``best_params`` stays None, the parameters of that
+        epoch being recorded nowhere. Called after ``losses`` and ``epochs``
+        have been restored, which every caller does.
         """
         self.best_params = dump_dict.get("best_params")
         self.best_epoch = dump_dict.get("best_epoch")
         self.best_loss = dump_dict.get("best_loss")
+        if self.best_loss is not None:
+            return
+        finite = [
+            (loss, index)
+            for index, loss in enumerate(self.losses)
+            if not _loss_is_invalid(loss)
+        ]
+        if not finite:
+            return
+        loss, index = min(finite, key=lambda entry: entry[0])
+        self.best_loss = loss
+        if index < len(self.epochs):
+            self.best_epoch = self.epochs[index]
 
     def add_modifyfn(self, type_fn: str, fn: Callable[[Any], Any]) -> None:
         """

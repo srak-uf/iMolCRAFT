@@ -111,7 +111,13 @@ fixes and backwards-compatible additions moves the patch number.
   epochs stay in `losses`, so the history keeps its meaning.
 - `atoms_0.pdb` and `pack_tmp.inp`, two packmol scratch files, were committed
   to the repository root by mistake. They are untracked again and, with
-  `packmol_tmp.pdb`, named in `.gitignore`.
+  `packmol_tmp.pdb`, named in `.gitignore`. The agent working directory
+  `.claude/` is ignored as well; `CLAUDE.md` at the root stays checked in.
+- **A checkpoint written before the best-so-far snapshot was recorded made a
+  restarted run report `Best Loss: None at epoch None`.** The best loss and
+  its epoch are now read off the restored history when the checkpoint carries
+  none, as the run itself used to do. `best_params` stays None, the
+  parameters of that epoch being recorded nowhere.
 
 ## [0.3.1] — 2026-08-26
 

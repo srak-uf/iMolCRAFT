@@ -1724,3 +1724,59 @@ def test_a_nan_epoch_does_not_freeze_the_best_force_field(tmp_path):
     assert len(stub.losses) == 3 and jnp.isnan(jnp.float32(stub.losses[0]))
     # epoch 1 and epoch 2 each improved on what came before
     assert len(rendered) == 2
+
+
+def _best_stub(losses, epochs):
+    """Minimal ``self`` for :meth:`BaseTrainer._restore_best`"""
+    import types
+
+    return types.SimpleNamespace(
+        losses=list(losses),
+        epochs=list(epochs),
+        best_params=None,
+        best_epoch=None,
+        best_loss=None,
+    )
+
+
+def test_a_recorded_best_snapshot_is_restored_as_it_stands():
+    from imolcraft.trainer.base import BaseTrainer
+
+    stub = _best_stub([3.0, 1.0, 2.0], [0, 1, 2])
+    BaseTrainer._restore_best(
+        stub,
+        {"best_params": {"step": 1}, "best_epoch": 1, "best_loss": 1.0},
+    )
+
+    assert stub.best_params == {"step": 1}
+    assert stub.best_epoch == 1
+    assert stub.best_loss == pytest.approx(1.0, rel=1e-6, abs=1e-12)
+
+
+def test_an_old_checkpoint_takes_its_best_from_the_history():
+    """Before the snapshot was recorded the run printed the historical minimum"""
+    from imolcraft.trainer.base import BaseTrainer
+
+    stub = _best_stub([float("nan"), 3.0, 1.0, 2.0], [10, 11, 12, 13])
+    BaseTrainer._restore_best(stub, {"losses": stub.losses})
+
+    assert stub.best_loss == pytest.approx(1.0, rel=1e-6, abs=1e-12)
+    assert stub.best_epoch == 12
+    # the parameters of that epoch were never recorded, so there is no snapshot
+    assert stub.best_params is None
+
+
+def test_a_history_of_nothing_but_nan_leaves_the_best_unset():
+    from imolcraft.trainer.base import BaseTrainer
+
+    nan = float("nan")
+    stub = _best_stub([nan, nan], [0, 1])
+    BaseTrainer._restore_best(stub, {})
+
+    assert stub.best_loss is None
+    assert stub.best_epoch is None
+    assert stub.best_params is None
+
+    empty = _best_stub([], [])
+    BaseTrainer._restore_best(empty, {})
+    assert empty.best_loss is None and empty.best_epoch is None
