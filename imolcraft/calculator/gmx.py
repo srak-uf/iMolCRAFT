@@ -86,6 +86,12 @@ _EWALD_TOLERANCE = openmm.NonbondedForce().getEwaldErrorTolerance()
 #: into a run without a barostat (nvt.mdp carries ``ref-p = 5.0``).
 _PCOUPL_KEYS = ("pcoupltype", "tau-p", "compressibility", "ref-p", "nstpcouple")
 
+#: Template keys removed from every stage. The templates fix the pair list
+#: with ``verlet-buffer-tolerance = -1``; the calculator leaves the buffer to
+#: grompp / mdrun instead (GROMACS default 0.005 kJ/mol/ps), which then set
+#: ``rlist`` and ``nstlist`` themselves, see :func:`_pairlist_cutoff`.
+_TEMPLATE_KEYS_DROPPED = ("verlet-buffer-tolerance",)
+
 
 def _mdp_key(key):
     """
@@ -134,6 +140,26 @@ def _num(value):
     ``1.4000000000000001``; ``1.0`` stays ``1.0``.
     """
     return repr(round(float(value), 12))
+
+
+def _pairlist_cutoff(rcut_nm):
+    """
+    ``rlist`` in nm for a nonbonded cutoff ``rcut_nm``: 1.2 times the cutoff,
+    truncated to one decimal (1.2 -> 1.4, 1.0 -> 1.2, 1.5 -> 1.8).
+
+    With ``verlet-buffer-tolerance`` left at its default (> 0), GROMACS
+    overrides this value: grompp recomputes ``rlist`` from the energy drift
+    tolerance (issuing a NOTE that the written ``rlist`` is replaced), mdrun
+    re-tunes ``rlist`` and ``nstlist`` at start-up, and energy minimization
+    uses ``1.05 * max(rvdw, rcoulomb)`` (GROMACS 2025.4, observed: 1.26 nm
+    for a 1.2 nm cutoff). The value written here is therefore the pair-list
+    radius only when the buffer is pinned with
+    ``mdp_extra={"verlet-buffer-tolerance": -1}``; it is written in every
+    stage so that such a run has a sane fixed list. The product is rounded
+    to 1e-6 before truncating so that ``1.5 * 1.2``, which the machine holds
+    as ``1.7999...``, still gives 1.8.
+    """
+    return math.floor(round(float(rcut_nm) * 12.0, 6)) / 10.0
 
 
 def _vector(scalar, mask):
@@ -277,8 +303,12 @@ class GMXCalculator:
         as ``MDCalculator`` takes it. Both the ``.gro`` and the ``.top`` are
         derived from it and from the ``.ffxml`` given to :meth:`run`.
     rcut_nm : float, optional
-        Nonbonded cutoff in nm, written to ``rvdw`` and ``rcoulomb``;
-        ``rlist`` is ``rcut_nm + 0.2``. Default 1.2.
+        Nonbonded cutoff in nm, written to ``rvdw`` and ``rcoulomb``.
+        ``rlist`` is written as ``1.2 * rcut_nm`` truncated to one decimal
+        (1.2 -> 1.4), but the pair-list buffer is left to GROMACS
+        (``verlet-buffer-tolerance`` at its default), which recomputes
+        ``rlist`` and ``nstlist`` itself; the written value only takes
+        effect when the buffer is pinned through ``mdp_extra``. Default 1.2.
     temperature_K : float, optional
         ``ref-t`` and ``gen-temp`` in kelvin for the relaxation and the
         production. Default 300.
@@ -505,7 +535,11 @@ class GMXCalculator:
             # constant offset of the energy, not of the forces.
             "vdw-modifier": "Potential-Shift" if ljpme else "None",
             "rvdw": _num(self.rcut_nm),
-            "rlist": _num(self.rcut_nm + 0.2),
+            # Pair-list radius for a pinned buffer only: with the default
+            # verlet-buffer-tolerance (the template's -1 is dropped, see
+            # _TEMPLATE_KEYS_DROPPED) grompp and mdrun recompute rlist and
+            # nstlist, in minimization as well (1.05 * cutoff there).
+            "rlist": _num(_pairlist_cutoff(self.rcut_nm)),
             "DispCorr": "EnerPres" if self.dispcorr else "no",
             "constraints": "h-bonds" if self.useHbondConstraint else "none",
             # Trajectories are xtc only; trr output off in every stage.
@@ -564,10 +598,11 @@ class GMXCalculator:
         """
         The complete mdp of one stage as an ordered ``{key: str}`` dict.
 
-        The template of the stage is read, the entries derived from the
-        settings are written over it, the keys that must not survive (the
-        barostat of a template in a run without one) are removed, and
-        ``mdp_extra`` is applied last. Pure: nothing is written.
+        The template of the stage is read, the keys the calculator does not
+        carry over (:data:`_TEMPLATE_KEYS_DROPPED`) are removed, the entries
+        derived from the settings are written over it, the keys that must not
+        survive (the barostat of a template in a run without one) are
+        removed, and ``mdp_extra`` is applied last. Pure: nothing is written.
 
         Parameters
         ----------
@@ -577,6 +612,8 @@ class GMXCalculator:
         if stage not in GMX_STAGES:
             raise ValueError(f"stage must be one of {GMX_STAGES}, got {stage!r}")
         options = _read_mdp(self._template(stage))
+        for key in _TEMPLATE_KEYS_DROPPED:
+            options.pop(key, None)
         options.update(self._common_options())
         if stage == "min":
             options.update({

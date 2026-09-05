@@ -63,12 +63,34 @@ def test_timestep_is_converted_from_fs_to_ps(dt_fs, expected):
     assert "dt" not in calc.mdp_options("min")
 
 
-@pytest.mark.parametrize("rcut, rlist", [(1.2, 1.4), (1.0, 1.2)])
+@pytest.mark.parametrize("rcut, rlist", [(1.2, 1.4), (1.0, 1.2), (1.5, 1.8)])
 def test_cutoff_is_written_in_nm_without_conversion(rcut, rlist):
-    options = GMXCalculator("start.pdb", rcut_nm=rcut).mdp_options("prod")
-    assert float(options["rvdw"]) == pytest.approx(rcut, rel=1e-12)
-    assert float(options["rcoulomb"]) == pytest.approx(rcut, rel=1e-12)
-    assert float(options["rlist"]) == pytest.approx(rlist, rel=1e-12)
+    for stage in gmx.GMX_STAGES:
+        options = GMXCalculator("start.pdb", rcut_nm=rcut).mdp_options(stage)
+        assert float(options["rvdw"]) == pytest.approx(rcut, rel=1e-12)
+        assert float(options["rcoulomb"]) == pytest.approx(rcut, rel=1e-12)
+        assert float(options["rlist"]) == pytest.approx(rlist, rel=1e-12)
+
+
+@pytest.mark.parametrize("rcut, rlist", [
+    (1.2, 1.4), (1.0, 1.2), (1.5, 1.8), (0.9, 1.0), (1.25, 1.5),
+])
+def test_pairlist_cutoff_is_1_2_times_the_cutoff_truncated(rcut, rlist):
+    """1.2 x rc truncated to one decimal, robust to 1.5 * 1.2 == 1.7999..."""
+    assert gmx._pairlist_cutoff(rcut) == pytest.approx(rlist, abs=1e-12)
+
+
+def test_pair_list_buffer_is_left_to_mdrun():
+    """The template's verlet-buffer-tolerance = -1 is dropped; nstlist stays"""
+    for stage in gmx.GMX_STAGES:
+        options = GMXCalculator("start.pdb").mdp_options(stage)
+        assert "verlet-buffer-tolerance" not in options
+        assert "nstlist" in options
+    # ...unless the user asks for the fixed pair list explicitly
+    pinned = GMXCalculator(
+        "start.pdb", mdp_extra={"verlet-buffer-tolerance": -1}
+    ).mdp_options("prod")
+    assert pinned["verlet-buffer-tolerance"] == "-1"
 
 
 def test_temperature_sets_ref_t_and_gen_temp():
