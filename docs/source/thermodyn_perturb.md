@@ -187,9 +187,11 @@ The trainer supports multiple MD ensembles:
 #### Resampling Strategy
 
 Adaptive resampling is triggered when:
-- Loss becomes NaN (indicates poor reweighting)
+- Loss becomes NaN (see below)
 - Effective sample size drops below user-specified threshold
 - Predefined resampling frequency is reached
+
+This ensures the method remains stable across the optimization landscape.
 
 A NaN or Inf loss is not given up on right away: every replica is resampled
 with `trainer.ffxml`, the force field the loss was measured with, and the loss
@@ -200,8 +202,6 @@ back to the old behaviour, a small random perturbation of the parameters and
 the epoch recorded as NaN. Resampling cures a NaN of the sampling only; one
 from the parameters themselves is prevented by the
 [lower bounds](#gradient-and-parameter-modification-functions).
-
-This ensures the method remains stable across the optimization landscape.
 
 #### Validation Properties
 

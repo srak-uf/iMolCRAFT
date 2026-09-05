@@ -26,9 +26,10 @@ fixes and backwards-compatible additions moves the patch number.
   bound is put back to its previous value, with a printed warning. The bounds
   are the new `param_floors` argument of every trainer: `None` (default) is
   `imolcraft.trainer.base.DEFAULT_PARAM_FLOORS`, sigma at `1e-3` nm and
-  epsilon at `0`; `{}` bounds nothing. They are stored in the checkpoint. This
-  changes the trajectory of a run that previously walked through a negative
-  epsilon and kept going.
+  epsilon at `0`; `{}` bounds nothing. They are stored in the checkpoint and
+  accepted by `from_checkpoint`; a checkpoint written before 0.3.2 gets the
+  defaults. This changes the trajectory of a run that previously walked
+  through a negative epsilon and kept going.
 - `ThermodynamicTrainer` keeps a **target history**: one record per epoch of
   what the force field of that epoch gives for every target, next to the
   loss. A record carries `epoch`, `ffxml`, `loss` and, per replica, the loss,
