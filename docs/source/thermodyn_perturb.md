@@ -187,11 +187,21 @@ The trainer supports multiple MD ensembles:
 #### Resampling Strategy
 
 Adaptive resampling is triggered when:
-- Loss becomes NaN (indicates poor reweighting)
+- Loss becomes NaN (see below)
 - Effective sample size drops below user-specified threshold
 - Predefined resampling frequency is reached
 
 This ensures the method remains stable across the optimization landscape.
+
+A NaN or Inf loss is not given up on right away: every replica is resampled
+with `trainer.ffxml`, the force field the loss was measured with, and the loss
+of the same epoch is computed again, the parameters untouched.
+`nan_resample_retries` (default `1`, `0` disables) sets how many such rounds
+are allowed; each costs a full resampling. A loss still NaN afterwards falls
+back to the old behaviour, a small random perturbation of the parameters and
+the epoch recorded as NaN. Resampling cures a NaN of the sampling only; one
+from the parameters themselves is prevented by the
+[lower bounds](#gradient-and-parameter-modification-functions).
 
 #### Validation Properties
 
@@ -576,6 +586,42 @@ This function is called after parameter updates to enforce chemical constraints:
   - `target_lists`: List of atom indices for each constraint group (e.g., all BF₄ atoms)
   - `target_charges`: Target net charge for each group (e.g., -1.0 for BF₄⁻)
 - **Purpose**: Ensures that any numerical drift from charge updates is corrected, maintaining chemical validity
+
+**Lower bounds on the parameters**
+
+A Lennard-Jones sigma divides a distance and a negative epsilon turns the
+well into a barrier, so after every step the trainer puts a parameter that
+fell below its bound back to the value it held before the step -- not onto
+the bound, where a switched-off site has no gradient to climb back with. Each
+correction prints a line; a run full of them means `lr` or `clip` is too large:
+
+```
+Warning: NonbondedForce/sigma was pushed below 0.001 in 2 place(s), the lowest to -0.00417. Held at the values of the previous step. Repeated warnings mean lr or clip is too large for this parameter.
+```
+
+The bounds are the `param_floors` argument, keyed like `opt_fftypes`:
+
+| `param_floors` | Effect |
+| --- | --- |
+| omitted (`None`) | `imolcraft.trainer.base.DEFAULT_PARAM_FLOORS`: `NonbondedForce/sigma` at `1e-3` nm, `NonbondedForce/epsilon` at `0` kJ/mol. |
+| `{}` | Nothing is bounded. |
+| `{"NonbondedForce/sigma": 0.05, "HarmonicBondForce/k": 0.0}` | Exactly these, replacing the defaults. |
+
+```python
+trainer = ThermodynamicTrainer(..., param_floors={"NonbondedForce/sigma": 0.05})
+```
+
+A bound naming a force the field does not carry is ignored; charges and
+torsion force constants are deliberately not bounded. The correction runs
+*before* the `"after_update"` hook below, which keeps the last word, and every
+checkpoint records the bounds it was given.
+
+A bound cannot catch a NaN (`NaN < 1e-3` is `False`), so the step guards
+itself twice more: non-finite gradients take the same random perturbation a
+NaN loss does, and a parameter that comes out NaN or Inf after the update is
+put back to its previous value before the bounds are applied. The best force
+field (`best_params`, `<label>_best.xml`) is tracked over the finite losses
+only, so a NaN epoch does not freeze it.
 
 **`trainer.add_modifyfn(hook_point, function)` - API for registering modifications**
 

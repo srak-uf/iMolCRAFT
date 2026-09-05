@@ -24,7 +24,12 @@ from ..trainer.dmff_utils import (
     get_chgparams_from_rescharges,
 )
 from .loss import _NPT_ENSEMBLES
-from .base import BaseTrainer, plot_learning_curve
+from .base import (
+    BaseTrainer,
+    _loss_is_invalid,
+    _print_memory,
+    plot_learning_curve,
+)
 from ..provenance import provenance_fields
 from ..calculator import DihedralCalculator, DistanceCalculator
 from openmm import unit
@@ -224,6 +229,7 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.01,
         clip: Union[float, List[float]] = 0.1,
+        param_floors: Optional[dict] = None,
     ) -> None:
 
         super().__init__(
@@ -237,6 +243,7 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
             label=label,
             lr=lr,
             clip=clip,
+            param_floors=param_floors,
         )
         self.relax_steps = relax_steps
         self.inputs = {"positions": [], "pairs": [], "dihed_index": []}
@@ -311,6 +318,7 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
                     "opt_fftypes": self.opt_fftypes,
                     "lr": self.lr,
                     "clip": self.clip,
+                    "param_floors": self.param_floors_given,
                     **self._best_checkpoint_fields(),
                     **provenance_fields(),
                 }
@@ -362,6 +370,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.01,
         clip: Union[float, List[float]] = 0.1,
+        param_floors: Optional[dict] = None,
     ) -> None:
         """
         Initialize the DihedralTrainer.
@@ -388,6 +397,11 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
             Learning rate(s) for optimizer (default: 0.0001).
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
+        param_floors : dict, optional
+            Lower bound per ``Force/parameter`` name, see
+            :class:`~imolcraft.trainer.base.BaseTrainer`. The torsion
+            parameters fitted here carry none of the defaults, a torsion
+            force constant being free to change sign.
         """
         super().__init__(
             ffxml_list=[ffxml],
@@ -400,6 +414,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
             label=label,
             lr=lr,
             clip=clip,
+            param_floors=param_floors,
         )
 
         self.relax_steps = relax_steps
@@ -480,6 +495,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
                         "opt_fftypes": self.opt_fftypes,
                         "lr": self.lr,
                         "clip": self.clip,
+                        "param_floors": self.param_floors_given,
                         **self._best_checkpoint_fields(),
                         **provenance_fields(),
                     },
@@ -497,6 +513,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
         optimizer_algo: Optional[str] = None,
         lr: Optional[Union[float, List[float]]] = None,
         clip: Optional[Union[float, List[float]]] = None,
+        param_floors: Optional[dict] = None,
     ) -> "DihedralTrainer":
         """
         Rebuild a DihedralTrainer from a checkpoint.
@@ -514,7 +531,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
             Path to the PDB file.
         loss_fn : callable, optional
             Loss function; the stored one cannot be pickled, so it is passed in.
-        opt_fftypes, optimizer_algo, lr, clip : optional
+        opt_fftypes, optimizer_algo, lr, clip, param_floors : optional
             Override the values stored in the checkpoint.
 
         Returns
@@ -540,6 +557,12 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
             label=dump_dict["label"],
             lr=dump_dict["lr"] if lr is None else lr,
             clip=dump_dict["clip"] if clip is None else clip,
+            # a checkpoint written before the bounds existed carries no key,
+            # and None is what asks for the defaults anyway
+            param_floors=(
+                dump_dict.get("param_floors") if param_floors is None
+                else param_floors
+            ),
         )
 
         trainer.GT_scans = _qm_energies(trainer.calculator.qm_scan)
@@ -582,7 +605,9 @@ class ThermodynamicTrainer(BaseTrainer):
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
+        param_floors: Optional[dict] = None,
         resample_freq: int = 50,
+        nan_resample_retries: int = 1,
         restart_xml: str = None,
         device: str = "CPU",
         md_log: str = "stdout",
@@ -622,6 +647,16 @@ class ThermodynamicTrainer(BaseTrainer):
             Learning rate(s) for optimizer (default: 0.0001).
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
+        param_floors : dict, optional
+            Lower bound per ``Force/parameter`` name of the parameters that
+            must not go below it. Default is
+            :data:`~imolcraft.trainer.base.DEFAULT_PARAM_FLOORS`, which keeps
+            the Lennard-Jones sigma clear of zero and epsilon from turning
+            negative; ``{}`` bounds nothing.
+        nan_resample_retries : int, optional
+            Rounds of resampling and recomputing an epoch whose loss is NaN
+            or Inf (default 1, 0 disables); each round costs a full
+            resampling.
         restart_xml : str, optional
             Path to the XML file for restarting the training.
         md_log : {'stdout', 'file', 'none'}, optional
@@ -645,6 +680,10 @@ class ThermodynamicTrainer(BaseTrainer):
         self.validation_params = validation_params
         self.resample_freq = resample_freq
         self.resample_counter = 0
+        self.nan_resample_retries = nan_resample_retries
+        # whether _retry_invalid_loss already resampled within this
+        # step, read and cleared by after_step
+        self._nan_resampled = False
 
         self.device = device
         self.md_log = md_log
@@ -666,6 +705,7 @@ class ThermodynamicTrainer(BaseTrainer):
             label=label,
             lr=lr,
             clip=clip,
+            param_floors=param_floors,
             restart_xml=restart_xml
         )
 
@@ -680,6 +720,8 @@ class ThermodynamicTrainer(BaseTrainer):
             "md_log": md_log,
             "md_logfile": md_logfile,
             "resample_freq": resample_freq,
+            "nan_resample_retries": nan_resample_retries,
+            "param_floors": param_floors,
             "target_log": self.target_log,
         }
 
@@ -1032,8 +1074,6 @@ class ThermodynamicTrainer(BaseTrainer):
             self.utarget.append(utarget)
             self.wresults.append(wresults)
             self.losses_per_replica.append(loss_tmp)
-        if jnp.isnan(loss) is True:
-            self.resample = [True for i in range(len(self.sampling_params))]
 
         return loss, grads
 
@@ -1048,7 +1088,7 @@ class ThermodynamicTrainer(BaseTrainer):
             return [i for i, flag in enumerate(self.resample) if flag]
         return list(range(len(self.sampling_params)))
 
-    def _resample(self) -> None:
+    def _resample(self, record_epoch: Optional[int] = None) -> None:
         """
         Resample MD trajectories and update MBAR estimator if needed.
 
@@ -1056,6 +1096,13 @@ class ThermodynamicTrainer(BaseTrainer):
         ``estimator.states``: removing and re-adding a state moves it to the
         end of that list, so the positions stop matching the replica indices
         after the first resampling.
+
+        Parameters
+        ----------
+        record_epoch : int, optional
+            Epoch the validation record is filed under. Default
+            ``self._epoch + 1`` (the routine call from :meth:`after_step`);
+            the NaN recovery passes ``self._epoch``.
         """
         self.resample_counter = 0
         registered = {state.name for state in self.estimator.states}
@@ -1074,7 +1121,9 @@ class ThermodynamicTrainer(BaseTrainer):
             self._update_validation(idx, xtcfile)
         # resampling runs on the force field rendered by after_step, which is
         # the one of the next epoch, so that is what the record describes
-        self._record_validation(self._epoch + 1)
+        self._record_validation(
+            self._epoch + 1 if record_epoch is None else record_epoch
+        )
         self.estimator.optimize_mbar()
 
     def _needs_resample(self, ii: int, ieff: dict) -> bool:
@@ -1088,6 +1137,41 @@ class ThermodynamicTrainer(BaseTrainer):
         own = ieff.get(_state_name(ii))
         return own is not None and own < self.neff[ii]
 
+    def _retry_invalid_loss(self, loss, grads) -> Tuple[Any, Any]:
+        """
+        Recompute a NaN or Inf loss after resampling every replica.
+
+        Up to ``nan_resample_retries`` rounds of resampling with ``self.ffxml``,
+        the force field this loss was measured with, followed by a fresh
+        :meth:`get_loss_gradients` are run; a valid loss ends the loop. The
+        validation record is filed under the epoch being retried and the
+        parameters are left alone throughout, so a successful retry is the loss
+        of this very step rather than of a step already taken. Nothing is
+        resampled before :meth:`setup`.
+
+        Returns the loss and gradients to carry on with, which are the ones
+        passed in when no retrying happened.
+        """
+        attempt = 0
+        while _loss_is_invalid(loss) and attempt < self.nan_resample_retries:
+            attempt += 1
+            print(
+                f"Warning: Loss is NaN or Inf. Recovery attempt "
+                f"{attempt}/{self.nan_resample_retries}."
+            )
+            if getattr(self, "estimator", None) is not None:
+                print(
+                    f"Resampling every replica with {self.ffxml} and recomputing "
+                    f"the loss of epoch {self._epoch} (attempt {attempt})"
+                )
+                self.resample = [True for _ in range(len(self.sampling_params))]
+                self._resample(record_epoch=self._epoch)
+                self.resample = [False for _ in range(len(self.sampling_params))]
+                self._nan_resampled = True
+            loss, grads = self.get_loss_gradients()
+            _print_memory(f"grad obtained after recovery {attempt}....")
+        return loss, grads
+
     def after_step(self) -> None:
         """
         Update force field, input arrays, and resample if necessary after each
@@ -1099,15 +1183,17 @@ class ThermodynamicTrainer(BaseTrainer):
         if self.resample_counter >= self.resample_freq:
             self.resample = [True for i in range(len(self.sampling_params))]
         loss_value = getattr(self, "loss", None)
-        loss_is_invalid = loss_value is not None and (
-            bool(jnp.isnan(loss_value)) or bool(jnp.isinf(loss_value))
-        )
-        if loss_is_invalid:
+        loss_is_invalid = loss_value is not None and _loss_is_invalid(loss_value)
+        # a recovery resampling has already run within this step, on the very
+        # force field the loss was measured with, so doing it again here would
+        # only repeat it with the perturbed parameters
+        if loss_is_invalid and not self._nan_resampled:
             print(
                 "Warning: Loss is NaN or Inf. "
                 "Resampling with the last valid force field XML."
             )
             self.resample = [True for i in range(len(self.sampling_params))]
+        self._nan_resampled = False
 
         self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
         self.rescharges = update_rescharges_from_params(self.rescharges, self.ffparams)
@@ -1242,6 +1328,8 @@ class ThermodynamicTrainer(BaseTrainer):
         md_log: Optional[str] = None,
         md_logfile: Optional[str] = None,
         resample_freq: Optional[int] = None,
+        nan_resample_retries: Optional[int] = None,
+        param_floors: Optional[dict] = None,
         target_log: Optional[str] = None,
         setup: bool = True,
     ) -> "ThermodynamicTrainer":
@@ -1280,6 +1368,8 @@ class ThermodynamicTrainer(BaseTrainer):
             "md_log": md_log,
             "md_logfile": md_logfile,
             "resample_freq": resample_freq,
+            "nan_resample_retries": nan_resample_retries,
+            "param_floors": param_floors,
             "target_log": target_log,
         }
         restart_args.update({k: v for k, v in given.items() if v is not None})

@@ -27,6 +27,13 @@ from matplotlib.ticker import MaxNLocator
 #: Relative size of the random nudge applied when the loss turns NaN or Inf.
 _NAN_RECOVERY_SCALE = 0.0001
 
+#: Lower bounds per ``Force/parameter`` name (DMFF units: nm, kJ/mol); a
+#: Lennard-Jones sigma must stay clear of zero and epsilon non-negative.
+DEFAULT_PARAM_FLOORS = {
+    "NonbondedForce/sigma": 1e-3,
+    "NonbondedForce/epsilon": 0.0,
+}
+
 
 def _print_memory(tag: str) -> None:
     """Report the resident set size of this process, for tracking JAX leaks."""
@@ -59,11 +66,15 @@ def _build_optimizer(ffparams, opt_fftypes, optimizer_algo, lr, clip):
     """
     multiTrans = MultiTransform(ffparams)
     for i, opt_fftype in enumerate(opt_fftypes):
+        # DMFF's own nonzero switch appends optax.keep_params_nonnegative,
+        # which needs the parameters handed to update() and would bound every
+        # type alike, charges included. The bounds that actually apply are
+        # enforced after the step instead, see enforce_param_floors.
         multiTrans[opt_fftype] = genOptimizer(
             optimizer=optimizer_algo,
             learning_rate=lr[i],
             clip=clip[i],
-            nonzero=False,  # Should be True
+            nonzero=False,
         )
     multiTrans.finalize()
 
@@ -74,18 +85,139 @@ def _build_optimizer(ffparams, opt_fftypes, optimizer_algo, lr, clip):
     return grad_transform, optax.masked(grad_transform, mask)
 
 
+def _loss_is_invalid(loss) -> bool:
+    """Whether a loss value came out NaN or Inf."""
+    return not bool(jnp.isfinite(loss))
+
+
+def tree_is_finite(tree) -> bool:
+    """
+    Whether every leaf of a pytree is finite. Reads the answer out as a
+    Python bool, so eager only.
+    """
+    leaves = jax.tree_util.tree_leaves(tree)
+    return all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
+
+
 def _nan_recovery_gradients(ffparams):
     """
-    Replace the gradients by a small random nudge.
-
-    Used when the loss came out NaN or Inf: rather than stopping, the
-    parameters are jittered so the next step starts from a different point.
+    Replace the gradients by a small random nudge, so that a step whose loss
+    or gradients came out NaN or Inf moves on from a different point.
     """
     return jax.tree_util.tree_map(
         lambda x: x
         + _NAN_RECOVERY_SCALE * jax.random.normal(jax.random.PRNGKey(1), shape=x.shape),
         ffparams,
     )
+
+
+def _guard_gradients(loss, grads, ffparams):
+    """
+    The gradients to step with: ``grads`` when loss and gradients are finite,
+    the random nudge of :func:`_nan_recovery_gradients` otherwise.
+    """
+    if _loss_is_invalid(loss) or not tree_is_finite(grads):
+        print("Warning: Loss or gradients are NaN or Inf. Skipping this step.")
+        return _nan_recovery_gradients(ffparams)
+    return grads
+
+
+def restore_nonfinite_params(ffparams, previous):
+    """
+    Put every NaN or Inf entry of ``ffparams`` back to its value in
+    ``previous``; the finite ones are kept.
+
+    Parameters
+    ----------
+    ffparams : dict
+        Parameters as the optimizer step left them.
+    previous : dict
+        The same tree before the step; read only.
+
+    Returns
+    -------
+    (ffparams, count) : (dict, int)
+        The parameters to carry on with, and how many entries were put back.
+        A count of zero means the input is returned unchanged.
+    """
+    count = 0
+    restored = ffparams
+    for force, parameters in ffparams.items():
+        for name, value in parameters.items():
+            bad = ~jnp.isfinite(value)
+            n_bad = int(jnp.count_nonzero(bad))
+            if n_bad == 0:
+                continue
+            count += n_bad
+            restored = dict(restored)
+            restored[force] = dict(restored[force])
+            restored[force][name] = jnp.where(bad, previous[force][name], value)
+    return restored, count
+
+
+def _resolve_param_floors(ffparams, param_floors):
+    """
+    The lower bounds that apply to one parameter tree.
+
+    A bound naming a force or a parameter the tree does not carry is dropped
+    rather than raising: :data:`DEFAULT_PARAM_FLOORS` lists what a
+    Lennard-Jones force field has, and a trainer fitting torsions alone
+    carries none of it. ``None`` asks for the defaults, ``{}`` for no bound.
+    """
+    floors = DEFAULT_PARAM_FLOORS if param_floors is None else param_floors
+    resolved = {}
+    for name, floor in floors.items():
+        force, _, parameter = name.partition("/")
+        if parameter and parameter in ffparams.get(force, {}):
+            resolved[name] = float(floor)
+    return resolved
+
+
+def enforce_param_floors(ffparams, previous, floors):
+    """
+    Hold every bounded parameter at or above its lower bound.
+
+    Held at the previous value rather than at the bound, where a switched-off
+    site has no gradient to climb back with; a previous value below the bound
+    is raised onto it.
+
+    Parameters
+    ----------
+    ffparams : dict
+        Parameters as the optimizer step left them.
+    previous : dict
+        The same tree before the step; read only.
+    floors : dict
+        Bound per ``Force/parameter`` name, as :func:`_resolve_param_floors`
+        returns it.
+
+    Returns
+    -------
+    (ffparams, report) : (dict, dict)
+        The parameters to carry on with, and per bounded parameter type the
+        number of entries that were held and the lowest value that was
+        rejected. An empty report means the step needed no correction.
+    """
+    if not floors:
+        return ffparams, {}
+
+    corrected = ffparams
+    report = {}
+    for name, floor in floors.items():
+        force, _, parameter = name.partition("/")
+        value = corrected[force][parameter]
+        below = value < floor
+        count = int(jnp.count_nonzero(below))
+        if count == 0:
+            continue
+        report[name] = {"count": count, "lowest": float(jnp.min(value))}
+        fallback = jnp.maximum(previous[force][parameter], floor)
+        # only the branch that changed is rebuilt: the tree is shared with the
+        # caller's previous parameters, which must keep their own values
+        corrected = dict(corrected)
+        corrected[force] = dict(corrected[force])
+        corrected[force][parameter] = jnp.where(below, fallback, value)
+    return corrected, report
 
 
 def plot_learning_curve(epochs, losses, label: str) -> None:
@@ -116,6 +248,7 @@ class BaseTrainer:
     This class manages the setup, optimization, and checkpointing of force field
     parameters using differentiable molecular force fields and JAX-based optimizers.
     """
+
     def __init__(
         self,
         ffxml_list: Union[str, List[str]],
@@ -128,6 +261,7 @@ class BaseTrainer:
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
+        param_floors: Optional[dict] = None,
         restart_xml: Optional[str] = None
     ) -> None:
 
@@ -156,6 +290,12 @@ class BaseTrainer:
             Learning rate(s) for optimizer (default: 0.0001).
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
+        param_floors : dict, optional
+            Lower bound per ``Force/parameter`` name of the parameters that
+            must not go below it, such as ``{"NonbondedForce/sigma": 1e-3}``.
+            Default is :data:`DEFAULT_PARAM_FLOORS`, which bounds the
+            Lennard-Jones sigma and epsilon; ``{}`` bounds nothing. A bound
+            naming something the force field does not carry is ignored.
         restart_xml : str, optional
             Path to the XML file for restarting the training.
         """
@@ -212,6 +352,10 @@ class BaseTrainer:
         self.ffparams = get_chgparams_from_rescharges(ffparams, self.rescharges)
 
         self.loss_fn = loss_fn
+        # resolved against the parameter tree, which is what says whether a
+        # bound applies at all, and kept as given for the checkpoint
+        self.param_floors_given = param_floors
+        self.param_floors = _resolve_param_floors(self.ffparams, param_floors)
         self.lr, self.clip = _broadcast_lr_clip(lr, clip, opt_fftypes)
         self.optimizer_algo = optimizer_algo
         self.grad_transform, self.optimizer = _build_optimizer(
@@ -241,14 +385,23 @@ class BaseTrainer:
         """
         Restore the best-so-far snapshot from a checkpoint.
 
-        Without it a restarted run forgets the best model of the previous one:
-        ``fit`` compares against ``min(self.losses)``, which is restored, but
-        ``best_params`` would stay None until the historical minimum is beaten
-        again. Checkpoints written before this was stored simply carry None.
+        Without it a restarted run forgets the best model of the previous one
+        and ``best_params`` would stay None until the historical minimum is
+        beaten again. A checkpoint without ``best_loss`` takes it from the
+        finite losses of the restored history; ``best_params`` stays None.
         """
         self.best_params = dump_dict.get("best_params")
         self.best_epoch = dump_dict.get("best_epoch")
         self.best_loss = dump_dict.get("best_loss")
+        if self.best_loss is None:
+            finite = [
+                (loss, index)
+                for index, loss in enumerate(self.losses)
+                if not _loss_is_invalid(loss)
+            ]
+            if finite:
+                self.best_loss, index = min(finite, key=lambda entry: entry[0])
+                self.best_epoch = self.epochs[index] if index < len(self.epochs) else None
 
     def add_modifyfn(self, type_fn: str, fn: Callable[[Any], Any]) -> None:
         """
@@ -307,24 +460,60 @@ class BaseTrainer:
         """
         pass
 
+    def _retry_invalid_loss(self, loss, grads) -> Tuple[Any, Any]:
+        """
+        Give the trainer a chance to recompute a NaN or Inf loss. The default
+        hands back what it was given; see
+        :meth:`~imolcraft.trainer.trainer.ThermodynamicTrainer._retry_invalid_loss`.
+        """
+        return loss, grads
+
     def training_step(self) -> None:
         """
-        Perform a single training step: compute loss, gradients, and update parameters.
-        Handles NaN/Inf loss by perturbing parameters.
+        Run one training step: loss, gradients and a parameter update.
+
+        A NaN or Inf loss is retried through :meth:`_retry_invalid_loss`; one
+        that survives, or non-finite gradients, turn the step into a small
+        random perturbation. After the update, non-finite entries are put back
+        and the bounded parameters held at their floors, before "after_update".
         """
         self.loss, grads = self.get_loss_gradients()
         _print_memory("grad obtained....")
-        if jnp.isnan(self.loss) or jnp.isinf(self.loss):
-            print("Warning: Loss is NaN or Inf. Skipping this step.")
-            # Randomly perturb self.ffparams by 0.01%
-            grads = _nan_recovery_gradients(self.ffparams)
-
+        self.loss, grads = self._retry_invalid_loss(self.loss, grads)
+        grads = _guard_gradients(self.loss, grads, self.ffparams)
         grads = self._do_modify("after_grad", grads)
         _print_memory("grad modify....")
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
-        self.ffparams = optax.apply_updates(self.ffparams, updates)
+        self._apply_update(updates)
         self.ffparams = self._do_modify("after_update", self.ffparams)
         _print_memory("update finished....")
+
+    def _apply_update(self, updates) -> None:
+        """
+        Apply the update, then put non-finite entries back and hold the
+        bounded ones at their floors.
+        """
+        previous = self.ffparams
+        self.ffparams = optax.apply_updates(self.ffparams, updates)
+        # non-finite entries first: NaN < floor is False, so a NaN would pass
+        # the floor check untouched
+        self.ffparams, count = restore_nonfinite_params(self.ffparams, previous)
+        if count:
+            print(
+                f"Warning: {count} parameter(s) came out NaN or Inf after the "
+                "update and were put back to the values of the previous step. "
+                "Repeated warnings mean the loss or the gradients are diverging."
+            )
+        self.ffparams, report = enforce_param_floors(
+            self.ffparams, previous, self.param_floors
+        )
+        for name, entry in report.items():
+            print(
+                f"Warning: {name} was pushed below {self.param_floors[name]:g} in "
+                f"{entry['count']} place(s), the lowest to {entry['lowest']:.6g}. "
+                "Held at the values of the previous step. Repeated warnings mean "
+                "lr or clip is too large for this parameter."
+            )
 
     def before_step(self) -> None:
         """
@@ -354,6 +543,8 @@ class BaseTrainer:
         Calling it again continues from where the previous call stopped, so
         ``fit(10)`` twice runs the same 20 epochs as ``fit(20)`` once.
 
+        Only finite losses can become the best; NaN epochs stay in ``losses``.
+
         Parameters
         ----------
         steps : int
@@ -369,7 +560,9 @@ class BaseTrainer:
             self.before_step()
             self.training_step()
             self.after_step()
-            if len(self.losses) == 0 or self.loss < min(self.losses):
+            if not _loss_is_invalid(self.loss) and (
+                self.best_loss is None or self.loss < self.best_loss
+            ):
                 self.best_params = self.ffparams
                 self.best_epoch = self._epoch
                 self.best_loss = self.loss
@@ -382,12 +575,7 @@ class BaseTrainer:
             self._epoch += 1
             end_time = time.time()
             print("Loss: ", self.loss)
-            print(
-                "Best Loss: ",
-                min(self.losses),
-                "at epoch ",
-                self.epochs[self.losses.index(min(self.losses))],
-            )
+            print("Best Loss: ", self.best_loss, "at epoch ", self.best_epoch)
             print(f"Epoch {i_epoch} completed in {end_time - start_time:.2f} seconds.")
             print("----")
 
@@ -398,6 +586,7 @@ class SumTrainer(BaseTrainer):
                  optimizer_algo: str = "adam",
                  lr: Union[float, List[float]] = 0.0001,
                  clip: Union[float, List[float]] = 0.1,
+                 param_floors: Optional[dict] = None,
                  restart_xml: Optional[str] = None
                  ):
         self.trainer1 = trainer1
@@ -445,6 +634,10 @@ class SumTrainer(BaseTrainer):
         self._modifyfns["after_update"] = lambda ffparams: ffparams
 
         self.opt_fftypes = opt_fftypes
+        # the joint tree is the one this optimizer steps, so the bounds are
+        # resolved against it rather than against either half
+        self.param_floors_given = param_floors
+        self.param_floors = _resolve_param_floors(self.ffparams, param_floors)
         self.lr, self.clip = _broadcast_lr_clip(lr, clip, opt_fftypes)
         self.optimizer_algo = optimizer_algo
         self.grad_transform, self.optimizer = _build_optimizer(
@@ -478,10 +671,10 @@ class SumTrainer(BaseTrainer):
         """
         loss, grads = trainer.get_loss_gradients()
         print(f"{name}: {loss}")
-        if jnp.isnan(loss) or jnp.isinf(loss):
-            print("Warning: Loss is NaN or Inf. Skipping this step.")
-            grads = _nan_recovery_gradients(trainer.ffparams)
-
+        # the recovery belongs to the sub-trainer, which is the one holding
+        # the data the NaN came out of, and only its own half is recomputed
+        loss, grads = trainer._retry_invalid_loss(loss, grads)
+        grads = _guard_gradients(loss, grads, trainer.ffparams)
         return loss, trainer._do_modify("after_grad", grads)
 
     def get_loss_gradients(self):
@@ -504,17 +697,15 @@ class SumTrainer(BaseTrainer):
     def training_step(self):
         """
         Perform a single training step: compute loss, gradients, and update parameters.
-        Handles NaN/Inf loss by perturbing parameters.
+
+        Each half was already retried by :meth:`_substep`; the joint tree is
+        sanitised before it is split, so neither half is handed a bad value.
         """
         self.loss, grads = self.get_loss_gradients()
-        if jnp.isnan(self.loss) or jnp.isinf(self.loss):
-            print("Warning: Loss is NaN or Inf. Skipping this step.")
-            # Randomly perturb self.ffparams by 0.01%
-            grads = _nan_recovery_gradients(self.ffparams)
-
+        grads = _guard_gradients(self.loss, grads, self.ffparams)
         grads = self._do_modify("after_grad", grads)
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
-        self.ffparams = optax.apply_updates(self.ffparams, updates)
+        self._apply_update(updates)
 
         self._scatter_to_subtrainers()
         # the sub hooks run on their own half first, then the joint hook sees
@@ -580,6 +771,7 @@ class SumTrainer(BaseTrainer):
         optimizer_algo: Optional[str] = None,
         lr: Optional[Union[float, List[float]]] = None,
         clip: Optional[Union[float, List[float]]] = None,
+        param_floors: Optional[dict] = None,
         restart_xml: Optional[str] = None,
     ) -> "SumTrainer":
         """
@@ -597,7 +789,7 @@ class SumTrainer(BaseTrainer):
             Path of the pickle written by :meth:`write_checkpoint`.
         trainer1, trainer2 : BaseTrainer
             The sub-trainers, already restored from their own checkpoints.
-        opt_fftypes, weight, optimizer_algo, lr, clip : optional
+        opt_fftypes, weight, optimizer_algo, lr, clip, param_floors : optional
             Override the values stored in the checkpoint.
         restart_xml : str, optional
             Force field XML to resume from, instead of merging the original ones.
@@ -623,6 +815,10 @@ class SumTrainer(BaseTrainer):
             ),
             lr=dump_dict["lr"] if lr is None else lr,
             clip=dump_dict["clip"] if clip is None else clip,
+            param_floors=(
+                dump_dict.get("param_floors") if param_floors is None
+                else param_floors
+            ),
             restart_xml=restart_xml,
         )
 
@@ -665,6 +861,7 @@ class SumTrainer(BaseTrainer):
                     "opt_fftypes": self.opt_fftypes,
                     "lr": self.lr,
                     "clip": self.clip,
+                    "param_floors": self.param_floors_given,
                     "weight": self.weight,
                     **self._best_checkpoint_fields(),
                     **provenance_fields(),

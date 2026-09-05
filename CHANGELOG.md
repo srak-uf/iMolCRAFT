@@ -11,8 +11,24 @@ fixes and backwards-compatible additions moves the patch number.
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-09-05
+
 ### Added
 
+- **A `ThermodynamicTrainer` epoch whose loss is NaN or Inf is resampled and
+  recomputed** before being given up on. `nan_resample_retries` (default `1`,
+  `0` disables) sets how many rounds; it is stored in the checkpoint and
+  accepted by `from_checkpoint`. A loss still NaN afterwards falls back to the
+  previous perturb-and-continue behaviour.
+- **A Lennard-Jones sigma can no longer be driven to zero or below, nor an
+  epsilon negative, by an optimizer step.** A parameter that fell below its
+  bound is put back to its previous value, with a printed warning. The bounds
+  are the new `param_floors` argument of every trainer: `None` (default) is
+  `imolcraft.trainer.base.DEFAULT_PARAM_FLOORS`, sigma at `1e-3` nm and
+  epsilon at `0`; `{}` bounds nothing. They are stored in the checkpoint and
+  accepted by `from_checkpoint`; a checkpoint written before 0.3.2 gets the
+  defaults. This changes the trajectory of a run that previously walked
+  through a negative epsilon and kept going.
 - `ThermodynamicTrainer` keeps a **target history**: one record per epoch of
   what the force field of that epoch gives for every target, next to the
   loss. A record carries `epoch`, `ffxml`, `loss` and, per replica, the loss,
@@ -43,6 +59,16 @@ fixes and backwards-compatible additions moves the patch number.
   removes the duplicate epoch 0 that appeared when the first epoch resampled.
   Histories restored from a checkpoint written before this fix keep their old
   labels, so a run continued across it mixes the two conventions.
+- **A parameter that came out NaN or Inf ended the run**, the next epoch
+  writing a force field OpenMM refuses. Non-finite gradients now take the
+  same perturbation route a NaN loss does, and a parameter that is NaN or Inf
+  after the update is put back to its previous value, with a printed warning.
+- **A NaN loss froze the best force field for the rest of the run.** The best
+  is now tracked over the finite losses only; NaN epochs stay in `losses`.
+- **A checkpoint without the best-so-far snapshot made a restart report
+  `Best Loss: None at epoch None`.** The best loss and its epoch are read off
+  the restored history instead; `best_params` stays None.
+- Two packmol scratch files are untracked again and, with `.claude/`, ignored.
 
 ## [0.3.1] — 2026-08-26
 
@@ -161,6 +187,7 @@ fixes and backwards-compatible additions moves the patch number.
 Not itemized. `0.2.1` was set on 2026-04-08 and the releases before it were
 not tagged, so their history lives in `git log` alone.
 
-[Unreleased]: https://github.com/srak-uf/iMolCRAFT/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/srak-uf/iMolCRAFT/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/srak-uf/iMolCRAFT/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/srak-uf/iMolCRAFT/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/srak-uf/iMolCRAFT/releases/tag/v0.3.0
