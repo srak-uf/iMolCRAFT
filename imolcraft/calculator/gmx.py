@@ -25,6 +25,7 @@ place a process is started, so another backend (gmxapi) can be plugged in
 there later without touching the public API.
 """
 import importlib.resources
+import math
 import os
 import pathlib
 import shutil
@@ -76,6 +77,10 @@ _ENSEMBLE_TEMPLATES = {
     "anisonpt": "anisonpt_xyz.mdp",
     "trinpt": "trinpt_xyz_xy_yz_zx.mdp",
 }
+
+#: Ewald error tolerance OpenMM uses when createSystem is not told otherwise
+#: (NonbondedForce default, 5e-4, shared by the Coulomb and the LJ mesh).
+_EWALD_TOLERANCE = openmm.NonbondedForce().getEwaldErrorTolerance()
 
 #: mdp keys of the pressure coupling that must not leak out of a template
 #: into a run without a barostat (nvt.mdp carries ``ref-p = 5.0``).
@@ -193,6 +198,36 @@ def _annealing_options(legs, dt_fs):
         "annealing-time": " ".join(_num(t) for t in times),
         "annealing-temp": " ".join(_num(T) for T in temperatures),
     }
+
+
+def _ewald_options(rcut_nm, ljpme, tol=_EWALD_TOLERANCE):
+    """
+    Ewald mdp entries reproducing the PME parameters OpenMM derives from
+    its error tolerance ``tol`` (``NonbondedForce.getEwaldErrorTolerance``).
+
+    OpenMM sets the Ewald splitting parameter to
+    ``alpha = sqrt(-ln(2 tol)) / rc`` and the mesh size along a box vector of
+    length ``L`` to ``ceil(2 alpha L / (3 tol**0.2))`` (both the Coulomb and,
+    for LJPME, the dispersion mesh). GROMACS instead derives ``beta`` from
+    the strength of the shifted direct-space potential at the cutoff:
+    ``erfc(beta rc) = ewald-rtol`` for Coulomb and
+    ``exp(-x^2) (1 + x^2 + x^4/2) = ewald-rtol-lj`` with ``x = beta rc`` for
+    dispersion (GROMACS manual, "Ewald summation" / "Lennard-Jones PME").
+    Evaluating those two definitions at OpenMM's ``x = alpha rc`` gives
+    tolerances that make ``beta == alpha`` exactly, whatever ``rc``. The
+    grid is matched through ``fourierspacing = L / n = 3 tol**0.2 / (2 alpha)``,
+    which is independent of the box; both codes then round the size up to
+    an FFT-friendly number, so the grids agree up to that rounding.
+    ``pme-order`` is left to the template (6; OpenMM uses 5).
+    """
+    x = math.sqrt(-math.log(2.0 * tol))  # alpha * rc in OpenMM
+    options = {
+        "ewald-rtol": _num(math.erfc(x)),
+        "fourierspacing": _num(3.0 * tol ** 0.2 * float(rcut_nm) / (2.0 * x)),
+    }
+    if ljpme:
+        options["ewald-rtol-lj"] = _num(math.exp(-x * x) * (1.0 + x * x + x ** 4 / 2.0))
+    return options
 
 
 def _run_command(argv, logstream, env=None):
@@ -435,13 +470,31 @@ class GMXCalculator:
         return importlib.resources.files("imolcraft.data") / "mdp" / name
 
     def _common_options(self):
-        """mdp entries shared by every stage: cutoffs, PME, constraints."""
-        return {
+        """
+        mdp entries shared by every stage: cutoffs, PME, constraints.
+
+        The nonbonded setup mirrors OpenMM's. ``"PME"`` is Coulomb PME with a
+        plain Lennard-Jones cutoff (no shift, like OpenMM). ``"LJPME"`` adds
+        the dispersion mesh with ``lj-pme-comb-rule = Geometric``: as in
+        OpenMM's LJPME, the mesh uses geometric C6 mixing while the pairs
+        inside the cutoff use the Lorentz-Berthelot parameters of the
+        topology (``comb-rule 2`` in the ``.top``), and GROMACS corrects the
+        difference in real space. GROMACS requires ``vdw-modifier =
+        Potential-Shift`` with LJ-PME, which OpenMM does not apply, so the
+        LJ energy differs by a constant per pair within the cutoff (forces
+        are unaffected). The Ewald parameters come from :func:`_ewald_options`.
+        """
+        ljpme = self.nonbondedmethod == "LJPME"
+        options = {
             "pbc": "xyz",
             "cutoff-scheme": "Verlet",
             "coulombtype": "PME",
+            "coulomb-modifier": "None",
             "rcoulomb": _num(self.rcut_nm),
-            "vdwtype": "PME" if self.nonbondedmethod == "LJPME" else "Cut-off",
+            "vdwtype": "PME" if ljpme else "Cut-off",
+            # OpenMM shifts neither potential; GROMACS insists on the shift
+            # for LJ-PME (a constant offset of the energy, not of the forces).
+            "vdw-modifier": "Potential-Shift" if ljpme else "None",
             "rvdw": _num(self.rcut_nm),
             "rlist": _num(self.rcut_nm + 0.2),
             "DispCorr": "EnerPres" if self.dispcorr else "no",
@@ -451,6 +504,11 @@ class GMXCalculator:
             "nstvout": "0",
             "nstfout": "0",
         }
+        if ljpme:
+            # Geometric mesh, Lorentz-Berthelot pairs: the OpenMM LJPME scheme.
+            options["lj-pme-comb-rule"] = "Geometric"
+        options.update(_ewald_options(self.rcut_nm, ljpme))
+        return options
 
     def _md_options(self, stage):
         """mdp entries of the dynamical stages (anneal, relax, prod)."""

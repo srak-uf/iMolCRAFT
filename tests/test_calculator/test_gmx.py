@@ -180,6 +180,51 @@ def test_nonbondedmethod_maps_onto_vdwtype(method, vdwtype):
         options = GMXCalculator("start.pdb", nonbondedmethod=method).mdp_options(stage)
         assert options["vdwtype"] == vdwtype
         assert options["coulombtype"] == "PME"
+        assert options["coulomb-modifier"] == "None"
+
+
+def test_ljpme_writes_the_openmm_scheme_explicitly():
+    """Geometric mesh + LB pairs, potential shift; a plain cutoff keeps the template's None"""
+    ljpme = GMXCalculator("start.pdb", nonbondedmethod="LJPME").mdp_options("prod")
+    assert ljpme["lj-pme-comb-rule"] == "Geometric"
+    assert ljpme["vdw-modifier"] == "Potential-Shift"
+    assert "ewald-rtol-lj" in ljpme
+
+    pme = GMXCalculator("start.pdb", nonbondedmethod="PME").mdp_options("prod")
+    assert "lj-pme-comb-rule" not in pme
+    assert pme["vdw-modifier"] == "None"
+    assert "ewald-rtol-lj" not in pme
+
+
+def test_ewald_options_reproduce_openmm_alpha_and_grid():
+    """ewald-rtol / ewald-rtol-lj / fourierspacing are OpenMM's alpha and mesh in GROMACS terms"""
+    import math
+
+    tol = 5e-4                       # OpenMM NonbondedForce default
+    x = math.sqrt(-math.log(2 * tol))  # alpha * rc in OpenMM
+    assert gmx._EWALD_TOLERANCE == pytest.approx(tol)
+
+    options = gmx._ewald_options(1.2, ljpme=True)
+    # erfc(beta rc) = ewald-rtol  ->  beta == alpha
+    assert float(options["ewald-rtol"]) == pytest.approx(math.erfc(x), rel=1e-9)
+    assert float(options["ewald-rtol"]) == pytest.approx(2.0166e-4, rel=1e-3)
+    # exp(-x^2)(1 + x^2 + x^4/2) = ewald-rtol-lj  ->  beta_lj == alpha
+    assert float(options["ewald-rtol-lj"]) == pytest.approx(
+        math.exp(-x * x) * (1 + x * x + x ** 4 / 2), rel=1e-9
+    )
+    assert float(options["ewald-rtol-lj"]) == pytest.approx(3.1766e-2, rel=1e-3)
+    # L / n = 3 tol^0.2 / (2 alpha) with alpha = x / rc
+    assert float(options["fourierspacing"]) == pytest.approx(3 * tol ** 0.2 * 1.2 / (2 * x), rel=1e-9)
+    assert float(options["fourierspacing"]) == pytest.approx(0.14976, rel=1e-3)
+    # The spacing scales with the cutoff, the tolerances do not
+    shorter = gmx._ewald_options(1.0, ljpme=False)
+    assert float(shorter["fourierspacing"]) == pytest.approx(0.14976 / 1.2, rel=1e-3)
+    assert shorter["ewald-rtol"] == options["ewald-rtol"]
+    assert "ewald-rtol-lj" not in shorter
+
+    prod = GMXCalculator("start.pdb", rcut_nm=1.2).mdp_options("prod")
+    assert prod["ewald-rtol"] == options["ewald-rtol"]
+    assert prod["fourierspacing"] == options["fourierspacing"]
 
 
 def test_stages_differ_as_intended():
@@ -513,3 +558,151 @@ def test_smoke_gmx_sample_with_annealing_and_npt(tmp_path, monkeypatch):
     assert traj.n_frames in (5, 6)
     assert (tmp_path / "gmxfiles" / "anneal_0_anneal.tpr").exists()
     assert (tmp_path / "mdlogs" / "anneal_0.log").stat().st_size > 0
+
+
+def _openmm_energies(calc, ffxml, gro, zero_charges=False):
+    """
+    Potential energy terms of the System of ``calc`` at the coordinates of a
+    ``.gro`` (so both codes see the same 3-decimal positions), in kJ/mol.
+
+    Returns bonded terms by force class, the direct and reciprocal parts of
+    the NonbondedForce, and the total. With ``zero_charges`` the nonbonded
+    part is Lennard-Jones only.
+    """
+    import openmm
+    from openmm import app, unit
+
+    _, _, system = calc._build_system(ffxml)
+    positions = app.GromacsGroFile(gro).getPositions()
+    groups = {}
+    for i, force in enumerate(system.getForces()):
+        force.setForceGroup(i)
+        groups[type(force).__name__] = i
+        if isinstance(force, openmm.NonbondedForce):
+            force.setReciprocalSpaceForceGroup(31)
+            groups["recip"] = 31
+            if zero_charges:
+                for k in range(force.getNumParticles()):
+                    _, sigma, eps = force.getParticleParameters(k)
+                    force.setParticleParameters(k, 0.0, sigma, eps)
+                for k in range(force.getNumExceptions()):
+                    a, b, _, sigma, eps = force.getExceptionParameters(k)
+                    force.setExceptionParameters(k, a, b, 0.0, sigma, eps)
+    context = openmm.Context(
+        system, openmm.VerletIntegrator(0.001),
+        openmm.Platform.getPlatformByName("Reference"),
+    )
+    context.setPositions(positions)
+
+    def energy(**kwargs):
+        return context.getState(getEnergy=True, **kwargs).getPotentialEnergy(
+        ).value_in_unit(unit.kilojoule_per_mole)
+
+    out = {name: energy(groups={g}) for name, g in groups.items()}
+    out["total"] = energy()
+    return out
+
+
+def _gromacs_energies(calc, ffxml, workdir):
+    """
+    Energy terms GROMACS reports for a zero-step run of ``calc`` on the
+    exported .top / .gro, in kJ/mol, read back with ``gmx dump -e``.
+    Also returns the path of the .gro the run used.
+    """
+    import subprocess
+
+    top, gro = calc._export_inputs(ffxml, workdir)
+    options = calc.mdp_options("prod")
+    options.update({
+        "nsteps": "0", "tcoupl": "no", "pcoupl": "no", "gen-vel": "no",
+        "continuation": "no", "nstcalcenergy": "1", "nstenergy": "1",
+        "nstxout-compressed": "0", "nstlist": "1",
+    })
+    for key in gmx._PCOUPL_KEYS:
+        options.pop(key, None)
+    mdp = os.path.join(workdir, "sp.mdp")
+    with open(mdp, "w") as handle:
+        handle.write(gmx._format_mdp(options))
+    deffnm = os.path.join(workdir, "sp")
+    env = dict(os.environ, GMX_MAXBACKUP="-1")
+    subprocess.run(
+        calc.grompp_command(mdp, gro, top, f"{deffnm}.tpr"),
+        check=True, env=env, capture_output=True,
+    )
+    subprocess.run(
+        calc.mdrun_command(deffnm) + ["-ntmpi", "1", "-ntomp", "1"],
+        check=True, env=env, capture_output=True,
+    )
+    dump = subprocess.run(
+        [calc.gmx_bin, "dump", "-e", f"{deffnm}.edr"],
+        check=True, env=env, capture_output=True, text=True,
+    ).stdout
+    import re
+
+    terms = {}
+    for line in dump.splitlines():
+        match = re.match(r"\s{2,}(\S.*?\S)\s{2,}(-?\d\.\d+e[+-]\d+)\s*$", line)
+        if match and match.group(1) not in terms:   # first frame = step 0
+            terms[match.group(1)] = float(match.group(2))
+    return terms, gro
+
+
+@pytest.mark.gmx
+@pytest.mark.skipif(shutil.which("gmx") is None, reason="gmx binary not on PATH")
+@pytest.mark.parametrize("method", ["PME", "LJPME"])
+@pytest.mark.parametrize("dispcorr", [False, True])
+def test_single_point_energy_matches_openmm(method, dispcorr, tmp_path):
+    """
+    OpenMM and GROMACS agree on the potential energy of the exported system.
+
+    Measured on this fixture (10 atoms, 4 nm box, rc = 1.2 nm), both codes at
+    the 3-decimal .gro coordinates, in kJ/mol:
+
+    - Bond / Angle / Dihedral agree to < 1e-4: same parameters, same
+      coordinates.
+    - Lennard-Jones with a plain cutoff (PME) agrees to < 1e-4 (3.9686 both),
+      the dispersion correction to 1e-4 (-0.0028 vs -0.0029).
+    - Coulomb (direct + reciprocal + 1-4) differs by ~2e-3 (-55.463 vs
+      -55.464, 3e-5 relative): same alpha (ewald-rtol matched), but a 27^3
+      order-5 mesh in OpenMM against 28^3 order-6 in GROMACS.
+    - Lennard-Jones under LJPME differs by ~4e-3 (3.9642 vs 3.9686): GROMACS
+      applies the potential shift OpenMM does not, and the dispersion mesh is
+      14^3 in OpenMM against 28^3 (the Coulomb grid) in GROMACS. OpenMM
+      ignores the dispersion correction under LJPME; GROMACS's is ~0 here.
+
+    The tolerances below are these differences with a margin.
+    """
+    calc = GMXCalculator(
+        PDB, nonbondedmethod=method, dispcorr=dispcorr, useHbondConstraint=False,
+        rcut_nm=1.2, md_log="none",
+    )
+    gmx_terms, gro = _gromacs_energies(calc, FFXML, str(tmp_path))
+    omm = _openmm_energies(calc, FFXML, gro)
+    omm_lj = _openmm_energies(calc, FFXML, gro, zero_charges=True)
+
+    # bonded: exact up to coordinate precision
+    assert gmx_terms["Bond"] == pytest.approx(omm["HarmonicBondForce"], abs=1e-3)
+    assert gmx_terms["Angle"] == pytest.approx(omm["HarmonicAngleForce"], abs=1e-3)
+    assert gmx_terms["Proper Dih."] == pytest.approx(omm["PeriodicTorsionForce"], abs=1e-3)
+
+    # Lennard-Jones (1-4 included), dispersion correction included on both sides
+    gmx_lj = gmx_terms["LJ-14"] + gmx_terms["LJ (SR)"] + gmx_terms.get("LJ recip.", 0.0) \
+        + gmx_terms.get("Disper. corr.", 0.0)
+    omm_lj_total = omm_lj["NonbondedForce"] + omm_lj["recip"]
+    lj_tolerance = 2e-2 if method == "LJPME" else 2e-3
+    assert gmx_lj == pytest.approx(omm_lj_total, abs=lj_tolerance)
+    if method == "PME" and dispcorr:
+        assert gmx_terms["Disper. corr."] == pytest.approx(
+            omm_lj["NonbondedForce"] - _openmm_energies(
+                GMXCalculator(PDB, nonbondedmethod=method, dispcorr=False,
+                              useHbondConstraint=False, rcut_nm=1.2),
+                FFXML, gro, zero_charges=True,
+            )["NonbondedForce"], abs=1e-3,
+        )
+
+    # Coulomb (1-4, direct, reciprocal): same alpha, slightly different mesh
+    gmx_coulomb = gmx_terms["Coulomb-14"] + gmx_terms["Coulomb (SR)"] + gmx_terms["Coul. recip."]
+    omm_coulomb = omm["total"] - omm_lj["total"]
+    assert gmx_coulomb == pytest.approx(omm_coulomb, rel=1e-3)
+
+    assert gmx_terms["Potential"] == pytest.approx(omm["total"], abs=1e-2)

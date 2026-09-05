@@ -28,7 +28,14 @@ fixes and backwards-compatible additions moves the patch number.
   that is removed afterwards, while the `.mdp`, `.tpr`, `.log`, `.edr` and
   `.cpt` files of every stage are kept under `workdir` (default
   `gmxfiles/`). Hydrogen constraints are applied from the mdp
-  (`constraints = h-bonds`) rather than baked into the exported System. A
+  (`constraints = h-bonds`) rather than baked into the exported System. The
+  Ewald parameters are OpenMM's: `ewald-rtol`, `ewald-rtol-lj` and
+  `fourierspacing` are derived from OpenMM's error tolerance (5e-4) so that
+  the splitting parameter is identical; `"LJPME"` writes
+  `lj-pme-comb-rule = Geometric` and `vdw-modifier = Potential-Shift`
+  explicitly. A single-point energy test against OpenMM (bonded and
+  Lennard-Jones terms agree to < 1e-3 kJ/mol, Coulomb to 3e-5 relative) is
+  part of the `gmx`-marked tests. A
   force field with virtual sites is refused with a `ValueError`: the GROMACS
   exporter does not translate OpenMM virtual sites to `[ virtual_sites2 ]`,
   a known limitation of this first version. `anneal_interval` and `rigidWater`
