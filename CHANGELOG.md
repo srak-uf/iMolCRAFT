@@ -91,6 +91,25 @@ fixes and backwards-compatible additions moves the patch number.
   removes the duplicate epoch 0 that appeared when the first epoch resampled.
   Histories restored from a checkpoint written before this fix keep their old
   labels, so a run continued across it mixes the two conventions.
+- **A parameter that came out NaN or Inf ended the run.** Neither of the two
+  recoveries above could catch it: the perturbation adds to a NaN and stays
+  NaN, and the lower bounds miss it because `NaN < floor` is `False`, so the
+  next epoch wrote a force field OpenMM refuses and the run stopped there.
+  Every trainer now tests the gradients before the optimizer sees them, a
+  non-finite one taking the same perturbation route a NaN loss does, and puts
+  a parameter that came out non-finite back to the value it held before the
+  step, before the bounds are applied. `imolcraft.trainer.base` gained
+  `tree_is_finite` and `restore_nonfinite_params` for it, and a correction
+  prints how many entries it had to put back.
+- **A NaN loss froze the best force field for the rest of the run.**
+  `fit` compared against `min(self.losses)`, which returns NaN once the
+  history holds one, after which every comparison was `False` and
+  `best_params`, `best_loss`, `best_epoch` and `<label>_best.xml` were never
+  updated again. The best is now tracked over the finite losses only; the NaN
+  epochs stay in `losses`, so the history keeps its meaning.
+- `atoms_0.pdb` and `pack_tmp.inp`, two packmol scratch files, were committed
+  to the repository root by mistake. They are untracked again and, with
+  `packmol_tmp.pdb`, named in `.gitignore`.
 
 ## [0.3.1] — 2026-08-26
 
