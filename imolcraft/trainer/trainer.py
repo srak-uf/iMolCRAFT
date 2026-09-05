@@ -1132,19 +1132,14 @@ class ThermodynamicTrainer(BaseTrainer):
         own = ieff.get(_state_name(ii))
         return own is not None and own < self.neff[ii]
 
-    def recover_from_invalid_loss(self, attempt: int) -> bool:
+    def recover_from_invalid_loss(self, attempt: int) -> None:
         """
         Resample every replica with ``self.ffxml``, the force field this loss
         was measured with, and file the validation record under the current
-        epoch.
-
-        Returns
-        -------
-        bool
-            True once the resampling has run; False before :meth:`setup`.
+        epoch. Nothing happens before :meth:`setup`.
         """
         if getattr(self, "estimator", None) is None:
-            return False
+            return
         print(
             f"Resampling every replica with {self.ffxml} and recomputing the "
             f"loss of epoch {self._epoch} (attempt {attempt})"
@@ -1153,7 +1148,6 @@ class ThermodynamicTrainer(BaseTrainer):
         self._resample(record_epoch=self._epoch)
         self.resample = [False for _ in range(len(self.sampling_params))]
         self._nan_resampled = True
-        return True
 
     def after_step(self) -> None:
         """

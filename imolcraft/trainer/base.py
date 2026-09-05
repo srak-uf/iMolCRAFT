@@ -464,14 +464,12 @@ class BaseTrainer:
         """
         pass
 
-    def recover_from_invalid_loss(self, attempt: int) -> bool:
+    def recover_from_invalid_loss(self, attempt: int) -> None:
         """
-        Hook called by :meth:`training_step` when the loss is NaN or Inf,
-        before the step is given up on. Return True after renewing whatever
-        the loss is measured on, False when there is nothing to renew (the
-        default), which stops the retrying.
+        Hook called by :meth:`training_step` when the loss is NaN or Inf;
+        renew whatever the loss is measured on. The default does nothing.
         """
-        return False
+        pass
 
     def _retry_invalid_loss(self, loss, grads) -> Tuple[Any, Any]:
         """
@@ -479,10 +477,9 @@ class BaseTrainer:
 
         Up to ``nan_resample_retries`` rounds of
         :meth:`recover_from_invalid_loss` followed by a fresh
-        :meth:`get_loss_gradients` are run. A valid loss ends the loop, and so
-        does a recovery that reports it could do nothing. The parameters are
-        left alone throughout, so a successful retry is the loss of this very
-        step rather than of a step already taken.
+        :meth:`get_loss_gradients` are run; a valid loss ends the loop. The
+        parameters are left alone throughout, so a successful retry is the
+        loss of this very step rather than of a step already taken.
 
         Returns the loss and gradients to carry on with, which are the ones
         passed in when no retrying happened.
@@ -494,8 +491,7 @@ class BaseTrainer:
                 f"Warning: Loss is NaN or Inf. Recovery attempt "
                 f"{attempt}/{self.nan_resample_retries}."
             )
-            if not self.recover_from_invalid_loss(attempt):
-                break
+            self.recover_from_invalid_loss(attempt)
             loss, grads = self.get_loss_gradients()
             _print_memory(f"grad obtained after recovery {attempt}....")
         return loss, grads

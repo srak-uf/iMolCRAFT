@@ -1062,13 +1062,12 @@ def test_thermodynamic_records_the_targets_before_resampling():
     src = inspect.getsource(ThermodynamicTrainer.__dict__["from_checkpoint"])
     assert 'dump_dict.get("target_history", [])' in src
 # ------------------------------------------- NaN loss recovery by resampling
-def _retry_stub(retries, losses, recoveries=None):
+def _retry_stub(retries, losses):
     """
     Minimal ``self`` for :meth:`BaseTrainer._retry_invalid_loss`.
 
     ``losses[0]`` is the loss handed to the retry loop, the rest are what the
-    recomputations return in order. ``recoveries`` says what each recovery
-    reports; None means every one of them succeeds.
+    recomputations return in order.
     """
     import types
 
@@ -1081,7 +1080,6 @@ def _retry_stub(retries, losses, recoveries=None):
 
     def recover_from_invalid_loss(attempt):
         calls["recover"] += 1
-        return True if recoveries is None else recoveries[attempt - 1]
 
     stub = types.SimpleNamespace(
         nan_resample_retries=retries,
@@ -1099,32 +1097,26 @@ def test_base_trainer_attempts_no_recovery_and_thermodynamic_retries_once():
     from imolcraft.trainer.base import BaseTrainer
 
     assert BaseTrainer.nan_resample_retries == 0
-    assert BaseTrainer.recover_from_invalid_loss(object(), 1) is False
+    assert BaseTrainer.recover_from_invalid_loss(object(), 1) is None
     signature = inspect.signature(ThermodynamicTrainer.__init__)
     assert signature.parameters["nan_resample_retries"].default == 1
 
 
 @pytest.mark.parametrize(
-    "retries, losses, recoveries, expected_calls, expect_nan",
+    "retries, losses, expected_calls, expect_nan",
     [
-        (3, [1.5, 2.5], None, {"loss": 0, "recover": 0}, False),
-        (2, [float("nan")] * 4, None, {"loss": 2, "recover": 2}, True),
-        (3, [float("nan")] * 2, [False], {"loss": 0, "recover": 1}, True),
-        (0, [float("nan"), 1.0], None, {"loss": 0, "recover": 0}, True),
+        (3, [1.5, 2.5], {"loss": 0, "recover": 0}, False),
+        (2, [float("nan")] * 4, {"loss": 2, "recover": 2}, True),
+        (0, [float("nan"), 1.0], {"loss": 0, "recover": 0}, True),
     ],
-    ids=[
-        "finite-never-retried",
-        "stays-invalid-after-rounds",
-        "recovery-did-nothing",
-        "zero-retries",
-    ],
+    ids=["finite-never-retried", "stays-invalid-after-rounds", "zero-retries"],
 )
 def test_the_retry_loop_stops_where_it_should(
-    retries, losses, recoveries, expected_calls, expect_nan
+    retries, losses, expected_calls, expect_nan
 ):
     from imolcraft.trainer.base import BaseTrainer
 
-    stub, calls, loss, grads = _retry_stub(retries, losses, recoveries)
+    stub, calls, loss, grads = _retry_stub(retries, losses)
     out_loss, out_grads = BaseTrainer._retry_invalid_loss(stub, loss, grads)
 
     assert calls == expected_calls
@@ -1220,7 +1212,7 @@ def test_recovery_resamples_every_replica_for_the_epoch_being_retried():
     from imolcraft.trainer import ThermodynamicTrainer
 
     stub, calls = _recovery_stub(n=3, epoch=665)
-    assert ThermodynamicTrainer.recover_from_invalid_loss(stub, 1) is True
+    ThermodynamicTrainer.recover_from_invalid_loss(stub, 1)
 
     # the trajectories belong to the epoch being retried, not to the next one
     assert calls == [665]
@@ -1234,8 +1226,9 @@ def test_recovery_does_nothing_before_setup():
     from imolcraft.trainer import ThermodynamicTrainer
 
     stub, calls = _recovery_stub(estimator=False)
-    assert ThermodynamicTrainer.recover_from_invalid_loss(stub, 1) is False
+    ThermodynamicTrainer.recover_from_invalid_loss(stub, 1)
     assert calls == []
+    assert stub._nan_resampled is False
 
 
 def test_after_step_does_not_resample_twice_for_the_same_invalid_loss():
