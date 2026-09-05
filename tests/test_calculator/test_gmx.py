@@ -420,6 +420,45 @@ def test_mdrun_command_thread_mpi_without_a_launcher():
     assert argv[argv.index("-ntomp") + 1] == "4"
 
 
+def test_mpi_command_given_as_a_string_is_split_like_a_shell():
+    calc = GMXCalculator("start.pdb", mpi_command="mpirun -np 4 --bind-to 'core x'")
+    argv = calc.mdrun_command("s_prod")
+    assert argv[:6] == ["mpirun", "-np", "4", "--bind-to", "core x", "gmx"]
+    # the record keeps the string as given, the resolver does the splitting
+    assert calc.to_dict()["mpi_command"] == "mpirun -np 4 --bind-to 'core x'"
+    assert calc._resolve_execution()[0]["mpi_command"] == ["mpirun", "-np", "4", "--bind-to", "core x"]
+    # a list is taken as is, an empty string as no launcher
+    assert GMXCalculator("start.pdb", mpi_command=["srun", "-n", "8"]).mdrun_command("x")[:3] == ["srun", "-n", "8"]
+    assert GMXCalculator("start.pdb", mpi_command="").mdrun_command("x")[0] == "gmx"
+
+
+@pytest.mark.parametrize("value, match", [
+    ("abc", r"\$IMOLCRAFT_GMX_NTOMP='abc' is not an integer"),
+    ("0", r"\$IMOLCRAFT_GMX_NTOMP='0' must be a positive integer"),
+    ("-2", r"\$IMOLCRAFT_GMX_NTOMP='-2' must be a positive integer"),
+])
+def test_thread_counts_from_the_environment_are_validated(monkeypatch, value, match):
+    monkeypatch.setenv("IMOLCRAFT_GMX_NTOMP", value)
+    with pytest.raises(ValueError, match=match):
+        GMXCalculator("start.pdb").mdrun_command("s_prod")
+
+
+@pytest.mark.parametrize("name, value, match", [
+    ("ntmpi", 0, r"ntmpi=0 must be a positive integer"),
+    ("ntomp", -1, r"ntomp=-1 must be a positive integer"),
+    ("ntomp", "four", r"ntomp='four' is not an integer"),
+])
+def test_thread_counts_from_arguments_are_validated(name, value, match):
+    with pytest.raises(ValueError, match=match):
+        GMXCalculator("start.pdb", **{name: value}).mdrun_command("s_prod")
+
+
+def test_thread_counts_accept_numeric_strings(monkeypatch):
+    monkeypatch.setenv("IMOLCRAFT_GMX_NTMPI", " 2 ")
+    values, _ = GMXCalculator("start.pdb", ntomp="4")._resolve_execution()
+    assert values["ntmpi"] == 2 and values["ntomp"] == 4
+
+
 def test_execution_resolves_to_defaults_without_environment():
     values, sources = GMXCalculator("start.pdb")._resolve_execution()
     assert values == {"gmx_bin": "gmx", "mpi_command": None, "ntmpi": None, "ntomp": None}

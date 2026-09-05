@@ -256,6 +256,26 @@ def _ewald_options(rcut_nm, ljpme, tol=_EWALD_TOLERANCE):
     return options
 
 
+def _positive_int(value, name, source):
+    """
+    ``value`` as a positive int, or None when it is None.
+
+    ``source`` is where the value came from (``"argument"`` or
+    ``"environment"``) so that the error names the setting or the variable
+    that holds the offending text.
+    """
+    if value is None:
+        return None
+    where = f"${GMX_ENV[name]}" if source == "environment" else name
+    try:
+        number = int(str(value).strip())
+    except ValueError:
+        raise ValueError(f"{where}={value!r} is not an integer") from None
+    if number <= 0:
+        raise ValueError(f"{where}={value!r} must be a positive integer")
+    return number
+
+
 def _run_command(argv, logstream, env=None):
     """
     Run one GROMACS command to completion.
@@ -380,9 +400,11 @@ class GMXCalculator:
         GROMACS executable: ``"gmx"``, ``"gmx_d"``, ``"gmx_mpi"`` or
         ``"gmx_mpi_d"``, a name on PATH or an absolute path. None (default)
         takes ``$IMOLCRAFT_GMX_BIN``, or ``"gmx"`` when that is unset.
-    mpi_command : list of str, optional
+    mpi_command : list of str or str, optional
         Launcher put in front of ``mdrun`` only (never grompp), e.g.
-        ``["mpirun", "-np", "32"]``. None (default) takes
+        ``["mpirun", "-np", "32"]``; a string (``"mpirun -np 32"``) is split
+        with :func:`shlex.split` when the command is built, while
+        :meth:`to_dict` keeps it as given. None (default) takes
         ``$IMOLCRAFT_GMX_MPI_COMMAND`` split with :func:`shlex.split`
         (``"srun --mpi=pmix -n 8"``), or no launcher when that is unset or
         empty. A launcher implies a real-MPI build, which does not accept
@@ -528,7 +550,9 @@ class GMXCalculator:
         OpenMM's LJPME, the mesh uses geometric C6 mixing while the pairs
         inside the cutoff use the Lorentz-Berthelot parameters of the
         topology (``comb-rule 2`` in the ``.top``), and GROMACS corrects the
-        difference in real space. ``vdw-modifier = Potential-Shift`` follows
+        difference in real space; grompp's NOTE that the C6 parameters "do
+        not follow" the geometric rule is inherent to this OpenMM scheme and
+        expected. ``vdw-modifier = Potential-Shift`` follows
         the LJ-PME configuration of the GROMACS reference manual
         (https://manual.gromacs.org/current/reference-manual/functions/long-range-vdw.html#using-lj-pme)
         and is also the GROMACS default; OpenMM applies no shift, so the
@@ -560,6 +584,8 @@ class GMXCalculator:
         }
         if ljpme:
             # Geometric mesh, Lorentz-Berthelot pairs: the OpenMM LJPME scheme.
+            # grompp notes that the C6 parameters do not follow the geometric
+            # rule; that NOTE is inherent to this scheme and expected.
             options["lj-pme-comb-rule"] = "Geometric"
         options.update(_ewald_options(self.rcut_nm, ljpme))
         return options
@@ -672,12 +698,6 @@ class GMXCalculator:
         takes the rank count from the launcher and rejects ``-ntmpi``.
         """
         defaults = {"gmx_bin": "gmx", "mpi_command": None, "ntmpi": None, "ntomp": None}
-        parsers = {
-            "gmx_bin": str,
-            "mpi_command": lambda text: shlex.split(text) or None,
-            "ntmpi": int,
-            "ntomp": int,
-        }
         values, sources = {}, {}
         for name, default in defaults.items():
             given = getattr(self, name)
@@ -685,11 +705,22 @@ class GMXCalculator:
             if given is not None:
                 values[name], sources[name] = given, "argument"
             elif env:
-                values[name], sources[name] = parsers[name](env), "environment"
+                values[name], sources[name] = env, "environment"
             else:
                 values[name], sources[name] = default, "default"
-        if values["mpi_command"] is not None:
-            values["mpi_command"] = [str(x) for x in values["mpi_command"]]
+
+        # A launcher given as one string (argument or variable) is split like
+        # a shell would, so quoted arguments survive; a list is taken as is.
+        launcher = values["mpi_command"]
+        if isinstance(launcher, str):
+            launcher = shlex.split(launcher) or None
+        elif launcher is not None:
+            launcher = [str(x) for x in launcher]
+        values["mpi_command"] = launcher
+
+        for name in ("ntmpi", "ntomp"):
+            values[name] = _positive_int(values[name], name, sources[name])
+        values["gmx_bin"] = str(values["gmx_bin"])
         if values["mpi_command"] and values["ntmpi"] is not None:
             raise ValueError(
                 f"mpi_command ({sources['mpi_command']}) and ntmpi "
@@ -883,7 +914,7 @@ class GMXCalculator:
 
             log(f"Using {self.ensemble} ensemble")
             log(
-                "mdrun command: " + " ".join(self.mdrun_command("<deffnm>"))
+                "mdrun command: " + shlex.join(self.mdrun_command("<deffnm>"))
                 + " (" + ", ".join(f"{k}: {v}" for k, v in sources.items()) + ")"
             )
             topology, structure = self._export_inputs(ffxml, tmpdir)
