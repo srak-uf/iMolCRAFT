@@ -1500,3 +1500,227 @@ def test_a_real_step_cannot_drive_sigma_negative(sum_trainer_env, capsys):
     out = capsys.readouterr().out
     assert "NonbondedForce/sigma was pushed below" in out
     assert "lr or clip is too large" in out
+
+
+# -------------------------------------------------- guards against NaN and Inf
+def test_tree_is_finite_accepts_a_tree_of_numbers():
+    from imolcraft.trainer.base import tree_is_finite
+
+    tree = {
+        "NonbondedForce": {
+            "sigma": jnp.array([0.3, 0.35]),
+            "epsilon": jnp.array([0.5, 0.0]),
+        },
+        "PeriodicTorsionForce": {"k": jnp.array([-1.0, 2.0])},
+    }
+    assert tree_is_finite(tree) is True
+    assert tree_is_finite({}) is True
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_tree_is_finite_rejects_a_nested_nan_or_inf(bad):
+    """One bad element anywhere in the nesting is enough"""
+    from imolcraft.trainer.base import tree_is_finite
+
+    tree = {
+        "NonbondedForce": {
+            "sigma": jnp.array([0.3, 0.35]),
+            "epsilon": jnp.array([0.5, 0.0]),
+        },
+        "PeriodicTorsionForce": {"k": jnp.array([-1.0, bad])},
+    }
+    assert tree_is_finite(tree) is False
+
+
+def test_a_finite_tree_is_handed_back_untouched():
+    from imolcraft.trainer.base import restore_nonfinite_params
+
+    stepped = _tree([0.3, 0.35], [0.5, 0.6])
+    out, count = restore_nonfinite_params(stepped, _tree([0.2, 0.25], [0.4, 0.5]))
+
+    assert count == 0
+    assert out is stepped
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_only_the_non_finite_entries_go_back(bad):
+    """A step good everywhere else is kept, entry by entry"""
+    from imolcraft.trainer.base import restore_nonfinite_params
+
+    previous = _tree([0.30, 0.31], [0.50, 0.51], charge=(0.5, -0.5))
+    stepped = _tree([bad, 0.41], [0.60, bad], charge=(0.7, -0.7))
+    out, count = restore_nonfinite_params(stepped, previous)
+
+    assert count == 2
+    # the entries that went bad hold exactly what they held before the step
+    assert float(out["NonbondedForce"]["sigma"][0]) == 0.30
+    assert float(out["NonbondedForce"]["epsilon"][1]) == 0.51
+    # the ones that did not are the stepped values
+    assert float(out["NonbondedForce"]["sigma"][1]) == pytest.approx(
+        0.41, rel=1e-6, abs=1e-12
+    )
+    assert float(out["NonbondedForce"]["epsilon"][0]) == pytest.approx(
+        0.60, rel=1e-6, abs=1e-12
+    )
+    # a charge is not bounded but is still rescued from being non-finite
+    assert jnp.allclose(
+        out["NonbondedForce"]["charge"],
+        jnp.array([0.7, -0.7]),
+        rtol=1e-6,
+        atol=1e-12,
+    )
+
+
+def test_restoring_leaves_the_previous_tree_alone():
+    """The previous tree is shared with the caller and must not be written to"""
+    from imolcraft.trainer.base import restore_nonfinite_params
+
+    previous = _tree([0.30], [0.50])
+    branch = previous["NonbondedForce"]
+    stepped = _tree([float("nan")], [float("inf")])
+    out, count = restore_nonfinite_params(stepped, previous)
+
+    assert count == 2
+    assert previous["NonbondedForce"] is branch
+    assert float(previous["NonbondedForce"]["sigma"][0]) == 0.30
+    assert float(previous["NonbondedForce"]["epsilon"][0]) == 0.50
+    assert out is not stepped
+
+
+def test_a_nan_walks_through_the_floor_check_unless_restored_first():
+    """NaN < floor is False, which fixes the order of the two corrections"""
+    from imolcraft.trainer.base import (
+        DEFAULT_PARAM_FLOORS,
+        enforce_param_floors,
+        restore_nonfinite_params,
+        tree_is_finite,
+    )
+
+    floors = {name: float(f) for name, f in DEFAULT_PARAM_FLOORS.items()}
+    previous = _tree([0.30], [0.50])
+    stepped = _tree([float("nan")], [0.60])
+
+    # the floor check alone leaves the NaN sitting there
+    floored_only, report = enforce_param_floors(stepped, previous, floors)
+    assert report == {}
+    assert not tree_is_finite(floored_only)
+
+    # in the right order the sigma comes back finite and above its floor
+    restored, count = restore_nonfinite_params(stepped, previous)
+    out, _ = enforce_param_floors(restored, previous, floors)
+    assert count == 1
+    assert tree_is_finite(out)
+    assert float(out["NonbondedForce"]["sigma"][0]) >= floors["NonbondedForce/sigma"]
+    assert float(out["NonbondedForce"]["sigma"][0]) == 0.30
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_a_finite_loss_with_bad_gradients_still_perturbs(bad, sum_trainer_env,
+                                                         monkeypatch):
+    """A loss can be finite and still differentiate into NaN or Inf"""
+    import jax
+
+    import imolcraft.trainer.base as base
+    from imolcraft.trainer.base import tree_is_finite
+
+    trainer = sum_trainer_env("grad", opt_fftypes=["NonbondedForce/sigma"])
+    trainer.setup()
+    before = trainer.ffparams
+
+    def bad_gradients():
+        grads = jax.tree_util.tree_map(lambda x: jnp.full_like(x, bad),
+                                       trainer.ffparams)
+        return jnp.float32(1.0), grads
+
+    trainer.get_loss_gradients = bad_gradients
+    calls = []
+    real = base._nan_recovery_gradients
+    monkeypatch.setattr(
+        base, "_nan_recovery_gradients",
+        lambda ffparams: (calls.append(1), real(ffparams))[1],
+    )
+    trainer.training_step()
+
+    # the perturbation route was taken and nothing non-finite got through
+    assert len(calls) == 1
+    assert tree_is_finite(trainer.ffparams)
+    assert not jnp.allclose(
+        trainer.ffparams["NonbondedForce"]["sigma"],
+        before["NonbondedForce"]["sigma"],
+        rtol=1e-6,
+        atol=1e-12,
+    )
+
+
+def test_non_finite_parameters_never_reach_the_force_field(sum_trainer_env,
+                                                           monkeypatch, capsys):
+    """Whatever the optimizer produces, the step ends on a finite tree"""
+    import jax
+
+    import imolcraft.trainer.base as base
+    from imolcraft.trainer.base import tree_is_finite
+
+    trainer = sum_trainer_env("bad", opt_fftypes=["NonbondedForce/sigma"])
+    trainer.setup()
+    before = [float(v) for v in trainer.ffparams["NonbondedForce"]["sigma"]]
+
+    # an update straight out of a poisoned optimizer state
+    monkeypatch.setattr(
+        base.optax, "apply_updates",
+        lambda params, updates: jax.tree_util.tree_map(
+            lambda x: jnp.full_like(x, jnp.nan), params
+        ),
+    )
+    trainer.training_step()
+
+    assert tree_is_finite(trainer.ffparams)
+    after = [float(v) for v in trainer.ffparams["NonbondedForce"]["sigma"]]
+    assert after == before
+    assert "came out NaN or Inf after the update" in capsys.readouterr().out
+
+
+def _fit_stub(losses, tmp_path):
+    """Minimal ``self`` for :meth:`BaseTrainer.fit` returning fixed losses"""
+    import types
+
+    seq = list(losses)
+    rendered = []
+
+    def training_step():
+        stub.loss = seq[stub._epoch]
+        stub.ffparams = {"step": stub._epoch}
+
+    stub = types.SimpleNamespace(
+        loss=None,
+        ffparams={"step": -1},
+        losses=[],
+        epochs=[],
+        best_params=None,
+        best_epoch=None,
+        best_loss=None,
+        label=str(tmp_path / "stub"),
+        _epoch=0,
+        before_step=lambda: None,
+        after_step=lambda: None,
+        training_step=training_step,
+        write_checkpoint=lambda frequency: None,
+        ff=types.SimpleNamespace(renderXML=lambda path: rendered.append(path)),
+    )
+    return stub, rendered
+
+
+def test_a_nan_epoch_does_not_freeze_the_best_force_field(tmp_path):
+    """min() over a history holding a NaN returns NaN and never compares True"""
+    from imolcraft.trainer.base import BaseTrainer
+
+    nan = float("nan")
+    stub, rendered = _fit_stub([nan, 3.0, 1.0], tmp_path)
+    BaseTrainer.fit(stub, steps=3, checkpoint_frequency=1000)
+
+    assert stub.best_loss == pytest.approx(1.0, rel=1e-6, abs=1e-12)
+    assert stub.best_epoch == 2
+    assert stub.best_params == {"step": 2}
+    # the NaN epoch is still in the history, it is just never the best one
+    assert len(stub.losses) == 3 and jnp.isnan(jnp.float32(stub.losses[0]))
+    # epoch 1 and epoch 2 each improved on what came before
+    assert len(rendered) == 2
