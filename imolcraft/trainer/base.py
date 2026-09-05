@@ -90,6 +90,15 @@ def _loss_is_invalid(loss) -> bool:
     return not bool(jnp.isfinite(loss))
 
 
+def tree_is_finite(tree) -> bool:
+    """
+    Whether every leaf of a pytree is finite. Reads the answer out as a
+    Python bool, so eager only.
+    """
+    leaves = jax.tree_util.tree_leaves(tree)
+    return all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
+
+
 def _nan_recovery_gradients(ffparams):
     """
     Replace the gradients by a small random nudge, so that a step whose loss
@@ -111,15 +120,6 @@ def _guard_gradients(loss, grads, ffparams):
         print("Warning: Loss or gradients are NaN or Inf. Skipping this step.")
         return _nan_recovery_gradients(ffparams)
     return grads
-
-
-def tree_is_finite(tree) -> bool:
-    """
-    Whether every leaf of a pytree is finite. Reads the answer out as a
-    Python bool, so eager only.
-    """
-    leaves = jax.tree_util.tree_leaves(tree)
-    return all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
 
 
 def restore_nonfinite_params(ffparams, previous):
@@ -405,7 +405,7 @@ class BaseTrainer:
             ]
             if finite:
                 self.best_loss, index = min(finite, key=lambda entry: entry[0])
-                self.best_epoch = self.epochs[index]
+                self.best_epoch = self.epochs[index] if index < len(self.epochs) else None
 
     def add_modifyfn(self, type_fn: str, fn: Callable[[Any], Any]) -> None:
         """
