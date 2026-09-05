@@ -19,8 +19,7 @@ fixes and backwards-compatible additions moves the patch number.
   recomputed** before being given up on. `nan_resample_retries` (default `1`,
   `0` disables) sets how many rounds; it is stored in the checkpoint and
   accepted by `from_checkpoint`. A loss still NaN afterwards falls back to the
-  previous perturb-and-continue behaviour. `BaseTrainer.recover_from_invalid_loss`
-  is the hook behind it.
+  previous perturb-and-continue behaviour.
 - **A Lennard-Jones sigma can no longer be driven to zero or below, nor an
   epsilon negative, by an optimizer step.** A parameter that fell below its
   bound is put back to its previous value, with a printed warning. The bounds

@@ -249,10 +249,6 @@ class BaseTrainer:
     parameters using differentiable molecular force fields and JAX-based optimizers.
     """
 
-    #: Retries of a NaN or Inf loss, see :meth:`recover_from_invalid_loss`.
-    #: Zero disables it.
-    nan_resample_retries: int = 0
-
     def __init__(
         self,
         ffxml_list: Union[str, List[str]],
@@ -464,44 +460,20 @@ class BaseTrainer:
         """
         pass
 
-    def recover_from_invalid_loss(self, attempt: int) -> None:
-        """
-        Hook called by :meth:`training_step` when the loss is NaN or Inf;
-        renew whatever the loss is measured on. The default does nothing.
-        """
-        pass
-
     def _retry_invalid_loss(self, loss, grads) -> Tuple[Any, Any]:
         """
-        Recompute a NaN or Inf loss after letting the trainer recover.
-
-        Up to ``nan_resample_retries`` rounds of
-        :meth:`recover_from_invalid_loss` followed by a fresh
-        :meth:`get_loss_gradients` are run; a valid loss ends the loop. The
-        parameters are left alone throughout, so a successful retry is the
-        loss of this very step rather than of a step already taken.
-
-        Returns the loss and gradients to carry on with, which are the ones
-        passed in when no retrying happened.
+        Give the trainer a chance to recompute a NaN or Inf loss. The default
+        hands back what it was given; see
+        :meth:`~imolcraft.trainer.trainer.ThermodynamicTrainer._retry_invalid_loss`.
         """
-        attempt = 0
-        while _loss_is_invalid(loss) and attempt < self.nan_resample_retries:
-            attempt += 1
-            print(
-                f"Warning: Loss is NaN or Inf. Recovery attempt "
-                f"{attempt}/{self.nan_resample_retries}."
-            )
-            self.recover_from_invalid_loss(attempt)
-            loss, grads = self.get_loss_gradients()
-            _print_memory(f"grad obtained after recovery {attempt}....")
         return loss, grads
 
     def training_step(self) -> None:
         """
         Run one training step: loss, gradients and a parameter update.
 
-        A NaN or Inf loss is retried through :meth:`recover_from_invalid_loss`;
-        one that survives, or non-finite gradients, turn the step into a small
+        A NaN or Inf loss is retried through :meth:`_retry_invalid_loss`; one
+        that survives, or non-finite gradients, turn the step into a small
         random perturbation. After the update, non-finite entries are put back
         and the bounded parameters held at their floors, before "after_update".
         """

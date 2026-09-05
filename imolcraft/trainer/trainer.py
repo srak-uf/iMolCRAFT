@@ -24,7 +24,12 @@ from ..trainer.dmff_utils import (
     get_chgparams_from_rescharges,
 )
 from .loss import _NPT_ENSEMBLES
-from .base import BaseTrainer, _loss_is_invalid, plot_learning_curve
+from .base import (
+    BaseTrainer,
+    _loss_is_invalid,
+    _print_memory,
+    plot_learning_curve,
+)
 from ..provenance import provenance_fields
 from ..calculator import DihedralCalculator, DistanceCalculator
 from openmm import unit
@@ -676,7 +681,7 @@ class ThermodynamicTrainer(BaseTrainer):
         self.resample_freq = resample_freq
         self.resample_counter = 0
         self.nan_resample_retries = nan_resample_retries
-        # whether recover_from_invalid_loss already resampled within this
+        # whether _retry_invalid_loss already resampled within this
         # step, read and cleared by after_step
         self._nan_resampled = False
 
@@ -1132,22 +1137,40 @@ class ThermodynamicTrainer(BaseTrainer):
         own = ieff.get(_state_name(ii))
         return own is not None and own < self.neff[ii]
 
-    def recover_from_invalid_loss(self, attempt: int) -> None:
+    def _retry_invalid_loss(self, loss, grads) -> Tuple[Any, Any]:
         """
-        Resample every replica with ``self.ffxml``, the force field this loss
-        was measured with, and file the validation record under the current
-        epoch. Nothing happens before :meth:`setup`.
+        Recompute a NaN or Inf loss after resampling every replica.
+
+        Up to ``nan_resample_retries`` rounds of resampling with ``self.ffxml``,
+        the force field this loss was measured with, followed by a fresh
+        :meth:`get_loss_gradients` are run; a valid loss ends the loop. The
+        validation record is filed under the epoch being retried and the
+        parameters are left alone throughout, so a successful retry is the loss
+        of this very step rather than of a step already taken. Nothing is
+        resampled before :meth:`setup`.
+
+        Returns the loss and gradients to carry on with, which are the ones
+        passed in when no retrying happened.
         """
-        if getattr(self, "estimator", None) is None:
-            return
-        print(
-            f"Resampling every replica with {self.ffxml} and recomputing the "
-            f"loss of epoch {self._epoch} (attempt {attempt})"
-        )
-        self.resample = [True for _ in range(len(self.sampling_params))]
-        self._resample(record_epoch=self._epoch)
-        self.resample = [False for _ in range(len(self.sampling_params))]
-        self._nan_resampled = True
+        attempt = 0
+        while _loss_is_invalid(loss) and attempt < self.nan_resample_retries:
+            attempt += 1
+            print(
+                f"Warning: Loss is NaN or Inf. Recovery attempt "
+                f"{attempt}/{self.nan_resample_retries}."
+            )
+            if getattr(self, "estimator", None) is not None:
+                print(
+                    f"Resampling every replica with {self.ffxml} and recomputing "
+                    f"the loss of epoch {self._epoch} (attempt {attempt})"
+                )
+                self.resample = [True for _ in range(len(self.sampling_params))]
+                self._resample(record_epoch=self._epoch)
+                self.resample = [False for _ in range(len(self.sampling_params))]
+                self._nan_resampled = True
+            loss, grads = self.get_loss_gradients()
+            _print_memory(f"grad obtained after recovery {attempt}....")
+        return loss, grads
 
     def after_step(self) -> None:
         """
