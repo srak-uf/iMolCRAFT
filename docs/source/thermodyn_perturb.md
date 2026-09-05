@@ -213,15 +213,19 @@ costs a full resampling. A loss that is still NaN after the last round is
 given up on the way it always was: the parameters are perturbed by a small
 random nudge, the epoch is recorded as NaN and the run carries on.
 
-This cannot rescue a NaN that comes out of the parameters themselves — a
-sigma that has crossed zero, an epsilon that has gone negative, a charge that
-has run away. OpenMM reseeds both the Langevin noise and the initial
-velocities on every run, so a resampling really is an independent trajectory,
-but it is the force field that decides whether the energies are finite. If
-the loss stays NaN through the retries, or comes back on a restart from the
-same checkpoint, look at the parameters rather than at the sampling: an
-`after_update` hook that keeps `sigma` and `epsilon` positive, a smaller `lr`
-or a tighter `clip` is what helps there.
+Resampling only cures a NaN that comes out of the sampling. OpenMM reseeds
+both the Langevin noise and the initial velocities on every run, so a
+resampling really is an independent trajectory, but it is the force field
+that decides whether the energies are finite. A NaN coming out of the
+parameters themselves is kept from arising in the first place by the lower
+bounds and the non-finite guard described under
+[Lower bounds on the parameters](#gradient-and-parameter-modification-functions):
+a sigma can no longer cross zero, an epsilon can no longer go negative, and a
+parameter that comes out NaN or Inf is put back to the value it held before
+the step. If the loss nevertheless stays NaN through the retries, or comes
+back on a restart from the same checkpoint, look at the parameters rather
+than at the sampling: a smaller `lr`, a tighter `clip` or a tighter
+`param_floors` is what helps there.
 
 #### Validation Properties
 
@@ -645,6 +649,31 @@ constant, which is free to change sign. The correction runs *before* the
 `"after_update"` hook below, so a hook registered for a hard constraint still
 has the last word. Every checkpoint records the bounds it was given, so a
 restart does not fall back to the defaults.
+
+**Nothing non-finite leaves a step**
+
+A bound cannot catch a NaN: `NaN < 1e-3` is `False`, so a sigma that came out
+NaN would walk straight through the check above and be written into the force
+field of the next epoch, where OpenMM refuses it and the run ends. The step
+therefore guards itself twice more. Gradients are tested before the optimizer
+sees them, and non-finite ones take the same small random perturbation a NaN
+loss does, so the optimizer state is never poisoned. After the update, and
+*before* the bounds are applied, every parameter that came out NaN or Inf is
+put back to the value it held before the step:
+
+```
+Warning: 3 parameter(s) came out NaN or Inf after the update and were put back to the values of the previous step. Repeated warnings mean the loss or the gradients are diverging.
+```
+
+The order is what makes the pair work, and is fixed by a regression test: the
+non-finite entries are restored first, then the bounds are applied to the
+finite tree that results. Together with
+[Recovering from a NaN Loss](#recovering-from-a-nan-loss) this means the
+force field written at the end of an epoch always has finite parameters and a
+positive sigma, whatever the loss did. The best force field follows the same
+rule: `best_params`, `best_loss` and `<label>_best.xml` are tracked over the
+finite losses only, so a NaN epoch no longer freezes them for the rest of the
+run.
 
 **`trainer.add_modifyfn(hook_point, function)` - API for registering modifications**
 
