@@ -19,14 +19,20 @@ fixes and backwards-compatible additions moves the patch number.
   `MDCalculator`, names its settings exactly as `MDCalculator` does
   (`rcut_nm`, `temperature_K`, `dt_fs`, `nstxout`, `relax_steps`,
   `prod_steps`, `ensemble`, ...), and follows the same `to_dict` /
-  `from_dict` and `run(force field, trajectory)` contract. The force-field
-  argument of `run` is an OpenMM `System` XML (`system.xml`, what
-  `imolcraft.io.exporter` takes), not a `.ffxml`; the `.top` / `.gro` are
-  generated in a temporary directory through `exporter(..., fmt="gmx")` and
-  removed afterwards, while the `.mdp`, `.tpr`, `.log`, `.edr` and `.cpt`
-  files of every stage are kept under `workdir` (default `gmxfiles/`).
-  `anneal_interval` and `rigidWater` are accepted for compatibility and have
-  no effect. GROMACS-specific settings (`pressure_bar`, `compressibility_bar`,
+  `from_dict` and `run(ffxml, trajectory)` contract, so it is a drop-in
+  replacement. `run` takes the same `.ffxml` as `MDCalculator.run`: the
+  OpenMM `System` is built exactly as `MDCalculator` builds it (same
+  `Modeller.addExtraParticles`, `nonbondedMethod`, `nonbondedCutoff` and
+  dispersion correction), serialized, and turned into the `.top` / `.gro`
+  through `imolcraft.io.exporter(..., fmt="gmx")` in a temporary directory
+  that is removed afterwards, while the `.mdp`, `.tpr`, `.log`, `.edr` and
+  `.cpt` files of every stage are kept under `workdir` (default
+  `gmxfiles/`). Hydrogen constraints are applied from the mdp
+  (`constraints = h-bonds`) rather than baked into the exported System. A
+  force field with virtual sites is refused with a `ValueError`, because the
+  GROMACS exporter (parmed) drops them. `anneal_interval` and `rigidWater`
+  are accepted for compatibility and have no effect. GROMACS-specific
+  settings (`pressure_bar`, `compressibility_bar`,
   `tau_t_ps`, `tau_p_ps`, `tcoupl`, `pcoupl`, `min_steps`, `emtol`,
   `gmx_bin`, `mpi_command`, `ntmpi`, `ntomp`, `maxwarn`, `mdp_templates`,
   `mdp_extra`, `workdir`) are additions; note that `pressure_bar` is a

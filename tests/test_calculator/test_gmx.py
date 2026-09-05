@@ -9,7 +9,10 @@ from imolcraft.calculator import GMXCalculator, gmx, gmx_sample, md
 
 DATA = os.path.join(os.path.dirname(__file__), "..", "data")
 PDB = os.path.join(DATA, "supercell_bonds.pdb")
-SYSTEM = os.path.join(DATA, "system.xml")
+#: vsite_average2.xml with its two virtual sites stripped: the same molecule
+#: without extra particles, which the GROMACS exporter can write.
+FFXML = os.path.join(DATA, "supercell_bonds_novsite.xml")
+VSITE_FFXML = os.path.join(DATA, "vsite_average2.xml")
 
 TEMPLATES = ("min", "nvt", "isonpt", "anisonpt_xyz", "trinpt_xyz_xy_yz_zx")
 
@@ -364,7 +367,7 @@ def test_run_fails_early_without_the_binary(tmp_path, monkeypatch):
     monkeypatch.setattr(gmx, "exporter", lambda *a, **k: calls.append(a))
     calc = GMXCalculator("start.pdb", gmx_bin="definitely-not-a-gmx", md_log="none")
     with pytest.raises(FileNotFoundError, match="imc_cpu|GMXRC"):
-        calc.run("system.xml", "s_0.xtc")
+        calc.run("ff.xml", "s_0.xtc")
     assert calls == []
     assert not (tmp_path / "gmxfiles").exists()
 
@@ -375,7 +378,9 @@ def test_run_wraps_a_failing_command_with_the_stage(tmp_path, monkeypatch):
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(gmx.shutil, "which", lambda name: "/fake/gmx")
-    monkeypatch.setattr(gmx, "exporter", lambda *a, **k: None)
+    monkeypatch.setattr(
+        GMXCalculator, "_export_inputs", lambda self, ffxml, tmpdir: ("s.top", "s.gro")
+    )
 
     def fail(argv, logstream, env=None):
         raise subprocess.CalledProcessError(1, argv)
@@ -383,7 +388,7 @@ def test_run_wraps_a_failing_command_with_the_stage(tmp_path, monkeypatch):
     monkeypatch.setattr(gmx, "_run_command", fail)
     calc = GMXCalculator("start.pdb", md_log="none", workdir="w")
     with pytest.raises(RuntimeError, match="min stage"):
-        calc.run("system.xml", "s_0.xtc")
+        calc.run("ff.xml", "s_0.xtc")
     assert (tmp_path / "w" / "s_0_min.mdp").exists()
 
 
@@ -406,6 +411,61 @@ def test_run_command_uses_a_list_and_no_shell(monkeypatch):
     assert "shell" not in seen
 
 
+def test_build_system_matches_the_openmm_calculator():
+    """The System GROMACS gets is the one MDCalculator would integrate (minus constraints)"""
+    from openmm import NonbondedForce, unit
+
+    calc = GMXCalculator(PDB, rcut_nm=1.0, nonbondedmethod="LJPME", dispcorr=True)
+    topology, positions, system = calc._build_system(FFXML)
+
+    reference = md.MDCalculator(
+        PDB, rcut_nm=1.0, nonbondedmethod="LJPME", dispcorr=True,
+        useHbondConstraint=False,
+    )
+    simulation, _, ref_positions = reference._build_simulation(FFXML, lambda m: None)
+    ref_system = simulation.system
+
+    assert topology.getNumAtoms() == 10 and len(positions) == 10
+    assert system.getNumParticles() == ref_system.getNumParticles()
+    assert system.getNumConstraints() == 0
+    assert [type(f).__name__ for f in system.getForces()] == [
+        type(f).__name__ for f in ref_system.getForces()
+    ]
+    nb = next(f for f in system.getForces() if isinstance(f, NonbondedForce))
+    ref_nb = next(f for f in ref_system.getForces() if isinstance(f, NonbondedForce))
+    assert nb.getNonbondedMethod() == ref_nb.getNonbondedMethod() == NonbondedForce.LJPME
+    assert nb.getCutoffDistance().value_in_unit(unit.nanometer) == pytest.approx(1.0)
+    assert nb.getUseDispersionCorrection() is True
+    for i in range(nb.getNumParticles()):
+        assert nb.getParticleParameters(i) == ref_nb.getParticleParameters(i)
+
+
+def test_export_inputs_writes_top_and_gro_from_an_ffxml(tmp_path):
+    """The .top / .gro come out of the ffxml through exporter(fmt='gmx')"""
+    calc = GMXCalculator(PDB)
+    top, gro = calc._export_inputs(FFXML, str(tmp_path))
+    assert os.path.dirname(top) == str(tmp_path) and os.path.dirname(gro) == str(tmp_path)
+    assert os.path.getsize(top) > 0
+    # second line of a .gro is the atom count
+    assert int(gro_lines := open(gro).read().splitlines()[1]) == 10, gro_lines
+    top_text = open(top).read()
+    assert "[ bonds ]" in top_text and "[ molecules ]" in top_text
+    # The intermediate system.xml / system.pdb live in the same directory
+    assert (tmp_path / "system.xml").exists() and (tmp_path / "system.pdb").exists()
+
+
+def test_run_refuses_a_force_field_with_virtual_sites(tmp_path, monkeypatch):
+    """parmed drops virtual sites, so a vsite ffxml is refused before any GROMACS call"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gmx.shutil, "which", lambda name: "/fake/gmx")
+    calls = []
+    monkeypatch.setattr(gmx, "_run_command", lambda *a, **k: calls.append(a))
+    calc = GMXCalculator(PDB, md_log="none")
+    with pytest.raises(ValueError, match="virtual sites"):
+        calc.run(VSITE_FFXML, "s_0.xtc")
+    assert calls == []
+
+
 # -- B. smoke test with the real gmx -----------------------------------------
 
 
@@ -420,7 +480,7 @@ def test_smoke_run_with_gromacs(tmp_path, monkeypatch):
         prod_steps=200, nstxout=20, md_log="none",
         useHbondConstraint=True, dispcorr=False,
     )
-    xtc = calc.run(SYSTEM, "smoke_0.xtc")
+    xtc = calc.run(FFXML, "smoke_0.xtc")
 
     assert xtc == os.path.join("xtcfiles", "smoke_0.xtc")
     assert os.path.getsize(xtc) > 0
@@ -444,7 +504,7 @@ def test_smoke_gmx_sample_with_annealing_and_npt(tmp_path, monkeypatch):
     mdtraj = pytest.importorskip("mdtraj")
     monkeypatch.chdir(tmp_path)
     xtc = gmx_sample(
-        PDB, SYSTEM, "anneal_0.xtc", ensemble="isonpt", pcoupl="C-rescale",
+        PDB, FFXML, "anneal_0.xtc", ensemble="isonpt", pcoupl="C-rescale",
         dt_fs=1.0, min_steps=50, relax_steps=100, prod_steps=100, nstxout=20,
         anneal_T=[300, 400, 300], anneal_steps=[50, 50], md_log="file",
     )

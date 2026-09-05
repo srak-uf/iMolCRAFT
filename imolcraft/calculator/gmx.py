@@ -6,11 +6,12 @@ Molecular dynamics sampling with GROMACS.
 :class:`imolcraft.calculator.md.MDCalculator`. It takes the same ``.pdb``, is
 configured with the same setting names and units, keeps the same
 :meth:`~GMXCalculator.to_dict` / :meth:`~GMXCalculator.from_dict` contract and
-the same ``run(force field, trajectory)`` signature, and returns the same
-``xtcfiles/<trajectory>`` path. What differs is the force-field argument of
-:meth:`~GMXCalculator.run`: GROMACS needs a ``.top`` / ``.gro`` pair, which
-:func:`imolcraft.io.exporter` writes from an OpenMM *System* XML, so ``run``
-takes a serialized ``system.xml`` rather than a ``.ffxml``.
+the same ``run(ffxml, trajectory)`` signature, and returns the same
+``xtcfiles/<trajectory>`` path, so a trainer can use one in place of the
+other. GROMACS needs a ``.top`` / ``.gro`` pair rather than a ``.ffxml``:
+``run`` builds the OpenMM *System* from the ``.ffxml`` exactly as
+``MDCalculator.run`` does, serializes it, and hands it with the structure to
+:func:`imolcraft.io.exporter` (``fmt="gmx"``) in a temporary directory.
 
 The run is a sequence of ``gmx grompp`` / ``gmx mdrun`` calls, one per stage
 (energy minimization, optional annealing, relaxation, production). Every
@@ -31,6 +32,10 @@ import subprocess
 import sys
 import tempfile
 
+import openmm
+from openmm import app
+import openmm.unit as unit
+
 from imolcraft.io import exporter
 
 from .md import (
@@ -39,6 +44,7 @@ from .md import (
     VALID_ENSEMBLES,
     _anneal_schedule,
     _open_md_log,
+    resolve_nonbondedmethod,
 )
 
 __all__ = ["GMXCalculator", "gmx_sample", "GMX_STAGES", "GMX_PCOUPL"]
@@ -229,7 +235,7 @@ class GMXCalculator:
     init_structure : str
         Starting structure, a ``.pdb`` with bonds (CONECT records), exactly
         as ``MDCalculator`` takes it. Both the ``.gro`` and the ``.top`` are
-        derived from it and from the ``system.xml`` given to :meth:`run`.
+        derived from it and from the ``.ffxml`` given to :meth:`run`.
     rcut_nm : float, optional
         Nonbonded cutoff in nm, written to ``rvdw`` and ``rcoulomb``;
         ``rlist`` is ``rcut_nm + 0.2``. Default 1.2.
@@ -270,11 +276,13 @@ class GMXCalculator:
         ``DispCorr = EnerPres`` when True, ``no`` when False. Default False.
     useHbondConstraint : bool, optional
         ``constraints = h-bonds`` when True, ``none`` when False. Default
-        True. Constraints already present in the ``system.xml`` are written
-        to the ``.top`` by the exporter and apply in addition.
+        True. The constraint is applied by GROMACS from the mdp, not baked
+        into the exported topology (see :meth:`_build_system`).
     rigidWater : bool, optional
         Accepted for compatibility with ``MDCalculator`` and **not used**:
-        a rigid water model is a matter of the topology, not of the run.
+        the System is exported with flexible water, and GROMACS keeps water
+        rigid only through ``[ settles ]`` in the topology, which the
+        exporter does not write.
     device : str, optional
         ``"CPU"`` runs the nonbonded kernels on the CPU (``mdrun -nb cpu``);
         any other value (``"CUDA"``, ``"OpenCL"``, ``"HIP"``) asks for the
@@ -580,13 +588,71 @@ class GMXCalculator:
                 "gmx_bin at the executable."
             )
 
-    def _export_inputs(self, system_xml, tmpdir):
+    def _build_system(self, ffxml):
         """
-        Write the ``.top`` / ``.gro`` pair of this structure under ``tmpdir``
-        through :func:`imolcraft.io.exporter` and return their paths.
+        Topology, positions and OpenMM System of this structure under ``ffxml``.
+
+        Kept step for step in line with ``MDCalculator._build_simulation``
+        (md.py, which is deliberately left untouched): same ``PDBFile`` ->
+        ``ForceField`` -> ``Modeller.addExtraParticles`` -> ``createSystem``
+        with the same ``nonbondedMethod`` / ``nonbondedCutoff`` and the same
+        ``setUseDispersionCorrection``, so GROMACS samples the model OpenMM
+        would. Two arguments differ on purpose: ``constraints`` and
+        ``rigidWater`` are not passed, because OpenMM drops the bond
+        parameters of a constrained bond and parmed would then write a
+        ``[ bonds ]`` entry without parameters, which grompp rejects. The
+        hydrogen constraints come from the mdp (``constraints = h-bonds``)
+        instead; ``rigidWater`` has no GROMACS counterpart here.
         """
+        pdb = app.PDBFile(self.init_structure)
+        forcefield = app.ForceField(ffxml)
+
+        modeller = app.Modeller(pdb.topology, pdb.getPositions())
+        modeller.addExtraParticles(forcefield)
+        topology = modeller.topology
+
+        system = forcefield.createSystem(
+            topology,
+            nonbondedMethod=resolve_nonbondedmethod(self.nonbondedmethod),
+            nonbondedCutoff=self.rcut_nm * unit.nanometer,
+            rigidWater=False,
+        )
+        for force in system.getForces():
+            if isinstance(force, openmm.NonbondedForce):
+                force.setUseDispersionCorrection(self.dispcorr)
+        return topology, modeller.getPositions(), system
+
+    def _export_inputs(self, ffxml, tmpdir):
+        """
+        Write the ``.top`` / ``.gro`` pair of this structure under ``ffxml``
+        into ``tmpdir`` and return their paths.
+
+        The System of :meth:`_build_system` is serialized to ``system.xml``,
+        the (extra-particle complete) topology and positions to a ``.pdb``,
+        and both go through :func:`imolcraft.io.exporter` with ``fmt="gmx"``.
+        A force field with virtual sites is refused: parmed drops the
+        massless particles when writing the ``.top`` / ``.gro``, so the
+        exported topology would not be the one OpenMM samples.
+        """
+        topology, positions, system = self._build_system(ffxml)
+        n_vsites = sum(
+            system.isVirtualSite(i) for i in range(system.getNumParticles())
+        )
+        if n_vsites:
+            raise ValueError(
+                f"{ffxml} places {n_vsites} virtual sites; the GROMACS exporter "
+                "(parmed) does not write virtual sites, so GMXCalculator cannot "
+                "sample this force field. Use MDCalculator for it."
+            )
+        pdbfile = os.path.join(tmpdir, "system.pdb")
+        with open(pdbfile, "w") as handle:
+            app.PDBFile.writeFile(topology, positions, handle)
+        system_xml = os.path.join(tmpdir, "system.xml")
+        with open(system_xml, "w") as handle:
+            handle.write(openmm.XmlSerializer.serialize(system))
+
         stem = os.path.join(tmpdir, "system")
-        exporter(self.init_structure, system_xml, stem, "gmx")
+        exporter(pdbfile, system_xml, stem, "gmx")
         return f"{stem}.top", f"{stem}.gro"
 
     def _run_stage(self, stage, deffnm, structure, topology, checkpoint, logstream):
@@ -613,23 +679,23 @@ class GMXCalculator:
                 ) from error
         return f"{deffnm}.gro"
 
-    def run(self, system_xml, trajectory):
+    def run(self, ffxml, trajectory):
         """
         Sample this state with the given force field.
 
         The run minimizes, walks the annealing schedule if there is one,
         relaxes at ``T`` and finally produces the trajectory, each as a
         ``grompp`` / ``mdrun`` pair whose files are kept in ``workdir``.
+        Same arguments and return value as :meth:`MDCalculator.run`.
 
         Parameters
         ----------
-        system_xml : str
-            OpenMM *System* XML of the structure (``openmm.XmlSerializer``
-            output), the ``system`` argument of :func:`imolcraft.io.exporter`.
-            This is the same position as the ``ffxml`` of
-            :meth:`MDCalculator.run` but not the same kind of file: the
-            ``.top`` / ``.gro`` GROMACS needs are generated from it in a
-            temporary directory that is removed when the run ends.
+        ffxml : str
+            OpenMM force field (``.ffxml``) to sample with, as
+            :meth:`MDCalculator.run` takes it. The ``.top`` / ``.gro``
+            GROMACS needs are generated from it and ``init_structure`` in a
+            temporary directory that is removed when the run ends. A force
+            field with virtual sites is refused (see :meth:`_export_inputs`).
         trajectory : str
             Name of the trajectory file, written under ``xtcfiles/``.
 
@@ -651,7 +717,7 @@ class GMXCalculator:
                     print(message, file=logstream, flush=True)
 
             log(f"Using {self.ensemble} ensemble with {self.gmx_bin}")
-            topology, structure = self._export_inputs(system_xml, tmpdir)
+            topology, structure = self._export_inputs(ffxml, tmpdir)
             checkpoint = None
             for stage in stages:
                 log(f"== Start {stage} ==")
@@ -668,17 +734,18 @@ class GMXCalculator:
             return xtcfile
 
 
-def gmx_sample(init_structure, system_xml, trajectory, **settings):
+def gmx_sample(init_structure, ffxml, trajectory, **settings):
     """
     Run one MD sampling with GROMACS.
 
     Thin wrapper over :class:`GMXCalculator` for callers that only want the
-    trajectory and have nothing to record. ``settings`` takes the same
-    keywords as the calculator; ``system_xml`` is an OpenMM *System* XML.
+    trajectory and have nothing to record, with the arguments of
+    :func:`~imolcraft.calculator.md.md_sample`. ``settings`` takes the same
+    keywords as the calculator.
 
     Returns
     -------
     xtcfile : str
         Path to the ``.xtc`` written by the production run.
     """
-    return GMXCalculator(init_structure, **settings).run(system_xml, trajectory)
+    return GMXCalculator(init_structure, **settings).run(ffxml, trajectory)
