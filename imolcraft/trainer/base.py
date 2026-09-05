@@ -585,8 +585,7 @@ class BaseTrainer:
         1. A NaN or Inf loss is first retried through
            :meth:`recover_from_invalid_loss`, which resamples the data the
            loss is measured on. One that survives the retrying is given up on
-           and the parameters are perturbed by
-           :func:`_nan_recovery_gradients` instead.
+           and the parameters are randomly perturbed instead.
         2. Non-finite gradients take the same perturbation route, since a
            finite loss can still differentiate into NaN or Inf and would
            otherwise poison the optimizer state.
@@ -603,8 +602,8 @@ class BaseTrainer:
         self.loss, grads = self.get_loss_gradients()
         _print_memory("grad obtained....")
         self.loss, grads = self._retry_invalid_loss(self.loss, grads)
-        if _loss_is_invalid(self.loss):
-            print("Warning: Loss is NaN or Inf. Skipping this step.")
+        if _loss_is_invalid(self.loss) or not tree_is_finite(grads):
+            print("Warning: Loss or gradients are NaN or Inf. Skipping this step.")
             # Randomly perturb self.ffparams by 0.01%
             grads = _nan_recovery_gradients(self.ffparams)
 
@@ -613,6 +612,10 @@ class BaseTrainer:
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
         previous = self.ffparams
         self.ffparams = optax.apply_updates(self.ffparams, updates)
+        # non-finite entries go first: NaN < floor is False, so a NaN would
+        # walk straight through the floor check below
+        self.ffparams, restored = restore_nonfinite_params(self.ffparams, previous)
+        _report_nonfinite_params(restored)
         self.ffparams, floored = enforce_param_floors(
             self.ffparams, previous, self.param_floors
         )
@@ -780,8 +783,8 @@ class SumTrainer(BaseTrainer):
         # the recovery belongs to the sub-trainer, which is the one holding
         # the data the NaN came out of, and only its own half is recomputed
         loss, grads = trainer._retry_invalid_loss(loss, grads)
-        if _loss_is_invalid(loss):
-            print("Warning: Loss is NaN or Inf. Skipping this step.")
+        if _loss_is_invalid(loss) or not tree_is_finite(grads):
+            print("Warning: Loss or gradients are NaN or Inf. Skipping this step.")
             grads = _nan_recovery_gradients(trainer.ffparams)
 
         return loss, trainer._do_modify("after_grad", grads)
@@ -809,11 +812,14 @@ class SumTrainer(BaseTrainer):
 
         A NaN or Inf loss of either half was already retried by
         :meth:`_substep`, so one arriving here has survived the recovery and
-        the parameters are perturbed instead.
+        the parameters are perturbed instead, as are non-finite gradients.
+        The joint tree is then cleared of non-finite entries and held at its
+        floors before it is split, so that neither half is ever handed a
+        parameter the force field cannot be written with.
         """
         self.loss, grads = self.get_loss_gradients()
-        if _loss_is_invalid(self.loss):
-            print("Warning: Loss is NaN or Inf. Skipping this step.")
+        if _loss_is_invalid(self.loss) or not tree_is_finite(grads):
+            print("Warning: Loss or gradients are NaN or Inf. Skipping this step.")
             # Randomly perturb self.ffparams by 0.01%
             grads = _nan_recovery_gradients(self.ffparams)
 
@@ -822,7 +828,9 @@ class SumTrainer(BaseTrainer):
         previous = self.ffparams
         self.ffparams = optax.apply_updates(self.ffparams, updates)
         # corrected on the joint tree, before it is split, so that neither
-        # half is ever handed a negative sigma or epsilon
+        # half is ever handed a non-finite or a negative sigma or epsilon
+        self.ffparams, restored = restore_nonfinite_params(self.ffparams, previous)
+        _report_nonfinite_params(restored)
         self.ffparams, floored = enforce_param_floors(
             self.ffparams, previous, self.param_floors
         )
