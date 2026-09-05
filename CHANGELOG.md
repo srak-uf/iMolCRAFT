@@ -11,6 +11,33 @@ fixes and backwards-compatible additions moves the patch number.
 
 ## [Unreleased]
 
+### Added
+
+- `imolcraft.calculator.GMXCalculator` (new module
+  `imolcraft/calculator/gmx.py`), which samples one thermodynamic state with
+  GROMACS through `gmx grompp` / `gmx mdrun`. It takes the same `.pdb` as
+  `MDCalculator`, names its settings exactly as `MDCalculator` does
+  (`rcut_nm`, `temperature_K`, `dt_fs`, `nstxout`, `relax_steps`,
+  `prod_steps`, `ensemble`, ...), and follows the same `to_dict` /
+  `from_dict` and `run(force field, trajectory)` contract. The force-field
+  argument of `run` is an OpenMM `System` XML (`system.xml`, what
+  `imolcraft.io.exporter` takes), not a `.ffxml`; the `.top` / `.gro` are
+  generated in a temporary directory through `exporter(..., fmt="gmx")` and
+  removed afterwards, while the `.mdp`, `.tpr`, `.log`, `.edr` and `.cpt`
+  files of every stage are kept under `workdir` (default `gmxfiles/`).
+  `anneal_interval` and `rigidWater` are accepted for compatibility and have
+  no effect. GROMACS-specific settings (`pressure_bar`, `compressibility_bar`,
+  `tau_t_ps`, `tau_p_ps`, `tcoupl`, `pcoupl`, `min_steps`, `emtol`,
+  `gmx_bin`, `mpi_command`, `ntmpi`, `ntomp`, `maxwarn`, `mdp_templates`,
+  `mdp_extra`, `workdir`) are additions; note that `pressure_bar` is a
+  calculator setting here whereas `MDCalculator` leaves the pressure to the
+  trainer. The production trajectory is written as `.xtc` under `xtcfiles/`
+  (no `.trr`). The `.mdp` files of srak-uf/gromacs_tutorial ship as package
+  data under `imolcraft/data/mdp/` and are used as templates. `md.py` and
+  `MDCalculator` are unchanged.
+- `gmx_sample(...)`, a thin wrapper over `GMXCalculator`.
+- pytest marker `gmx` for tests that need the `gmx` binary.
+
 ## [0.3.2] — 2026-09-05
 
 ### Added
