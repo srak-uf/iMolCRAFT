@@ -1,0 +1,683 @@
+#!/usr/bin/env python
+"""
+Molecular dynamics sampling with GROMACS.
+
+:class:`GMXCalculator` is the GROMACS counterpart of
+:class:`imolcraft.calculator.md.MDCalculator`. It takes the same ``.pdb``, is
+configured with the same setting names and units, keeps the same
+:meth:`~GMXCalculator.to_dict` / :meth:`~GMXCalculator.from_dict` contract and
+the same ``run(force field, trajectory)`` signature, and returns the same
+``xtcfiles/<trajectory>`` path. What differs is the force-field argument of
+:meth:`~GMXCalculator.run`: GROMACS needs a ``.top`` / ``.gro`` pair, which
+:func:`imolcraft.io.exporter` writes from an OpenMM *System* XML, so ``run``
+takes a serialized ``system.xml`` rather than a ``.ffxml``.
+
+The run is a sequence of ``gmx grompp`` / ``gmx mdrun`` calls, one per stage
+(energy minimization, optional annealing, relaxation, production). Every
+``.mdp`` is derived from a template shipped under ``imolcraft/data/mdp/``
+(the files of srak-uf/gromacs_tutorial) with the settings of the calculator
+written over it, and is kept in ``workdir`` next to the GROMACS ``.tpr`` /
+``.log`` / ``.edr`` files for the record.
+
+GROMACS is driven through :mod:`subprocess`; :func:`_run_command` is the only
+place a process is started, so another backend (gmxapi) can be plugged in
+there later without touching the public API.
+"""
+import importlib.resources
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+from imolcraft.io import exporter
+
+from .md import (
+    MD_LOG_MODES,
+    NONBONDED_METHODS,
+    VALID_ENSEMBLES,
+    _anneal_schedule,
+    _open_md_log,
+)
+
+__all__ = ["GMXCalculator", "gmx_sample", "GMX_STAGES", "GMX_PCOUPL"]
+
+#: Stages of one run, in order. Minimization is a preprocessing step, not an
+#: ensemble; the annealing stage is skipped when there is no schedule.
+GMX_STAGES = ("min", "anneal", "relax", "prod")
+
+#: Pressure coupling of each ensemble of :data:`~imolcraft.calculator.md.VALID_ENSEMBLES`:
+#: ``pcoupltype`` and the masks that turn the scalar ``pressure_bar`` /
+#: ``compressibility_bar`` into the ``ref-p`` / ``compressibility`` vectors
+#: (xx yy zz xy xz yz). None means no pressure coupling.
+GMX_PCOUPL = {
+    "nve": None,
+    "nvt": None,
+    "isonpt": ("isotropic", (1,), (1,)),
+    "anisonpt": ("anisotropic", (1, 1, 1, 0, 0, 0), (1, 1, 1, 0, 0, 0)),
+    "trinpt": ("anisotropic", (1, 1, 1, 0, 0, 0), (1, 1, 1, 1, 1, 1)),
+}
+
+#: Template of each stage that does not depend on the ensemble.
+_STAGE_TEMPLATES = {"min": "min.mdp", "anneal": "nvt.mdp"}
+
+#: Template of the relaxation and production stages of each ensemble.
+_ENSEMBLE_TEMPLATES = {
+    "nve": "nvt.mdp",
+    "nvt": "nvt.mdp",
+    "isonpt": "isonpt.mdp",
+    "anisonpt": "anisonpt_xyz.mdp",
+    "trinpt": "trinpt_xyz_xy_yz_zx.mdp",
+}
+
+#: mdp keys of the pressure coupling that must not leak out of a template
+#: into a run without a barostat (nvt.mdp carries ``ref-p = 5.0``).
+_PCOUPL_KEYS = ("pcoupltype", "tau-p", "compressibility", "ref-p", "nstpcouple")
+
+
+def _mdp_key(key):
+    """
+    Canonical spelling of an mdp key.
+
+    GROMACS treats ``-`` and ``_`` in a key as the same character; the
+    templates use ``-``, so every key is folded onto that spelling so that an
+    override replaces the template entry instead of sitting next to it.
+    """
+    return str(key).strip().replace("_", "-")
+
+
+def _read_mdp(path):
+    """
+    Parse an mdp file into an ordered ``{key: value}`` dict.
+
+    ``path`` is a filesystem path or any object with ``read_text()`` (such as
+    an :mod:`importlib.resources` traversable). Comments (``;`` to the end of
+    the line) and blank lines are dropped; values are kept as strings, an
+    empty value as ``""``.
+    """
+    if not hasattr(path, "read_text"):
+        path = pathlib.Path(path)
+    options = {}
+    for line in path.read_text().splitlines():
+        line = line.split(";", 1)[0].strip()
+        if not line:
+            continue
+        key, sep, value = line.partition("=")
+        if not sep:
+            raise ValueError(f"Malformed mdp line (no '='): {line!r}")
+        options[_mdp_key(key)] = value.strip()
+    return options
+
+
+def _format_mdp(options):
+    """Render an ordered ``{key: value}`` dict as ``key = value`` lines."""
+    return "".join(f"{key:<24s}= {value}\n" for key, value in options.items())
+
+
+def _num(value):
+    """
+    mdp spelling of a real number.
+
+    Rounded to 12 decimals so that ``1.2 + 0.2`` prints as ``1.4`` rather than
+    ``1.4000000000000001``; ``1.0`` stays ``1.0``.
+    """
+    return repr(round(float(value), 12))
+
+
+def _vector(scalar, mask):
+    """Expand a scalar onto a mask: ``(1, 1, 1, 0, 0, 0)`` -> ``"P P P 0.0 0.0 0.0"``."""
+    return " ".join(_num(scalar * m) for m in mask)
+
+
+def _pressure_options(ensemble, pressure_bar, compressibility_bar,
+                      tcoupl, pcoupl, tau_t_ps, tau_p_ps):
+    """
+    Thermostat and barostat mdp entries of an ensemble.
+
+    Returns ``(set, drop)``: the entries to write and the keys to remove from
+    the template. ``nve`` switches both couplings off, ``nvt`` keeps the
+    thermostat only, and the three NPT flavours add the barostat with the
+    ``ref-p`` / ``compressibility`` vectors of :data:`GMX_PCOUPL`. Pressure in
+    bar, compressibility in 1/bar, coupling times in ps.
+    """
+    if ensemble not in GMX_PCOUPL:
+        raise ValueError(
+            f"Invalid ensemble {ensemble}. Must be one of {list(VALID_ENSEMBLES)}."
+        )
+    options = {
+        "tcoupl": "no" if ensemble == "nve" else str(tcoupl),
+        "tau-t": _num(tau_t_ps),
+    }
+    barostat = GMX_PCOUPL[ensemble]
+    if barostat is None:
+        options["pcoupl"] = "no"
+        return options, list(_PCOUPL_KEYS)
+    pcoupltype, p_mask, c_mask = barostat
+    options.update({
+        "pcoupl": str(pcoupl),
+        "pcoupltype": pcoupltype,
+        "tau-p": _num(tau_p_ps),
+        "compressibility": _vector(compressibility_bar, c_mask),
+        "ref-p": _vector(pressure_bar, p_mask),
+    })
+    return options, []
+
+
+def _annealing_options(legs, dt_fs):
+    """
+    GROMACS native annealing entries for the legs of
+    :func:`~imolcraft.calculator.md._anneal_schedule`.
+
+    ``legs`` is a list of ``(T_from, T_to, nsteps)``; the corner times are the
+    cumulative step counts converted to ps with ``dt_fs`` (this and ``dt``
+    itself are the only unit conversions of the module). An empty list gives
+    an empty dict.
+    """
+    if not legs:
+        return {}
+    temperatures = [legs[0][0]] + [T_to for _, T_to, _ in legs]
+    times, elapsed = [0.0], 0.0
+    for _, _, nsteps in legs:
+        elapsed += nsteps * float(dt_fs) / 1000.0
+        times.append(elapsed)
+    return {
+        "annealing": "single",
+        "annealing-npoints": str(len(temperatures)),
+        "annealing-time": " ".join(_num(t) for t in times),
+        "annealing-temp": " ".join(_num(T) for T in temperatures),
+    }
+
+
+def _run_command(argv, logstream, env=None):
+    """
+    Run one GROMACS command to completion.
+
+    The only place a process is started. ``argv`` is a list (never a shell
+    string). The child inherits the terminal when ``logstream`` is
+    ``sys.stdout``, is silenced when it is None and otherwise writes into the
+    stream, stderr merged into stdout. Raises
+    :class:`subprocess.CalledProcessError` on a non-zero exit.
+    """
+    if logstream is None:
+        stdout = subprocess.DEVNULL
+    elif logstream is sys.stdout:
+        stdout = None
+    else:
+        logstream.flush()
+        stdout = logstream
+    subprocess.run(
+        argv, check=True, stdout=stdout, stderr=subprocess.STDOUT, env=env
+    )
+
+
+class GMXCalculator:
+    """
+    MD sampling of one thermodynamic state with GROMACS.
+
+    Mirrors :class:`~imolcraft.calculator.md.MDCalculator`: the state is fixed
+    at construction, the force field and the trajectory name are arguments of
+    :meth:`run`, and :meth:`to_dict` / :meth:`from_dict` carry the complete
+    recipe. All 17 settings of ``MDCalculator`` are accepted under the same
+    names and units; the ones below them are GROMACS-specific additions.
+
+    Units follow GROMACS: nm, ps, K, bar, kJ/mol. ``dt_fs`` (fs) and the
+    annealing step counts are the only values converted (to ps).
+
+    Parameters
+    ----------
+    init_structure : str
+        Starting structure, a ``.pdb`` with bonds (CONECT records), exactly
+        as ``MDCalculator`` takes it. Both the ``.gro`` and the ``.top`` are
+        derived from it and from the ``system.xml`` given to :meth:`run`.
+    rcut_nm : float, optional
+        Nonbonded cutoff in nm, written to ``rvdw`` and ``rcoulomb``;
+        ``rlist`` is ``rcut_nm + 0.2``. Default 1.2.
+    temperature_K : float, optional
+        ``ref-t`` and ``gen-temp`` in kelvin for the relaxation and the
+        production. Default 300.
+    anneal_T : list of float, optional
+        Temperature corners of the annealing schedule in kelvin, as in
+        ``MDCalculator``. Mapped onto GROMACS native ``annealing = single``
+        in a dedicated NVT stage before the relaxation. None or an empty
+        list skips the stage.
+    anneal_steps : list of int, optional
+        MD steps of each leg (one entry fewer than ``anneal_T``); converted
+        to ps for ``annealing-time``.
+    anneal_interval : int, optional
+        Accepted for compatibility with ``MDCalculator`` and **not used**:
+        GROMACS interpolates the set point linearly on every step.
+    dt_fs : float, optional
+        Timestep in fs; written as ``dt`` in ps. Default 1.0.
+    nstxout : int, optional
+        Interval in MD steps of the ``.xtc`` frames (``nstxout-compressed``)
+        and of the energy / log output. The ``.trr`` output (GROMACS's own
+        ``nstxout`` / ``nstvout``) is switched off. Default 1000.
+    relax_steps, prod_steps : int, optional
+        ``nsteps`` of the relaxation and of the production stage. Note that
+        the defaults (100000 and 2000000) mean hours of wall time; there is
+        no timeout.
+    ensemble : str, optional
+        One of :data:`~imolcraft.calculator.md.VALID_ENSEMBLES`. ``nve``
+        switches the thermostat and the barostat off, ``nvt`` the barostat
+        only, ``isonpt`` / ``anisonpt`` / ``trinpt`` couple the pressure
+        isotropically, per axis, or with the off-diagonal components as
+        well. Default ``"nvt"``.
+    nonbondedmethod : str, optional
+        ``"PME"`` (``vdwtype = Cut-off``) or ``"LJPME"`` (``vdwtype = PME``);
+        ``coulombtype`` is PME in both cases. Default ``"PME"``.
+    dispcorr : bool, optional
+        ``DispCorr = EnerPres`` when True, ``no`` when False. Default False.
+    useHbondConstraint : bool, optional
+        ``constraints = h-bonds`` when True, ``none`` when False. Default
+        True. Constraints already present in the ``system.xml`` are written
+        to the ``.top`` by the exporter and apply in addition.
+    rigidWater : bool, optional
+        Accepted for compatibility with ``MDCalculator`` and **not used**:
+        a rigid water model is a matter of the topology, not of the run.
+    device : str, optional
+        ``"CPU"`` runs the nonbonded kernels on the CPU (``mdrun -nb cpu``);
+        any other value (``"CUDA"``, ``"OpenCL"``, ``"HIP"``) asks for the
+        GPU (``-nb gpu``). Default ``"CPU"``.
+    md_log : {'stdout', 'file', 'none'}, optional
+        Where the progress messages and the output of the GROMACS commands
+        go. ``'stdout'`` (default) inherits the terminal, ``'file'`` appends
+        everything to ``md_logfile``, ``'none'`` discards it. GROMACS's own
+        ``.log`` / ``.edr`` files are written to ``workdir`` regardless.
+    md_logfile : str, optional
+        Log file used when ``md_log='file'``. Default
+        ``mdlogs/<trajectory stem>.log``.
+    pressure_bar : float, optional
+        ``ref-p`` in bar of the NPT ensembles. Default 1.0. Unlike
+        ``MDCalculator``, which fixes 1 bar and leaves the pressure to the
+        trainer, the pressure is a setting of this calculator.
+    compressibility_bar : float, optional
+        Isotropic ``compressibility`` in 1/bar. Default 4.5e-5.
+    tau_t_ps, tau_p_ps : float, optional
+        ``tau-t`` and ``tau-p`` in ps. Defaults 1.0 and 5.0.
+    tcoupl, pcoupl : str, optional
+        Thermostat and barostat algorithms (``tcoupl`` / ``pcoupl`` of the
+        mdp). Defaults ``"nose-hoover"`` and ``"Parrinello-Rahman"``.
+    min_steps : int, optional
+        ``nsteps`` of the steepest-descent minimization. Default 4096.
+    emtol : float, optional
+        Convergence criterion of the minimization in kJ/mol/nm. Default 100.
+    gmx_bin : str, optional
+        GROMACS executable: ``"gmx"`` (default), ``"gmx_d"``, ``"gmx_mpi"``
+        or ``"gmx_mpi_d"``, a name on PATH or an absolute path.
+    mpi_command : list of str, optional
+        Launcher put in front of ``mdrun`` only, e.g.
+        ``["mpirun", "-np", "32"]``. Default None.
+    ntmpi, ntomp : int, optional
+        ``mdrun -ntmpi`` / ``-ntomp``. None (default) lets mdrun decide.
+    maxwarn : int, optional
+        ``grompp -maxwarn``. Default 0.
+    mdp_templates : dict, optional
+        ``{stage: path}`` of ``.mdp`` files to use instead of the shipped
+        ones for the stages listed (see :data:`GMX_STAGES`). Default None.
+    mdp_extra : dict, optional
+        Raw ``{mdp key: value}`` entries applied last to every stage, on top
+        of everything the settings write. Default None.
+    workdir : str, optional
+        Directory receiving the ``.mdp``, ``.tpr``, ``.log``, ``.edr``,
+        ``.cpt`` and intermediate ``.gro`` files, one set per stage named
+        ``<trajectory stem>_<stage>``. Default ``"gmxfiles"``. The
+        ``.top`` / ``.gro`` inputs live in a temporary directory and are
+        removed when the run ends.
+    """
+
+    #: Settings of a run and the value used when one is left out. The first
+    #: block is MDCalculator.SETTINGS verbatim; the rest is GROMACS-specific.
+    SETTINGS = {
+        "rcut_nm": 1.2,
+        "temperature_K": 300.0,
+        "anneal_T": None,
+        "anneal_steps": None,
+        "anneal_interval": 100,
+        "dt_fs": 1.0,
+        "nstxout": 1000,
+        "relax_steps": 100000,
+        "prod_steps": 2000000,
+        "ensemble": "nvt",
+        "nonbondedmethod": "PME",
+        "dispcorr": False,
+        "useHbondConstraint": True,
+        "rigidWater": False,
+        "device": "CPU",
+        "md_log": "stdout",
+        "md_logfile": None,
+        "pressure_bar": 1.0,
+        "compressibility_bar": 4.5e-5,
+        "tau_t_ps": 1.0,
+        "tau_p_ps": 5.0,
+        "tcoupl": "nose-hoover",
+        "pcoupl": "Parrinello-Rahman",
+        "min_steps": 4096,
+        "emtol": 100.0,
+        "gmx_bin": "gmx",
+        "mpi_command": None,
+        "ntmpi": None,
+        "ntomp": None,
+        "maxwarn": 0,
+        "mdp_templates": None,
+        "mdp_extra": None,
+        "workdir": "gmxfiles",
+    }
+
+    def __init__(self, init_structure, **settings):
+        unknown = sorted(set(settings) - set(self.SETTINGS))
+        if unknown:
+            raise TypeError(
+                f"unknown GROMACS MD settings: {', '.join(unknown)}. Known ones "
+                f"are {', '.join(sorted(self.SETTINGS))}"
+            )
+        self.init_structure = init_structure
+        for name, default in self.SETTINGS.items():
+            setattr(self, name, settings.get(name, default))
+
+        if self.ensemble not in VALID_ENSEMBLES:
+            raise ValueError(
+                f"Invalid ensemble {self.ensemble}. Must be one of "
+                f"{list(VALID_ENSEMBLES)}."
+            )
+        if self.nonbondedmethod not in NONBONDED_METHODS:
+            raise ValueError(
+                f"Invalid nonbonded method: {self.nonbondedmethod}. Must be one "
+                f"of {list(NONBONDED_METHODS)}."
+            )
+        mode = "none" if self.md_log is None else str(self.md_log).lower()
+        if mode not in MD_LOG_MODES:
+            raise ValueError(
+                f"md_log must be one of {MD_LOG_MODES}, got {self.md_log!r}"
+            )
+        unknown_stages = sorted(set(self.mdp_templates or {}) - set(GMX_STAGES))
+        if unknown_stages:
+            raise ValueError(
+                f"mdp_templates has unknown stages {unknown_stages}; stages are "
+                f"{list(GMX_STAGES)}"
+            )
+        # a broken schedule should show up now, not after the minimization
+        self.anneal_legs = _anneal_schedule(self.anneal_T, self.anneal_steps)
+
+    def to_dict(self):
+        """
+        The complete recipe of this run, ready to be written to a checkpoint.
+
+        Every setting is listed, defaults included, as
+        :meth:`MDCalculator.to_dict` does.
+        """
+        record = {"init_structure": self.init_structure}
+        record.update({name: getattr(self, name) for name in self.SETTINGS})
+        return record
+
+    @classmethod
+    def from_dict(cls, record):
+        """Rebuild a calculator from what :meth:`to_dict` wrote."""
+        settings = dict(record)
+        return cls(settings.pop("init_structure"), **settings)
+
+    # -- mdp -----------------------------------------------------------------
+
+    def _template(self, stage):
+        """Path (or package traversable) of the template of a stage."""
+        if self.mdp_templates and stage in self.mdp_templates:
+            return self.mdp_templates[stage]
+        name = _STAGE_TEMPLATES.get(stage) or _ENSEMBLE_TEMPLATES[self.ensemble]
+        return importlib.resources.files("imolcraft.data") / "mdp" / name
+
+    def _common_options(self):
+        """mdp entries shared by every stage: cutoffs, PME, constraints."""
+        return {
+            "pbc": "xyz",
+            "cutoff-scheme": "Verlet",
+            "coulombtype": "PME",
+            "rcoulomb": _num(self.rcut_nm),
+            "vdwtype": "PME" if self.nonbondedmethod == "LJPME" else "Cut-off",
+            "rvdw": _num(self.rcut_nm),
+            "rlist": _num(self.rcut_nm + 0.2),
+            "DispCorr": "EnerPres" if self.dispcorr else "no",
+            "constraints": "h-bonds" if self.useHbondConstraint else "none",
+            # Trajectories are xtc only; trr output off in every stage.
+            "nstxout": "0",
+            "nstvout": "0",
+            "nstfout": "0",
+        }
+
+    def _md_options(self, stage):
+        """mdp entries of the dynamical stages (anneal, relax, prod)."""
+        anneal_total = sum(nsteps for _, _, nsteps in self.anneal_legs)
+        if stage == "anneal":
+            nsteps = anneal_total
+            T = self.anneal_legs[0][0] if self.anneal_legs else self.temperature_K
+            fresh_start = True
+        elif stage == "relax":
+            nsteps = self.relax_steps
+            T = self.temperature_K
+            fresh_start = not self.anneal_legs
+        else:
+            nsteps = self.prod_steps
+            T = self.temperature_K
+            fresh_start = False
+
+        options = {
+            "integrator": "md",
+            "dt": _num(float(self.dt_fs) / 1000.0),
+            "nsteps": str(int(nsteps)),
+            "tc-grps": "System",
+            "ref-t": _num(T),
+            "gen-vel": "yes" if fresh_start else "no",
+            "gen-temp": _num(T),
+            "continuation": "no" if fresh_start else "yes",
+            "nstxout-compressed": str(int(self.nstxout)),
+            "nstenergy": str(int(self.nstxout)),
+            "nstlog": str(int(self.nstxout)),
+        }
+        # The annealing stage needs a thermostat whatever the ensemble is,
+        # and never a barostat; the other stages follow the ensemble.
+        coupling, drop = _pressure_options(
+            "nvt" if stage == "anneal" else self.ensemble,
+            self.pressure_bar, self.compressibility_bar,
+            self.tcoupl, self.pcoupl, self.tau_t_ps, self.tau_p_ps,
+        )
+        options.update(coupling)
+        if stage == "anneal":
+            options.update(_annealing_options(self.anneal_legs, self.dt_fs))
+        return options, drop
+
+    def mdp_options(self, stage):
+        """
+        The complete mdp of one stage as an ordered ``{key: str}`` dict.
+
+        The template of the stage is read, the entries derived from the
+        settings are written over it, the keys that must not survive (the
+        barostat of a template in a run without one) are removed, and
+        ``mdp_extra`` is applied last. Pure: nothing is written.
+
+        Parameters
+        ----------
+        stage : str
+            One of :data:`GMX_STAGES`.
+        """
+        if stage not in GMX_STAGES:
+            raise ValueError(f"stage must be one of {GMX_STAGES}, got {stage!r}")
+        options = _read_mdp(self._template(stage))
+        options.update(self._common_options())
+        if stage == "min":
+            options.update({
+                "integrator": "steep",
+                "nsteps": str(int(self.min_steps)),
+                "emtol": _num(self.emtol),
+            })
+            drop = []
+        else:
+            stage_options, drop = self._md_options(stage)
+            options.update(stage_options)
+        for key in drop:
+            options.pop(key, None)
+        for key, value in (self.mdp_extra or {}).items():
+            options[_mdp_key(key)] = str(value)
+        return options
+
+    def write_mdp(self, stage, path):
+        """
+        Write the mdp of ``stage`` to ``path`` and return ``path``.
+
+        Parent directories are created as needed.
+        """
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(path, "w") as handle:
+            handle.write(_format_mdp(self.mdp_options(stage)))
+        return path
+
+    # -- commands ------------------------------------------------------------
+
+    def grompp_command(self, mdp, structure, topology, tpr, *, checkpoint=None):
+        """
+        ``gmx grompp`` argument list building ``tpr`` from ``mdp``,
+        ``structure`` (``.gro``) and ``topology`` (``.top``).
+
+        ``checkpoint`` (a ``.cpt``) hands the velocities of the previous stage
+        over with ``-t``. The processed mdp (``-po``) goes next to the
+        ``.tpr`` instead of the current directory.
+        """
+        argv = [
+            self.gmx_bin, "grompp",
+            "-f", mdp, "-c", structure, "-p", topology, "-o", tpr,
+            "-po", os.path.splitext(tpr)[0] + "_mdout.mdp",
+            "-maxwarn", str(int(self.maxwarn)),
+        ]
+        if checkpoint is not None:
+            argv += ["-t", checkpoint]
+        return argv
+
+    def mdrun_command(self, deffnm):
+        """
+        ``gmx mdrun -deffnm <deffnm>`` argument list, prefixed with
+        ``mpi_command`` when one is set.
+
+        ``device`` picks ``-nb cpu`` or ``-nb gpu``; ``ntmpi`` / ``ntomp``
+        are passed only when not None.
+        """
+        argv = list(self.mpi_command or [])
+        argv += [self.gmx_bin, "mdrun", "-deffnm", deffnm]
+        argv += ["-nb", "cpu" if str(self.device).upper() == "CPU" else "gpu"]
+        if self.ntmpi is not None:
+            argv += ["-ntmpi", str(int(self.ntmpi))]
+        if self.ntomp is not None:
+            argv += ["-ntomp", str(int(self.ntomp))]
+        return argv
+
+    def _check_binary(self):
+        """Raise FileNotFoundError with a hint when ``gmx_bin`` is not on PATH."""
+        if shutil.which(self.gmx_bin) is None:
+            raise FileNotFoundError(
+                f"GROMACS executable {self.gmx_bin!r} not found on PATH. "
+                "Activate the conda environment that provides it (imc_cpu) or "
+                "source GMXRC.bash of your GROMACS installation, or point "
+                "gmx_bin at the executable."
+            )
+
+    def _export_inputs(self, system_xml, tmpdir):
+        """
+        Write the ``.top`` / ``.gro`` pair of this structure under ``tmpdir``
+        through :func:`imolcraft.io.exporter` and return their paths.
+        """
+        stem = os.path.join(tmpdir, "system")
+        exporter(self.init_structure, system_xml, stem, "gmx")
+        return f"{stem}.top", f"{stem}.gro"
+
+    def _run_stage(self, stage, deffnm, structure, topology, checkpoint, logstream):
+        """
+        grompp and mdrun one stage; every output is named ``deffnm.*``.
+
+        Returns the ``.gro`` the next stage starts from. A failing command
+        is reported with the stage name and GROMACS's own log.
+        """
+        mdp = self.write_mdp(stage, f"{deffnm}.mdp")
+        tpr = f"{deffnm}.tpr"
+        env = dict(os.environ, GMX_MAXBACKUP="-1")
+        for argv in (
+            self.grompp_command(mdp, structure, topology, tpr, checkpoint=checkpoint),
+            self.mdrun_command(deffnm),
+        ):
+            try:
+                _run_command(argv, logstream, env=env)
+            except subprocess.CalledProcessError as error:
+                raise RuntimeError(
+                    f"GROMACS failed in the {stage} stage (exit code "
+                    f"{error.returncode}): {' '.join(argv)}. See {deffnm}.log "
+                    "and the MD log for details."
+                ) from error
+        return f"{deffnm}.gro"
+
+    def run(self, system_xml, trajectory):
+        """
+        Sample this state with the given force field.
+
+        The run minimizes, walks the annealing schedule if there is one,
+        relaxes at ``T`` and finally produces the trajectory, each as a
+        ``grompp`` / ``mdrun`` pair whose files are kept in ``workdir``.
+
+        Parameters
+        ----------
+        system_xml : str
+            OpenMM *System* XML of the structure (``openmm.XmlSerializer``
+            output), the ``system`` argument of :func:`imolcraft.io.exporter`.
+            This is the same position as the ``ffxml`` of
+            :meth:`MDCalculator.run` but not the same kind of file: the
+            ``.top`` / ``.gro`` GROMACS needs are generated from it in a
+            temporary directory that is removed when the run ends.
+        trajectory : str
+            Name of the trajectory file, written under ``xtcfiles/``.
+
+        Returns
+        -------
+        xtcfile : str
+            Path to the ``.xtc`` written by the production run.
+        """
+        self._check_binary()
+        stem = os.path.splitext(os.path.basename(trajectory))[0]
+        stages = [s for s in GMX_STAGES if s != "anneal" or self.anneal_legs]
+        os.makedirs(self.workdir, exist_ok=True)
+
+        with _open_md_log(self.md_log, self.md_logfile, trajectory) as logstream, \
+                tempfile.TemporaryDirectory(prefix="imolcraft_gmx_") as tmpdir:
+
+            def log(message):
+                if logstream is not None:
+                    print(message, file=logstream, flush=True)
+
+            log(f"Using {self.ensemble} ensemble with {self.gmx_bin}")
+            topology, structure = self._export_inputs(system_xml, tmpdir)
+            checkpoint = None
+            for stage in stages:
+                log(f"== Start {stage} ==")
+                deffnm = os.path.join(self.workdir, f"{stem}_{stage}")
+                structure = self._run_stage(
+                    stage, deffnm, structure, topology, checkpoint, logstream
+                )
+                # Minimization writes no checkpoint; velocities start at anneal/relax.
+                checkpoint = None if stage == "min" else f"{deffnm}.cpt"
+
+            os.makedirs("xtcfiles", exist_ok=True)
+            xtcfile = os.path.join("xtcfiles", trajectory)
+            shutil.copyfile(os.path.join(self.workdir, f"{stem}_prod.xtc"), xtcfile)
+            return xtcfile
+
+
+def gmx_sample(init_structure, system_xml, trajectory, **settings):
+    """
+    Run one MD sampling with GROMACS.
+
+    Thin wrapper over :class:`GMXCalculator` for callers that only want the
+    trajectory and have nothing to record. ``settings`` takes the same
+    keywords as the calculator; ``system_xml`` is an OpenMM *System* XML.
+
+    Returns
+    -------
+    xtcfile : str
+        Path to the ``.xtc`` written by the production run.
+    """
+    return GMXCalculator(init_structure, **settings).run(system_xml, trajectory)
