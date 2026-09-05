@@ -119,3 +119,6 @@ mdlogs/
 # tests/data/ holds committed input data; exempt it from the generic
 # patterns above (test_*log in particular).
 !tests/data/test_dihed_0.log
+
+### GROMACS tutorial clone (separate repository, its .mdp files ship under imolcraft/data/mdp/) ###
+gromacs_tutorial/
