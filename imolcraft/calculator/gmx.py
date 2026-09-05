@@ -28,6 +28,7 @@ import importlib.resources
 import math
 import os
 import pathlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -48,7 +49,20 @@ from .md import (
     resolve_nonbondedmethod,
 )
 
-__all__ = ["GMXCalculator", "gmx_sample", "GMX_STAGES", "GMX_PCOUPL"]
+__all__ = ["GMXCalculator", "gmx_sample", "GMX_STAGES", "GMX_PCOUPL", "GMX_ENV"]
+
+#: Environment variables that supply the execution settings a calculator
+#: leaves at None (``gmx_bin``, ``mpi_command``, ``ntmpi``, ``ntomp``). An
+#: argument wins over the variable, the variable over the built-in default
+#: (``gmx`` for the binary, nothing for the rest), see
+#: :meth:`GMXCalculator._resolve_execution`. They belong to the job, not to
+#: the state, which is why ``to_dict`` never records them.
+GMX_ENV = {
+    "gmx_bin": "IMOLCRAFT_GMX_BIN",
+    "mpi_command": "IMOLCRAFT_GMX_MPI_COMMAND",
+    "ntmpi": "IMOLCRAFT_GMX_NTMPI",
+    "ntomp": "IMOLCRAFT_GMX_NTOMP",
+}
 
 #: Stages of one run, in order. Minimization is a preprocessing step, not an
 #: ensemble; the annealing stage is skipped when there is no schedule.
@@ -363,13 +377,30 @@ class GMXCalculator:
     emtol : float, optional
         Convergence criterion of the minimization in kJ/mol/nm. Default 100.
     gmx_bin : str, optional
-        GROMACS executable: ``"gmx"`` (default), ``"gmx_d"``, ``"gmx_mpi"``
-        or ``"gmx_mpi_d"``, a name on PATH or an absolute path.
+        GROMACS executable: ``"gmx"``, ``"gmx_d"``, ``"gmx_mpi"`` or
+        ``"gmx_mpi_d"``, a name on PATH or an absolute path. None (default)
+        takes ``$IMOLCRAFT_GMX_BIN``, or ``"gmx"`` when that is unset.
     mpi_command : list of str, optional
-        Launcher put in front of ``mdrun`` only, e.g.
-        ``["mpirun", "-np", "32"]``. Default None.
+        Launcher put in front of ``mdrun`` only (never grompp), e.g.
+        ``["mpirun", "-np", "32"]``. None (default) takes
+        ``$IMOLCRAFT_GMX_MPI_COMMAND`` split with :func:`shlex.split`
+        (``"srun --mpi=pmix -n 8"``), or no launcher when that is unset or
+        empty. A launcher implies a real-MPI build, which does not accept
+        ``-ntmpi``, so combining it with ``ntmpi`` is an error.
     ntmpi, ntomp : int, optional
-        ``mdrun -ntmpi`` / ``-ntomp``. None (default) lets mdrun decide.
+        ``mdrun -ntmpi`` / ``-ntomp``. None (default) takes
+        ``$IMOLCRAFT_GMX_NTMPI`` / ``$IMOLCRAFT_GMX_NTOMP``, or leaves the
+        choice to mdrun when they are unset (without ``-ntomp`` GROMACS
+        honours ``OMP_NUM_THREADS``).
+
+        These four execution settings are resolved at run time, argument >
+        environment > default (:data:`GMX_ENV`), and :meth:`to_dict`
+        records only the arguments, so a checkpoint carries no job-specific
+        launcher. A batch script therefore sets them once, e.g.::
+
+            export IMOLCRAFT_GMX_BIN=gmx_mpi
+            export IMOLCRAFT_GMX_MPI_COMMAND="srun --mpi=pmix -n $SLURM_NTASKS"
+            export IMOLCRAFT_GMX_NTOMP=$SLURM_CPUS_PER_TASK
     maxwarn : int, optional
         ``grompp -maxwarn``. Default 0.
     mdp_templates : dict, optional
@@ -416,7 +447,7 @@ class GMXCalculator:
         "pcoupl": "Parrinello-Rahman",
         "min_steps": 4096,
         "emtol": 100.0,
-        "gmx_bin": "gmx",
+        "gmx_bin": None,
         "mpi_command": None,
         "ntmpi": None,
         "ntomp": None,
@@ -626,6 +657,49 @@ class GMXCalculator:
 
     # -- commands ------------------------------------------------------------
 
+    def _resolve_execution(self):
+        """
+        The execution settings actually used, and where each came from.
+
+        Returns ``(values, sources)``: ``values`` holds ``gmx_bin`` (str),
+        ``mpi_command`` (list of str or None), ``ntmpi`` and ``ntomp`` (int or
+        None); ``sources`` maps the same names to ``"argument"``,
+        ``"environment"`` or ``"default"``. An argument given to the
+        calculator wins, then the variable of :data:`GMX_ENV`, then the
+        default (``"gmx"`` for the binary, None for the rest). An empty
+        variable counts as unset. A launcher together with ``ntmpi`` is
+        refused: ``mpi_command`` means a real-MPI ``gmx_mpi``, whose mdrun
+        takes the rank count from the launcher and rejects ``-ntmpi``.
+        """
+        defaults = {"gmx_bin": "gmx", "mpi_command": None, "ntmpi": None, "ntomp": None}
+        parsers = {
+            "gmx_bin": str,
+            "mpi_command": lambda text: shlex.split(text) or None,
+            "ntmpi": int,
+            "ntomp": int,
+        }
+        values, sources = {}, {}
+        for name, default in defaults.items():
+            given = getattr(self, name)
+            env = os.environ.get(GMX_ENV[name], "").strip()
+            if given is not None:
+                values[name], sources[name] = given, "argument"
+            elif env:
+                values[name], sources[name] = parsers[name](env), "environment"
+            else:
+                values[name], sources[name] = default, "default"
+        if values["mpi_command"] is not None:
+            values["mpi_command"] = [str(x) for x in values["mpi_command"]]
+        if values["mpi_command"] and values["ntmpi"] is not None:
+            raise ValueError(
+                f"mpi_command ({sources['mpi_command']}) and ntmpi "
+                f"({sources['ntmpi']}) cannot be combined: a launcher means a "
+                "real-MPI gmx_mpi, whose mdrun takes the rank count from the "
+                "launcher and does not accept -ntmpi. Drop ntmpi (or "
+                f"${GMX_ENV['ntmpi']}) and use ntomp for the threads per rank."
+            )
+        return values, sources
+
     def grompp_command(self, mdp, structure, topology, tpr, *, checkpoint=None):
         """
         ``gmx grompp`` argument list building ``tpr`` from ``mdp``,
@@ -633,10 +707,12 @@ class GMXCalculator:
 
         ``checkpoint`` (a ``.cpt``) hands the velocities of the previous stage
         over with ``-t``. The processed mdp (``-po``) goes next to the
-        ``.tpr`` instead of the current directory.
+        ``.tpr`` instead of the current directory. The binary comes from
+        :meth:`_resolve_execution`; ``mpi_command`` never applies to grompp.
         """
+        execution, _ = self._resolve_execution()
         argv = [
-            self.gmx_bin, "grompp",
+            execution["gmx_bin"], "grompp",
             "-f", mdp, "-c", structure, "-p", topology, "-o", tpr,
             "-po", os.path.splitext(tpr)[0] + "_mdout.mdp",
             "-maxwarn", str(int(self.maxwarn)),
@@ -647,29 +723,31 @@ class GMXCalculator:
 
     def mdrun_command(self, deffnm):
         """
-        ``gmx mdrun -deffnm <deffnm>`` argument list, prefixed with
-        ``mpi_command`` when one is set.
+        ``gmx mdrun -deffnm <deffnm>`` argument list, prefixed with the
+        launcher when one is resolved.
 
-        ``device`` picks ``-nb cpu`` or ``-nb gpu``; ``ntmpi`` / ``ntomp``
-        are passed only when not None.
+        Binary, launcher and thread counts come from
+        :meth:`_resolve_execution`; ``device`` picks ``-nb cpu`` or
+        ``-nb gpu``; ``-ntmpi`` / ``-ntomp`` appear only when resolved.
         """
-        argv = list(self.mpi_command or [])
-        argv += [self.gmx_bin, "mdrun", "-deffnm", deffnm]
+        execution, _ = self._resolve_execution()
+        argv = list(execution["mpi_command"] or [])
+        argv += [execution["gmx_bin"], "mdrun", "-deffnm", deffnm]
         argv += ["-nb", "cpu" if str(self.device).upper() == "CPU" else "gpu"]
-        if self.ntmpi is not None:
-            argv += ["-ntmpi", str(int(self.ntmpi))]
-        if self.ntomp is not None:
-            argv += ["-ntomp", str(int(self.ntomp))]
+        if execution["ntmpi"] is not None:
+            argv += ["-ntmpi", str(int(execution["ntmpi"]))]
+        if execution["ntomp"] is not None:
+            argv += ["-ntomp", str(int(execution["ntomp"]))]
         return argv
 
-    def _check_binary(self):
+    def _check_binary(self, gmx_bin):
         """Raise FileNotFoundError with a hint when ``gmx_bin`` is not on PATH."""
-        if shutil.which(self.gmx_bin) is None:
+        if shutil.which(gmx_bin) is None:
             raise FileNotFoundError(
-                f"GROMACS executable {self.gmx_bin!r} not found on PATH. "
+                f"GROMACS executable {gmx_bin!r} not found on PATH. "
                 "Activate the conda environment that provides it (imc_cpu) or "
                 "source GMXRC.bash of your GROMACS installation, or point "
-                "gmx_bin at the executable."
+                f"gmx_bin (or ${GMX_ENV['gmx_bin']}) at the executable."
             )
 
     def _build_system(self, ffxml):
@@ -790,7 +868,8 @@ class GMXCalculator:
         xtcfile : str
             Path to the ``.xtc`` written by the production run.
         """
-        self._check_binary()
+        execution, sources = self._resolve_execution()
+        self._check_binary(execution["gmx_bin"])
         stem = os.path.splitext(os.path.basename(trajectory))[0]
         stages = [s for s in GMX_STAGES if s != "anneal" or self.anneal_legs]
         os.makedirs(self.workdir, exist_ok=True)
@@ -802,7 +881,11 @@ class GMXCalculator:
                 if logstream is not None:
                     print(message, file=logstream, flush=True)
 
-            log(f"Using {self.ensemble} ensemble with {self.gmx_bin}")
+            log(f"Using {self.ensemble} ensemble")
+            log(
+                "mdrun command: " + " ".join(self.mdrun_command("<deffnm>"))
+                + " (" + ", ".join(f"{k}: {v}" for k, v in sources.items()) + ")"
+            )
             topology, structure = self._export_inputs(ffxml, tmpdir)
             checkpoint = None
             for stage in stages:

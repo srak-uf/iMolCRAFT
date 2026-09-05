@@ -54,6 +54,16 @@ fixes and backwards-compatible additions moves the patch number.
   (no `.trr`). The `.mdp` files of srak-uf/gromacs_tutorial ship as package
   data under `imolcraft/data/mdp/` and are used as templates. `md.py` and
   `MDCalculator` are unchanged.
+  The four execution settings (`gmx_bin`, `mpi_command`, `ntmpi`, `ntomp`)
+  default to `None` and are resolved at run time as argument > environment
+  variable (`IMOLCRAFT_GMX_BIN`, `IMOLCRAFT_GMX_MPI_COMMAND` split like a
+  shell, `IMOLCRAFT_GMX_NTMPI`, `IMOLCRAFT_GMX_NTOMP`; listed in
+  `imolcraft.calculator.gmx.GMX_ENV`) > default (`gmx`, no launcher, threads
+  left to mdrun), so a batch script can point a trainer at `gmx_mpi` under
+  `srun`/`mpirun` without the checkpoint recording the job's launcher. A
+  launcher combined with `ntmpi` is refused (`gmx_mpi` does not take
+  `-ntmpi`). The resolved mdrun command and the source of each value are
+  written to the MD log at the start of a run.
 - `gmx_sample(...)`, a thin wrapper over `GMXCalculator`.
 - pytest marker `gmx` for tests that need the `gmx` binary.
 

@@ -21,6 +21,13 @@ def _floats(value):
     return [float(x) for x in value.split()]
 
 
+@pytest.fixture(autouse=True)
+def _no_gmx_environment(monkeypatch):
+    """Every test starts without the IMOLCRAFT_GMX_* variables, whatever the shell has"""
+    for variable in gmx.GMX_ENV.values():
+        monkeypatch.delenv(variable, raising=False)
+
+
 # -- A. no GROMACS binary needed ---------------------------------------------
 
 
@@ -309,7 +316,7 @@ def test_calculator_records_every_setting_including_the_defaults():
     assert record["temperature_K"] == 350.0
     assert record["prod_steps"] == 1000
     assert set(record) == {"init_structure"} | set(GMXCalculator.SETTINGS)
-    assert record["gmx_bin"] == "gmx"
+    assert record["gmx_bin"] is None
 
 
 def test_calculator_round_trips_through_a_record():
@@ -364,7 +371,7 @@ def test_module_reuses_the_openmm_constants_and_exports_little():
     assert gmx.VALID_ENSEMBLES is md.VALID_ENSEMBLES
     assert gmx.MD_LOG_MODES is md.MD_LOG_MODES
     assert gmx.NONBONDED_METHODS is md.NONBONDED_METHODS
-    assert set(gmx.__all__) == {"GMXCalculator", "gmx_sample", "GMX_STAGES", "GMX_PCOUPL"}
+    assert set(gmx.__all__) == {"GMXCalculator", "gmx_sample", "GMX_STAGES", "GMX_PCOUPL", "GMX_ENV"}
 
 
 def test_grompp_command():
@@ -385,6 +392,7 @@ def test_grompp_command():
 
 
 def test_mdrun_command_defaults():
+    """No arguments, no environment: plain gmx, no launcher, threads left to mdrun"""
     argv = GMXCalculator("start.pdb").mdrun_command("gmxfiles/s_prod")
     assert isinstance(argv, list) and all(isinstance(x, str) for x in argv)
     assert argv[:4] == ["gmx", "mdrun", "-deffnm", "gmxfiles/s_prod"]
@@ -395,14 +403,95 @@ def test_mdrun_command_defaults():
 def test_mdrun_command_with_mpi_threads_and_gpu():
     calc = GMXCalculator(
         "start.pdb", mpi_command=["mpirun", "-np", "4"], gmx_bin="gmx_mpi",
-        ntmpi=2, ntomp=8, device="CUDA",
+        ntomp=8, device="CUDA",
     )
     argv = calc.mdrun_command("s_prod")
     assert argv[:3] == ["mpirun", "-np", "4"]
     assert argv[3:5] == ["gmx_mpi", "mdrun"]
     assert argv[argv.index("-nb") + 1] == "gpu"
-    assert argv[argv.index("-ntmpi") + 1] == "2"
+    assert "-ntmpi" not in argv
     assert argv[argv.index("-ntomp") + 1] == "8"
+
+
+def test_mdrun_command_thread_mpi_without_a_launcher():
+    argv = GMXCalculator("start.pdb", ntmpi=2, ntomp=4).mdrun_command("s_prod")
+    assert argv[:2] == ["gmx", "mdrun"]
+    assert argv[argv.index("-ntmpi") + 1] == "2"
+    assert argv[argv.index("-ntomp") + 1] == "4"
+
+
+def test_execution_resolves_to_defaults_without_environment():
+    values, sources = GMXCalculator("start.pdb")._resolve_execution()
+    assert values == {"gmx_bin": "gmx", "mpi_command": None, "ntmpi": None, "ntomp": None}
+    assert set(sources.values()) == {"default"}
+
+
+def test_execution_resolves_from_the_environment(monkeypatch):
+    monkeypatch.setenv("IMOLCRAFT_GMX_BIN", "gmx_mpi")
+    monkeypatch.setenv("IMOLCRAFT_GMX_MPI_COMMAND", "srun --mpi=pmix -n 8")
+    monkeypatch.setenv("IMOLCRAFT_GMX_NTOMP", "6")
+    calc = GMXCalculator("start.pdb")
+    values, sources = calc._resolve_execution()
+    assert values["gmx_bin"] == "gmx_mpi"
+    assert values["mpi_command"] == ["srun", "--mpi=pmix", "-n", "8"]
+    assert values["ntomp"] == 6 and values["ntmpi"] is None
+    assert sources == {"gmx_bin": "environment", "mpi_command": "environment",
+                       "ntmpi": "default", "ntomp": "environment"}
+
+    argv = calc.mdrun_command("s_prod")
+    assert argv[:6] == ["srun", "--mpi=pmix", "-n", "8", "gmx_mpi", "mdrun"]
+    assert argv[argv.index("-ntomp") + 1] == "6" and "-ntmpi" not in argv
+    # grompp uses the binary from the environment but never the launcher
+    assert calc.grompp_command("a.mdp", "a.gro", "a.top", "a.tpr")[:2] == ["gmx_mpi", "grompp"]
+
+
+def test_execution_argument_beats_the_environment(monkeypatch):
+    monkeypatch.setenv("IMOLCRAFT_GMX_BIN", "gmx_mpi")
+    monkeypatch.setenv("IMOLCRAFT_GMX_NTOMP", "6")
+    values, sources = GMXCalculator("start.pdb", gmx_bin="gmx_d", ntomp=2)._resolve_execution()
+    assert values["gmx_bin"] == "gmx_d" and sources["gmx_bin"] == "argument"
+    assert values["ntomp"] == 2 and sources["ntomp"] == "argument"
+
+
+def test_execution_treats_an_empty_variable_as_unset(monkeypatch):
+    monkeypatch.setenv("IMOLCRAFT_GMX_MPI_COMMAND", "   ")
+    monkeypatch.setenv("IMOLCRAFT_GMX_BIN", "")
+    values, sources = GMXCalculator("start.pdb")._resolve_execution()
+    assert values["mpi_command"] is None and values["gmx_bin"] == "gmx"
+    assert sources["mpi_command"] == "default" and sources["gmx_bin"] == "default"
+
+
+@pytest.mark.parametrize("via_env", [False, True])
+def test_launcher_with_ntmpi_is_refused(monkeypatch, via_env):
+    """A launcher means gmx_mpi, which does not take -ntmpi"""
+    if via_env:
+        monkeypatch.setenv("IMOLCRAFT_GMX_MPI_COMMAND", "mpirun -np 4")
+        monkeypatch.setenv("IMOLCRAFT_GMX_NTMPI", "4")
+        calc = GMXCalculator("start.pdb")
+    else:
+        calc = GMXCalculator("start.pdb", mpi_command=["mpirun", "-np", "4"], ntmpi=4)
+    with pytest.raises(ValueError, match="does not accept -ntmpi"):
+        calc.mdrun_command("s_prod")
+
+
+def test_to_dict_records_arguments_not_the_environment(monkeypatch):
+    """A checkpoint carries the recipe of the state, not the launcher of the job"""
+    monkeypatch.setenv("IMOLCRAFT_GMX_BIN", "gmx_mpi")
+    monkeypatch.setenv("IMOLCRAFT_GMX_MPI_COMMAND", "srun -n 8")
+    monkeypatch.setenv("IMOLCRAFT_GMX_NTOMP", "6")
+    calc = GMXCalculator("start.pdb", ntomp=2)
+    record = calc.to_dict()
+    assert record["gmx_bin"] is None and record["mpi_command"] is None
+    assert record["ntmpi"] is None and record["ntomp"] == 2
+    assert GMXCalculator.from_dict(record).to_dict() == record
+    # ...and the restored calculator still resolves the environment at run time
+    assert GMXCalculator.from_dict(record)._resolve_execution()[0]["gmx_bin"] == "gmx_mpi"
+
+
+def test_missing_binary_message_names_the_variable(monkeypatch):
+    monkeypatch.setenv("IMOLCRAFT_GMX_BIN", "definitely-not-a-gmx")
+    with pytest.raises(FileNotFoundError, match="IMOLCRAFT_GMX_BIN"):
+        GMXCalculator("start.pdb", md_log="none").run("ff.xml", "s_0.xtc")
 
 
 @pytest.mark.parametrize("device, nb", [("CPU", "cpu"), ("cpu", "cpu"),
@@ -649,7 +738,7 @@ def _gromacs_energies(calc, ffxml, workdir):
         check=True, env=env, capture_output=True,
     )
     dump = subprocess.run(
-        [calc.gmx_bin, "dump", "-e", f"{deffnm}.edr"],
+        [calc._resolve_execution()[0]["gmx_bin"], "dump", "-e", f"{deffnm}.edr"],
         check=True, env=env, capture_output=True, text=True,
     ).stdout
     import re
