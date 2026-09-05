@@ -1,6 +1,7 @@
 ; Source: https://github.com/srak-uf/gromacs_tutorial (6e2f68b33d2d5934b3bf5cf8d02d8eec28065dc7)
+; Changed from the source: gen-seed = -1 instead of 12345, so that replicas do not share their initial velocities.
 gen-vel                 = yes
-gen-seed                = 12345
+gen-seed                = -1
 gen-temp                = 300
 comm-mode               = Linear
 nstcomm                 = 50

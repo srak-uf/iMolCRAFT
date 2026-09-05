@@ -281,8 +281,9 @@ class GMXCalculator:
         GPU (``-nb gpu``). Default ``"CPU"``.
     md_log : {'stdout', 'file', 'none'}, optional
         Where the progress messages and the output of the GROMACS commands
-        go. ``'stdout'`` (default) inherits the terminal, ``'file'`` appends
-        everything to ``md_logfile``, ``'none'`` discards it. GROMACS's own
+        go. ``'stdout'`` (default) inherits the terminal, ``'file'`` redirects
+        everything to ``md_logfile`` (overwritten at the start of every run),
+        ``'none'`` discards it. GROMACS's own
         ``.log`` / ``.edr`` files are written to ``workdir`` regardless.
     md_logfile : str, optional
         Log file used when ``md_log='file'``. Default
