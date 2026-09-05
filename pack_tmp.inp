@@ -1,8 +1,0 @@
-seed  2635
-tolerance 2 
-filetype pdb 
-output  packmol_tmp.pdb  
-pbc 10 10 10 
-structure  atoms_0.pdb 
-  number  18 
-end structure 

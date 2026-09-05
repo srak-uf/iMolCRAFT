@@ -106,6 +106,9 @@ mdlogs/
 /system.xml
 /vs_*.pdb
 /ethane/
+/atoms_0.pdb
+/pack_tmp.inp
+/packmol_tmp.pdb
 
 ### Test fixtures ###
 # tests/data/ holds committed input data; exempt it from the generic
