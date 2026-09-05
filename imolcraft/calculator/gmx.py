@@ -206,19 +206,24 @@ def _ewald_options(rcut_nm, ljpme, tol=_EWALD_TOLERANCE):
     its error tolerance ``tol`` (``NonbondedForce.getEwaldErrorTolerance``).
 
     OpenMM sets the Ewald splitting parameter to
-    ``alpha = sqrt(-ln(2 tol)) / rc`` and the mesh size along a box vector of
-    length ``L`` to ``ceil(2 alpha L / (3 tol**0.2))`` (both the Coulomb and,
-    for LJPME, the dispersion mesh). GROMACS instead derives ``beta`` from
+    ``alpha = sqrt(-ln(2 tol)) / rc`` and the Coulomb mesh size along a box
+    vector of length ``L`` to ``ceil(2 alpha L / (3 tol**0.2))``; its LJPME
+    dispersion mesh is half as dense, ``ceil(alpha L / (3 tol**0.2))`` (14^3
+    against 27^3 in the test system). GROMACS instead derives ``beta`` from
     the strength of the shifted direct-space potential at the cutoff:
     ``erfc(beta rc) = ewald-rtol`` for Coulomb and
     ``exp(-x^2) (1 + x^2 + x^4/2) = ewald-rtol-lj`` with ``x = beta rc`` for
     dispersion (GROMACS manual, "Ewald summation" / "Lennard-Jones PME").
     Evaluating those two definitions at OpenMM's ``x = alpha rc`` gives
     tolerances that make ``beta == alpha`` exactly, whatever ``rc``. The
-    grid is matched through ``fourierspacing = L / n = 3 tol**0.2 / (2 alpha)``,
-    which is independent of the box; both codes then round the size up to
-    an FFT-friendly number, so the grids agree up to that rounding.
-    ``pme-order`` is left to the template (6; OpenMM uses 5).
+    grid is matched to OpenMM's Coulomb mesh through
+    ``fourierspacing = L / n = 3 tol**0.2 / (2 alpha)``, which is independent
+    of the box; both codes then round the size up to an FFT-friendly number,
+    so the Coulomb grids agree up to that rounding. GROMACS uses the same
+    grid for the dispersion mesh, so under LJPME its dispersion mesh is finer
+    than OpenMM's; that coarser OpenMM grid is the main source of the LJPME
+    energy residual (4.4e-3 kJ/mol in the test system). ``pme-order`` is
+    left to the template (6; OpenMM uses 5).
     """
     x = math.sqrt(-math.log(2.0 * tol))  # alpha * rc in OpenMM
     options = {
@@ -479,10 +484,13 @@ class GMXCalculator:
         OpenMM's LJPME, the mesh uses geometric C6 mixing while the pairs
         inside the cutoff use the Lorentz-Berthelot parameters of the
         topology (``comb-rule 2`` in the ``.top``), and GROMACS corrects the
-        difference in real space. GROMACS requires ``vdw-modifier =
-        Potential-Shift`` with LJ-PME, which OpenMM does not apply, so the
-        LJ energy differs by a constant per pair within the cutoff (forces
-        are unaffected). The Ewald parameters come from :func:`_ewald_options`.
+        difference in real space. ``vdw-modifier = Potential-Shift`` follows
+        the LJ-PME configuration of the GROMACS reference manual
+        (https://manual.gromacs.org/current/reference-manual/functions/long-range-vdw.html#using-lj-pme)
+        and is also the GROMACS default; OpenMM applies no shift, so the
+        energies differ by a small constant (~1e-4 kJ/mol in the test
+        system) while the forces are unaffected. The Ewald parameters come
+        from :func:`_ewald_options`.
         """
         ljpme = self.nonbondedmethod == "LJPME"
         options = {
@@ -492,8 +500,9 @@ class GMXCalculator:
             "coulomb-modifier": "None",
             "rcoulomb": _num(self.rcut_nm),
             "vdwtype": "PME" if ljpme else "Cut-off",
-            # OpenMM shifts neither potential; GROMACS insists on the shift
-            # for LJ-PME (a constant offset of the energy, not of the forces).
+            # OpenMM shifts neither potential. Potential-Shift for LJ-PME is
+            # the manual's configuration and the GROMACS default: a small
+            # constant offset of the energy, not of the forces.
             "vdw-modifier": "Potential-Shift" if ljpme else "None",
             "rvdw": _num(self.rcut_nm),
             "rlist": _num(self.rcut_nm + 0.2),

@@ -33,8 +33,9 @@ fixes and backwards-compatible additions moves the patch number.
   `fourierspacing` are derived from OpenMM's error tolerance (5e-4) so that
   the splitting parameter is identical; `"LJPME"` writes
   `lj-pme-comb-rule = Geometric` and `vdw-modifier = Potential-Shift`
-  explicitly. A single-point energy test against OpenMM (bonded and
-  Lennard-Jones terms agree to < 1e-3 kJ/mol, Coulomb to 3e-5 relative) is
+  explicitly. A single-point energy test against OpenMM (bonded terms agree
+  to < 1e-3 kJ/mol, Lennard-Jones to < 1e-3 kJ/mol with PME and < 5e-3
+  kJ/mol with LJPME, Coulomb to 3e-5 relative) is
   part of the `gmx`-marked tests. A
   force field with virtual sites is refused with a `ValueError`: the GROMACS
   exporter does not translate OpenMM virtual sites to `[ virtual_sites2 ]`,
