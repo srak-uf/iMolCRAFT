@@ -642,19 +642,16 @@ class ThermodynamicTrainer(BaseTrainer):
             Learning rate(s) for optimizer (default: 0.0001).
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
-        nan_resample_retries : int, optional
-            How many times an epoch whose loss came out NaN or Inf is
-            resampled and recomputed before the step is given up on
-            (default: 1). Zero keeps the parameters perturbed and the epoch
-            recorded as NaN, which is what happened before this existed.
-            Every retry runs the MD of every replica again, so it costs a
-            full resampling.
         param_floors : dict, optional
             Lower bound per ``Force/parameter`` name of the parameters that
             must not go below it. Default is
             :data:`~imolcraft.trainer.base.DEFAULT_PARAM_FLOORS`, which keeps
             the Lennard-Jones sigma clear of zero and epsilon from turning
             negative; ``{}`` bounds nothing.
+        nan_resample_retries : int, optional
+            Rounds of resampling and recomputing an epoch whose loss is NaN
+            or Inf (default 1, 0 disables); each round costs a full
+            resampling.
         restart_xml : str, optional
             Path to the XML file for restarting the training.
         md_log : {'stdout', 'file', 'none'}, optional
