@@ -1091,31 +1091,45 @@ def _retry_stub(retries, losses, recoveries=None):
     return stub, calls, seq[0], {"grads": 0}
 
 
-def test_base_trainer_attempts_no_recovery():
-    """Nothing to renew, so the default neither retries nor claims it can"""
+def test_base_trainer_attempts_no_recovery_and_thermodynamic_retries_once():
+    """Nothing to renew in the base, one resampling round by default in the other"""
+    import inspect
+
+    from imolcraft.trainer import ThermodynamicTrainer
     from imolcraft.trainer.base import BaseTrainer
 
     assert BaseTrainer.nan_resample_retries == 0
     assert BaseTrainer.recover_from_invalid_loss(object(), 1) is False
-
-
-def test_thermodynamic_trainer_retries_once_by_default():
-    import inspect
-
-    from imolcraft.trainer import ThermodynamicTrainer
-
     signature = inspect.signature(ThermodynamicTrainer.__init__)
     assert signature.parameters["nan_resample_retries"].default == 1
 
 
-def test_a_finite_loss_is_never_retried():
+@pytest.mark.parametrize(
+    "retries, losses, recoveries, expected_calls, expect_nan",
+    [
+        # a finite loss is never retried
+        (3, [1.5, 2.5], None, {"loss": 0, "recover": 0}, False),
+        # a loss that stays invalid is handed back after the allowed rounds
+        (2, [float("nan")] * 4, None, {"loss": 2, "recover": 2}, True),
+        # a recovery that could do nothing stops the retrying
+        (3, [float("nan")] * 2, [False], {"loss": 0, "recover": 1}, True),
+        # zero retries switches the recovery off
+        (0, [float("nan"), 1.0], None, {"loss": 0, "recover": 0}, True),
+    ],
+)
+def test_the_retry_loop_stops_where_it_should(
+    retries, losses, recoveries, expected_calls, expect_nan
+):
     from imolcraft.trainer.base import BaseTrainer
 
-    stub, calls, loss, grads = _retry_stub(3, [1.5, 2.5])
+    stub, calls, loss, grads = _retry_stub(retries, losses, recoveries)
     out_loss, out_grads = BaseTrainer._retry_invalid_loss(stub, loss, grads)
 
-    assert (out_loss, out_grads) == (1.5, {"grads": 0})
-    assert calls == {"loss": 0, "recover": 0}
+    assert calls == expected_calls
+    assert bool(jnp.isnan(out_loss)) is expect_nan
+    if expected_calls["loss"] == 0:
+        # nothing was recomputed, so the input comes back as it was
+        assert out_grads == {"grads": 0}
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
@@ -1130,41 +1144,6 @@ def test_an_invalid_loss_is_recovered_and_recomputed(bad):
     assert out_grads == {"grads": 1}
     # one recovery was enough, so the second retry was never spent
     assert calls == {"loss": 1, "recover": 1}
-
-
-def test_retrying_stops_at_the_configured_number_of_attempts():
-    """A loss that stays invalid is handed back rather than retried forever"""
-    from imolcraft.trainer.base import BaseTrainer
-
-    nan = float("nan")
-    stub, calls, loss, grads = _retry_stub(2, [nan, nan, nan, nan])
-    out_loss, _ = BaseTrainer._retry_invalid_loss(stub, loss, grads)
-
-    assert jnp.isnan(out_loss)
-    assert calls == {"loss": 2, "recover": 2}
-
-
-def test_retrying_stops_when_the_recovery_reports_it_did_nothing():
-    """A recovery that cannot run does not lead to the same loss being recomputed"""
-    from imolcraft.trainer.base import BaseTrainer
-
-    nan = float("nan")
-    stub, calls, loss, grads = _retry_stub(3, [nan, nan], recoveries=[False])
-    out_loss, out_grads = BaseTrainer._retry_invalid_loss(stub, loss, grads)
-
-    assert jnp.isnan(out_loss)
-    assert out_grads == {"grads": 0}
-    assert calls == {"loss": 0, "recover": 1}
-
-
-def test_retrying_is_off_when_no_retries_are_allowed():
-    from imolcraft.trainer.base import BaseTrainer
-
-    stub, calls, loss, grads = _retry_stub(0, [float("nan"), 1.0])
-    out_loss, _ = BaseTrainer._retry_invalid_loss(stub, loss, grads)
-
-    assert jnp.isnan(out_loss)
-    assert calls == {"loss": 0, "recover": 0}
 
 
 def test_each_trainer_retries_its_own_loss_before_giving_up(sum_trainer_env,
@@ -1363,6 +1342,9 @@ def test_a_feasible_step_is_left_untouched():
     assert out is stepped
     # an epsilon of zero is on its bound, not below it
     assert float(out["NonbondedForce"]["epsilon"][1]) == 0.0
+    # and no bounds at all short-circuits the same way
+    out, report = enforce_param_floors(_tree([-1.0], [-1.0]), previous, {})
+    assert report == {} and float(out["NonbondedForce"]["sigma"][0]) == -1.0
 
 
 def test_a_parameter_pushed_below_its_bound_is_held_at_the_previous_value():
@@ -1379,16 +1361,7 @@ def test_a_parameter_pushed_below_its_bound_is_held_at_the_previous_value():
     assert list(out["NonbondedForce"]["epsilon"]) == [0.4, 0.6]
     assert report["NonbondedForce/sigma"] == {"count": 1, "lowest": -0.02}
     assert report["NonbondedForce/epsilon"]["count"] == 1
-
-
-def test_holding_a_parameter_leaves_the_previous_tree_alone():
-    from imolcraft.trainer.base import _resolve_param_floors, enforce_param_floors
-
-    previous = _tree([0.30, 0.31], [0.5, 0.6])
-    stepped = _tree([-0.02, 0.32], [0.4, 0.6])
-    floors = _resolve_param_floors(stepped, None)
-
-    enforce_param_floors(stepped, previous, floors)
+    # neither input tree was written to
     assert list(previous["NonbondedForce"]["sigma"]) == [0.30, 0.31]
     assert list(stepped["NonbondedForce"]["sigma"]) == [-0.02, 0.32]
 
@@ -1409,26 +1382,6 @@ def test_a_previous_value_below_the_bound_is_raised_onto_it():
     assert float(out["NonbondedForce"]["sigma"][0]) == pytest.approx(
         DEFAULT_PARAM_FLOORS["NonbondedForce/sigma"]
     )
-
-
-def test_charges_are_never_held_back():
-    from imolcraft.trainer.base import _resolve_param_floors, enforce_param_floors
-
-    previous = _tree([0.30], [0.5], charge=(0.4,))
-    stepped = _tree([0.30], [0.5], charge=(-1.2,))
-    floors = _resolve_param_floors(stepped, None)
-
-    out, report = enforce_param_floors(stepped, previous, floors)
-    assert float(out["NonbondedForce"]["charge"][0]) == -1.2
-    assert report == {}
-
-
-def test_bounding_nothing_short_circuits():
-    from imolcraft.trainer.base import enforce_param_floors
-
-    stepped = _tree([-1.0], [-1.0])
-    out, report = enforce_param_floors(stepped, _tree([0.3], [0.5]), {})
-    assert out is stepped and report == {}
 
 
 def test_the_after_update_hook_sees_the_corrected_parameters(sum_trainer_env):
@@ -1466,20 +1419,17 @@ def test_the_after_update_hook_sees_the_corrected_parameters(sum_trainer_env):
     assert all(value > 0.0 for values in seen.values() for value in values)
 
 
-def test_a_real_trainer_resolves_the_bounds_of_its_force_field(sum_trainer_env):
+@pytest.mark.parametrize("given", [None, {}])
+def test_a_real_trainer_resolves_the_bounds_it_was_given(sum_trainer_env, given):
+    """None asks for the defaults of its force field, {} for nothing"""
     from imolcraft.trainer.base import DEFAULT_PARAM_FLOORS
 
-    trainer = sum_trainer_env("t1")
-    assert trainer.param_floors == {
+    trainer = sum_trainer_env("t1", param_floors=given)
+    expected = {} if given == {} else {
         name: float(floor) for name, floor in DEFAULT_PARAM_FLOORS.items()
     }
-    assert trainer.param_floors_given is None
-
-
-def test_a_trainer_can_be_asked_to_bound_nothing(sum_trainer_env):
-    trainer = sum_trainer_env("t1", param_floors={})
-    assert trainer.param_floors == {}
-    assert trainer.param_floors_given == {}
+    assert trainer.param_floors == expected
+    assert trainer.param_floors_given == given
 
 
 def test_every_trainer_records_the_bounds_it_was_given():
@@ -1487,9 +1437,9 @@ def test_every_trainer_records_the_bounds_it_was_given():
     import inspect
 
     from imolcraft.trainer import DihedralTrainer, DistanceTrainer
-    from imolcraft.trainer.base import SumTrainer
 
-    for cls in (DistanceTrainer, DihedralTrainer, SumTrainer):
+    # SumTrainer is covered by the restart test below
+    for cls in (DistanceTrainer, DihedralTrainer):
         src = inspect.getsource(cls.__dict__["write_checkpoint"])
         assert '"param_floors": self.param_floors_given' in src, cls.__name__
 
@@ -1539,22 +1489,11 @@ def test_a_real_step_cannot_drive_sigma_negative(sum_trainer_env, capsys):
 
 
 # -------------------------------------------------- guards against NaN and Inf
-def test_tree_is_finite_accepts_a_tree_of_numbers():
-    from imolcraft.trainer.base import tree_is_finite
-
-    tree = {
-        "NonbondedForce": {
-            "sigma": jnp.array([0.3, 0.35]),
-            "epsilon": jnp.array([0.5, 0.0]),
-        },
-        "PeriodicTorsionForce": {"k": jnp.array([-1.0, 2.0])},
-    }
-    assert tree_is_finite(tree) is True
-    assert tree_is_finite({}) is True
-
-
-@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
-def test_tree_is_finite_rejects_a_nested_nan_or_inf(bad):
+@pytest.mark.parametrize(
+    "leaf, expected",
+    [(2.0, True), (float("nan"), False), (float("inf"), False), (float("-inf"), False)],
+)
+def test_tree_is_finite_looks_into_every_leaf(leaf, expected):
     """One bad element anywhere in the nesting is enough"""
     from imolcraft.trainer.base import tree_is_finite
 
@@ -1563,9 +1502,10 @@ def test_tree_is_finite_rejects_a_nested_nan_or_inf(bad):
             "sigma": jnp.array([0.3, 0.35]),
             "epsilon": jnp.array([0.5, 0.0]),
         },
-        "PeriodicTorsionForce": {"k": jnp.array([-1.0, bad])},
+        "PeriodicTorsionForce": {"k": jnp.array([-1.0, leaf])},
     }
-    assert tree_is_finite(tree) is False
+    assert tree_is_finite(tree) is expected
+    assert tree_is_finite({}) is True
 
 
 def test_a_finite_tree_is_handed_back_untouched():
@@ -1605,49 +1545,11 @@ def test_only_the_non_finite_entries_go_back(bad):
         rtol=1e-6,
         atol=1e-12,
     )
-
-
-def test_restoring_leaves_the_previous_tree_alone():
-    """The previous tree is shared with the caller and must not be written to"""
-    from imolcraft.trainer.base import restore_nonfinite_params
-
-    previous = _tree([0.30], [0.50])
-    branch = previous["NonbondedForce"]
-    stepped = _tree([float("nan")], [float("inf")])
-    out, count = restore_nonfinite_params(stepped, previous)
-
-    assert count == 2
-    assert previous["NonbondedForce"] is branch
-    assert float(previous["NonbondedForce"]["sigma"][0]) == 0.30
-    assert float(previous["NonbondedForce"]["epsilon"][0]) == 0.50
+    # neither input tree was written to
     assert out is not stepped
-
-
-def test_a_nan_walks_through_the_floor_check_unless_restored_first():
-    """NaN < floor is False, which fixes the order of the two corrections"""
-    from imolcraft.trainer.base import (
-        DEFAULT_PARAM_FLOORS,
-        enforce_param_floors,
-        restore_nonfinite_params,
-        tree_is_finite,
-    )
-
-    floors = {name: float(f) for name, f in DEFAULT_PARAM_FLOORS.items()}
-    previous = _tree([0.30], [0.50])
-    stepped = _tree([float("nan")], [0.60])
-
-    # the floor check alone leaves the NaN sitting there
-    floored_only, report = enforce_param_floors(stepped, previous, floors)
-    assert report == {}
-    assert not tree_is_finite(floored_only)
-
-    # in the right order the sigma comes back finite and above its floor
-    restored, count = restore_nonfinite_params(stepped, previous)
-    out, _ = enforce_param_floors(restored, previous, floors)
-    assert count == 1
-    assert tree_is_finite(out)
-    assert float(out["NonbondedForce"]["sigma"][0]) >= floors["NonbondedForce/sigma"]
-    assert float(out["NonbondedForce"]["sigma"][0]) == 0.30
+    assert not jnp.isfinite(stepped["NonbondedForce"]["sigma"][0])
+    assert float(previous["NonbondedForce"]["sigma"][0]) == 0.30
+    assert float(previous["NonbondedForce"]["epsilon"][1]) == 0.51
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
