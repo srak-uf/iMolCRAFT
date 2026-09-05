@@ -111,6 +111,94 @@ def _nan_recovery_gradients(ffparams):
     )
 
 
+def tree_is_finite(tree) -> bool:
+    """
+    Whether every element of a parameter or gradient tree is finite.
+
+    Parameters
+    ----------
+    tree : dict
+        A pytree of arrays, such as ``ffparams`` or the gradients that go
+        with it. Nesting and leaf shapes are arbitrary.
+
+    Returns
+    -------
+    bool
+        True when no leaf holds a NaN, an Inf or a -Inf. An empty tree is
+        finite.
+
+    Notes
+    -----
+    Reading the answer out as a Python ``bool`` forces the device to
+    synchronise, so this cannot be called from inside a ``jax.jit``. The
+    training step is eager, which is what it is written for.
+    """
+    leaves = jax.tree_util.tree_leaves(tree)
+    return all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
+
+
+def restore_nonfinite_params(ffparams, previous):
+    """
+    Put every non-finite parameter back to the value it held before the step.
+
+    A NaN or an Inf that reaches ``renderXML`` writes a force field OpenMM
+    refuses, ending the run, and it cannot heal on its own: the perturbation
+    of :func:`_nan_recovery_gradients` adds to NaN and stays NaN, and
+    :func:`enforce_param_floors` does not catch it either, since ``NaN <
+    floor`` is ``False``. Only the entries that went bad are replaced, so a
+    step that was good everywhere else is kept.
+
+    Parameters
+    ----------
+    ffparams : dict
+        Parameters as the optimizer step left them.
+    previous : dict
+        The same tree as it was before the step. It is read, never written,
+        and is assumed to be finite, which holds as long as this runs on
+        every step; a force field that started out with a NaN in it cannot be
+        rescued here.
+
+    Returns
+    -------
+    (ffparams, count) : (dict, int)
+        The parameters to carry on with, and how many entries were put back.
+        A count of zero means the input is returned unchanged.
+    """
+    count = 0
+    restored = ffparams
+    for force, parameters in ffparams.items():
+        for name, value in parameters.items():
+            bad = ~jnp.isfinite(value)
+            n_bad = int(jnp.count_nonzero(bad))
+            if n_bad == 0:
+                continue
+            count += n_bad
+            # only the branch that changed is rebuilt: the tree is shared with
+            # the caller's previous parameters, which must keep their values
+            if restored is ffparams:
+                restored = dict(ffparams)
+            if restored[force] is parameters:
+                restored[force] = dict(parameters)
+            restored[force][name] = jnp.where(bad, previous[force][name], value)
+    return restored, count
+
+
+def _report_nonfinite_params(count: int) -> None:
+    """
+    Say that non-finite parameters had to be put back.
+
+    Worth a line every time: it means the gradients or the optimizer state
+    have gone bad, and the run is only carrying on because the previous
+    values were kept.
+    """
+    if count:
+        print(
+            f"Warning: {count} parameter(s) came out NaN or Inf after the "
+            "update and were put back to the values of the previous step. "
+            "Repeated warnings mean the loss or the gradients are diverging."
+        )
+
+
 def _resolve_param_floors(ffparams, param_floors):
     """
     The lower bounds that apply to one parameter tree.
