@@ -651,6 +651,12 @@ class BaseTrainer:
         Calling it again continues from where the previous call stopped, so
         ``fit(10)`` twice runs the same 20 epochs as ``fit(20)`` once.
 
+        ``best_params``, ``best_loss``, ``best_epoch`` and the
+        ``<label>_best.xml`` they are written to follow the finite losses
+        only. A NaN or Inf epoch is still recorded in ``losses``, so the
+        history keeps its meaning, but it is never the best one and never
+        stops a later epoch from becoming it.
+
         Parameters
         ----------
         steps : int
@@ -666,7 +672,13 @@ class BaseTrainer:
             self.before_step()
             self.training_step()
             self.after_step()
-            if len(self.losses) == 0 or self.loss < min(self.losses):
+            # a NaN in the history would make min() return NaN and every
+            # later comparison False, freezing the best force field for good,
+            # so the best is tracked over the finite losses only
+            finite = [loss for loss in self.losses if not _loss_is_invalid(loss)]
+            if not _loss_is_invalid(self.loss) and (
+                len(finite) == 0 or self.loss < min(finite)
+            ):
                 self.best_params = self.ffparams
                 self.best_epoch = self._epoch
                 self.best_loss = self.loss
@@ -679,12 +691,7 @@ class BaseTrainer:
             self._epoch += 1
             end_time = time.time()
             print("Loss: ", self.loss)
-            print(
-                "Best Loss: ",
-                min(self.losses),
-                "at epoch ",
-                self.epochs[self.losses.index(min(self.losses))],
-            )
+            print("Best Loss: ", self.best_loss, "at epoch ", self.best_epoch)
             print(f"Epoch {i_epoch} completed in {end_time - start_time:.2f} seconds.")
             print("----")
 
