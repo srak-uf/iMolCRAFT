@@ -489,16 +489,28 @@ class BaseTrainer:
 
     def training_step(self) -> None:
         """
-        Perform a single training step: compute loss, gradients, and update parameters.
+        Run one training step: loss, gradients and a parameter update.
 
-        A NaN or Inf loss is first retried through
-        :meth:`recover_from_invalid_loss`; one that survives the retrying is
-        given up on and the parameters are perturbed instead.
+        The step guards itself against non-finite numbers at three places, in
+        this order.
 
-        A step that pushed a bounded parameter below its floor -- a negative
-        Lennard-Jones sigma or epsilon -- is corrected before the "after_update"
-        hook runs, so that a hook registered for a hard constraint keeps the
-        last word.
+        1. A NaN or Inf loss is first retried through
+           :meth:`recover_from_invalid_loss`, which resamples the data the
+           loss is measured on. One that survives the retrying is given up on
+           and the parameters are perturbed by
+           :func:`_nan_recovery_gradients` instead.
+        2. Non-finite gradients take the same perturbation route, since a
+           finite loss can still differentiate into NaN or Inf and would
+           otherwise poison the optimizer state.
+        3. After the update, an entry that came out non-finite is put back to
+           the value it held before the step, and only then is a bounded
+           parameter -- a Lennard-Jones sigma or epsilon -- held at its floor.
+           The order matters: ``NaN < floor`` is ``False``, so a NaN would
+           walk straight through the floor check.
+
+        Both corrections run before the "after_update" hook, so that a hook
+        registered for a hard constraint, such as neutralising the charges,
+        keeps the last word.
         """
         self.loss, grads = self.get_loss_gradients()
         _print_memory("grad obtained....")
