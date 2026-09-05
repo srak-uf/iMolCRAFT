@@ -191,41 +191,17 @@ Adaptive resampling is triggered when:
 - Effective sample size drops below user-specified threshold
 - Predefined resampling frequency is reached
 
+A NaN or Inf loss is not given up on right away: every replica is resampled
+with `trainer.ffxml`, the force field the loss was measured with, and the loss
+of the same epoch is computed again, the parameters untouched.
+`nan_resample_retries` (default `1`, `0` disables) sets how many such rounds
+are allowed; each costs a full resampling. A loss still NaN afterwards falls
+back to the old behaviour, a small random perturbation of the parameters and
+the epoch recorded as NaN. Resampling cures a NaN of the sampling only; one
+from the parameters themselves is prevented by the
+[lower bounds](#gradient-and-parameter-modification-functions).
+
 This ensures the method remains stable across the optimization landscape.
-
-#### Recovering from a NaN Loss
-
-The loss is an MBAR-reweighted average over the stored trajectories, so it
-degenerates into NaN or Inf once the parameters have drifted away from the
-state those trajectories were sampled in. Rather than giving the epoch up,
-the trainer resamples and computes the same loss again:
-
-1. every replica is resampled with `trainer.ffxml`, the very force field the
-   NaN was measured with, so the new trajectories belong to the epoch being
-   retried and their validation record is filed under it;
-2. the loss and its gradients are computed again from the fresh frames. The
-   parameters are not touched in between, so a successful retry is the loss
-   of this epoch rather than of one already stepped past.
-
-`nan_resample_retries` (default `1`) says how many such rounds are allowed;
-`0` switches the recovery off. Each round runs the MD of every replica, so it
-costs a full resampling. A loss that is still NaN after the last round is
-given up on the way it always was: the parameters are perturbed by a small
-random nudge, the epoch is recorded as NaN and the run carries on.
-
-Resampling only cures a NaN that comes out of the sampling. OpenMM reseeds
-both the Langevin noise and the initial velocities on every run, so a
-resampling really is an independent trajectory, but it is the force field
-that decides whether the energies are finite. A NaN coming out of the
-parameters themselves is kept from arising in the first place by the lower
-bounds and the non-finite guard described under
-[Lower bounds on the parameters](#gradient-and-parameter-modification-functions):
-a sigma can no longer cross zero, an epsilon can no longer go negative, and a
-parameter that comes out NaN or Inf is put back to the value it held before
-the step. If the loss nevertheless stays NaN through the retries, or comes
-back on a restart from the same checkpoint, look at the parameters rather
-than at the sampling: a smaller `lr`, a tighter `clip` or a tighter
-`param_floors` is what helps there.
 
 #### Validation Properties
 
@@ -614,23 +590,16 @@ This function is called after parameter updates to enforce chemical constraints:
 **Lower bounds on the parameters**
 
 A Lennard-Jones sigma divides a distance and a negative epsilon turns the
-well into a barrier, so neither may be driven through zero by an optimizer
-step. After every step the trainer checks the parameters against a lower
-bound and puts an entry that fell through it back to the value it held before
-the step -- not onto the bound itself, where a switched-off site has no
-gradient left and the optimizer could never climb back out. The correction
-prints what it hit:
+well into a barrier, so after every step the trainer puts a parameter that
+fell below its bound back to the value it held before the step -- not onto
+the bound, where a switched-off site has no gradient to climb back with. Each
+correction prints a line; a run full of them means `lr` or `clip` is too large:
 
 ```
 Warning: NonbondedForce/sigma was pushed below 0.001 in 2 place(s), the lowest to -0.00417. Held at the values of the previous step. Repeated warnings mean lr or clip is too large for this parameter.
 ```
 
-One such line is the optimizer overshooting once. A run full of them means
-`lr` or `clip` is too large for that parameter type, and the fit is being
-held together by the bound rather than by the gradient.
-
-The bounds are the `param_floors` argument, keyed by the same
-`Force/parameter` names as `opt_fftypes`:
+The bounds are the `param_floors` argument, keyed like `opt_fftypes`:
 
 | `param_floors` | Effect |
 | --- | --- |
@@ -642,38 +611,17 @@ The bounds are the `param_floors` argument, keyed by the same
 trainer = ThermodynamicTrainer(..., param_floors={"NonbondedForce/sigma": 0.05})
 ```
 
-A bound naming a force the field does not carry is ignored, so the same
-default is harmless for a trainer fitting torsions alone. Charges are
-deliberately not bounded, being signed, and neither is a torsion force
-constant, which is free to change sign. The correction runs *before* the
-`"after_update"` hook below, so a hook registered for a hard constraint still
-has the last word. Every checkpoint records the bounds it was given, so a
-restart does not fall back to the defaults.
+A bound naming a force the field does not carry is ignored; charges and
+torsion force constants are deliberately not bounded. The correction runs
+*before* the `"after_update"` hook below, which keeps the last word, and every
+checkpoint records the bounds it was given.
 
-**Nothing non-finite leaves a step**
-
-A bound cannot catch a NaN: `NaN < 1e-3` is `False`, so a sigma that came out
-NaN would walk straight through the check above and be written into the force
-field of the next epoch, where OpenMM refuses it and the run ends. The step
-therefore guards itself twice more. Gradients are tested before the optimizer
-sees them, and non-finite ones take the same small random perturbation a NaN
-loss does, so the optimizer state is never poisoned. After the update, and
-*before* the bounds are applied, every parameter that came out NaN or Inf is
-put back to the value it held before the step:
-
-```
-Warning: 3 parameter(s) came out NaN or Inf after the update and were put back to the values of the previous step. Repeated warnings mean the loss or the gradients are diverging.
-```
-
-The order is what makes the pair work, and is fixed by a regression test: the
-non-finite entries are restored first, then the bounds are applied to the
-finite tree that results. Together with
-[Recovering from a NaN Loss](#recovering-from-a-nan-loss) this means the
-force field written at the end of an epoch always has finite parameters and a
-positive sigma, whatever the loss did. The best force field follows the same
-rule: `best_params`, `best_loss` and `<label>_best.xml` are tracked over the
-finite losses only, so a NaN epoch no longer freezes them for the rest of the
-run.
+A bound cannot catch a NaN (`NaN < 1e-3` is `False`), so the step guards
+itself twice more: non-finite gradients take the same random perturbation a
+NaN loss does, and a parameter that comes out NaN or Inf after the update is
+put back to its previous value before the bounds are applied. The best force
+field (`best_params`, `<label>_best.xml`) is tracked over the finite losses
+only, so a NaN epoch does not freeze it.
 
 **`trainer.add_modifyfn(hook_point, function)` - API for registering modifications**
 
