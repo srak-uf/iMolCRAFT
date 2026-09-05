@@ -1098,12 +1098,9 @@ class ThermodynamicTrainer(BaseTrainer):
         Parameters
         ----------
         record_epoch : int, optional
-            Epoch the validation record of these trajectories is filed under.
-            The default, ``self._epoch + 1``, is the one of the routine call
-            from :meth:`after_step`, which resamples with the force field it
-            has just rendered for the next epoch. A recovery resampling
-            passes ``self._epoch``, since it samples the force field of the
-            epoch being retried.
+            Epoch the validation record is filed under. Default
+            ``self._epoch + 1`` (the routine call from :meth:`after_step`);
+            the NaN recovery passes ``self._epoch``.
         """
         self.resample_counter = 0
         registered = {state.name for state in self.estimator.states}
@@ -1140,29 +1137,14 @@ class ThermodynamicTrainer(BaseTrainer):
 
     def recover_from_invalid_loss(self, attempt: int) -> bool:
         """
-        Resample every replica so that the loss of this epoch can be computed
-        again.
-
-        The loss is an MBAR-reweighted average over the stored trajectories.
-        Once the parameters have drifted away from the state those were
-        sampled in, the weights degenerate and the average comes out NaN,
-        which fresh trajectories at the current force field cure. ``ffxml``
-        still names the force field this epoch's loss was measured with, so
-        the new trajectories belong to the epoch being retried and their
-        validation record is filed under it rather than under the next one.
-
-        Note that this cannot help against a NaN coming out of the parameters
-        themselves, such as a sigma that has crossed zero: the MD is reseeded
-        on every run, but it is the force field that decides whether the
-        energies are finite. If the loss stays NaN through the retries, look
-        at the parameters rather than at the sampling.
+        Resample every replica with ``self.ffxml``, the force field this loss
+        was measured with, and file the validation record under the current
+        epoch.
 
         Returns
         -------
         bool
-            True once the resampling has run. False when there is no
-            estimator yet, i.e. :meth:`setup` has not been called, since
-            there is then nothing to resample into.
+            True once the resampling has run; False before :meth:`setup`.
         """
         if getattr(self, "estimator", None) is None:
             return False

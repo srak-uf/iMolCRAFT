@@ -27,15 +27,8 @@ from matplotlib.ticker import MaxNLocator
 #: Relative size of the random nudge applied when the loss turns NaN or Inf.
 _NAN_RECOVERY_SCALE = 0.0001
 
-#: Lower bound of the optimized parameters that cannot go below it without
-#: making the energies meaningless, keyed by the ``Force/parameter`` name that
-#: names them in ``opt_fftypes``. A Lennard-Jones sigma divides a distance, so
-#: it has to stay clear of zero, and a negative epsilon turns the well into a
-#: barrier. Both are in the DMFF units, nanometre and kJ/mol. Which of them
-#: apply is decided per trainer: a bound naming a force the parameter tree does
-#: not carry is simply dropped. Pass ``param_floors`` to move one, to add one
-#: (``{"HarmonicBondForce/k": 0.0}`` is a natural addition) or, as ``{}``, to
-#: bound nothing at all.
+#: Lower bounds per ``Force/parameter`` name (DMFF units: nm, kJ/mol); a
+#: Lennard-Jones sigma must stay clear of zero and epsilon non-negative.
 DEFAULT_PARAM_FLOORS = {
     "NonbondedForce/sigma": 1e-3,
     "NonbondedForce/epsilon": 0.0,
@@ -99,10 +92,8 @@ def _loss_is_invalid(loss) -> bool:
 
 def _nan_recovery_gradients(ffparams):
     """
-    Replace the gradients by a small random nudge.
-
-    Used when the loss came out NaN or Inf: rather than stopping, the
-    parameters are jittered so the next step starts from a different point.
+    Replace the gradients by a small random nudge, so that a step whose loss
+    or gradients came out NaN or Inf moves on from a different point.
     """
     return jax.tree_util.tree_map(
         lambda x: x
@@ -124,25 +115,8 @@ def _guard_gradients(loss, grads, ffparams):
 
 def tree_is_finite(tree) -> bool:
     """
-    Whether every element of a parameter or gradient tree is finite.
-
-    Parameters
-    ----------
-    tree : dict
-        A pytree of arrays, such as ``ffparams`` or the gradients that go
-        with it. Nesting and leaf shapes are arbitrary.
-
-    Returns
-    -------
-    bool
-        True when no leaf holds a NaN, an Inf or a -Inf. An empty tree is
-        finite.
-
-    Notes
-    -----
-    Reading the answer out as a Python ``bool`` forces the device to
-    synchronise, so this cannot be called from inside a ``jax.jit``. The
-    training step is eager, which is what it is written for.
+    Whether every leaf of a pytree is finite. Reads the answer out as a
+    Python bool, so eager only.
     """
     leaves = jax.tree_util.tree_leaves(tree)
     return all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
@@ -150,24 +124,15 @@ def tree_is_finite(tree) -> bool:
 
 def restore_nonfinite_params(ffparams, previous):
     """
-    Put every non-finite parameter back to the value it held before the step.
-
-    A NaN or an Inf that reaches ``renderXML`` writes a force field OpenMM
-    refuses, ending the run, and it cannot heal on its own: the perturbation
-    of :func:`_nan_recovery_gradients` adds to NaN and stays NaN, and
-    :func:`enforce_param_floors` does not catch it either, since ``NaN <
-    floor`` is ``False``. Only the entries that went bad are replaced, so a
-    step that was good everywhere else is kept.
+    Put every NaN or Inf entry of ``ffparams`` back to its value in
+    ``previous``; the finite ones are kept.
 
     Parameters
     ----------
     ffparams : dict
         Parameters as the optimizer step left them.
     previous : dict
-        The same tree as it was before the step. It is read, never written,
-        and is assumed to be finite, which holds as long as this runs on
-        every step; a force field that started out with a NaN in it cannot be
-        rescued here.
+        The same tree before the step; read only.
 
     Returns
     -------
@@ -212,20 +177,16 @@ def enforce_param_floors(ffparams, previous, floors):
     """
     Hold every bounded parameter at or above its lower bound.
 
-    An entry the update has pushed below its bound is put back to the value it
-    held before the update rather than parked on the bound itself: a sigma
-    sitting just above zero is a Lennard-Jones site switched off, and its
-    gradient has vanished with it, so the optimizer could never climb back
-    out, whereas the previous value is one the force field was still physical
-    at. A previous value that is below the bound as well, which is a force
-    field that started out that way, is raised onto it.
+    Held at the previous value rather than at the bound, where a switched-off
+    site has no gradient to climb back with; a previous value below the bound
+    is raised onto it.
 
     Parameters
     ----------
     ffparams : dict
         Parameters as the optimizer step left them.
     previous : dict
-        The same tree as it was before the step.
+        The same tree before the step; read only.
     floors : dict
         Bound per ``Force/parameter`` name, as :func:`_resolve_param_floors`
         returns it.
@@ -505,26 +466,10 @@ class BaseTrainer:
 
     def recover_from_invalid_loss(self, attempt: int) -> bool:
         """
-        Try to put the trainer in a state where the loss can be computed again.
-
-        Called by :meth:`training_step` when the loss came out NaN or Inf,
-        before the step is given up on. The default does nothing: a trainer
-        fitting a fixed set of reference points has the same data on every
-        attempt, so recomputing the loss would only reproduce the NaN.
-        Subclasses whose loss depends on data they can renew override this,
-        see :meth:`ThermodynamicTrainer.recover_from_invalid_loss`.
-
-        Parameters
-        ----------
-        attempt : int
-            Which attempt this is, counting from one. Only for reporting.
-
-        Returns
-        -------
-        bool
-            Whether anything was done. False stops the retrying, so that a
-            trainer with nothing to renew does not recompute the same loss
-            ``nan_resample_retries`` times.
+        Hook called by :meth:`training_step` when the loss is NaN or Inf,
+        before the step is given up on. Return True after renewing whatever
+        the loss is measured on, False when there is nothing to renew (the
+        default), which stops the retrying.
         """
         return False
 
@@ -559,25 +504,10 @@ class BaseTrainer:
         """
         Run one training step: loss, gradients and a parameter update.
 
-        The step guards itself against non-finite numbers at three places, in
-        this order.
-
-        1. A NaN or Inf loss is first retried through
-           :meth:`recover_from_invalid_loss`, which resamples the data the
-           loss is measured on. One that survives the retrying is given up on
-           and the parameters are randomly perturbed instead.
-        2. Non-finite gradients take the same perturbation route, since a
-           finite loss can still differentiate into NaN or Inf and would
-           otherwise poison the optimizer state.
-        3. After the update, an entry that came out non-finite is put back to
-           the value it held before the step, and only then is a bounded
-           parameter -- a Lennard-Jones sigma or epsilon -- held at its floor.
-           The order matters: ``NaN < floor`` is ``False``, so a NaN would
-           walk straight through the floor check.
-
-        Both corrections run before the "after_update" hook, so that a hook
-        registered for a hard constraint, such as neutralising the charges,
-        keeps the last word.
+        A NaN or Inf loss is retried through :meth:`recover_from_invalid_loss`;
+        one that survives, or non-finite gradients, turn the step into a small
+        random perturbation. After the update, non-finite entries are put back
+        and the bounded parameters held at their floors, before "after_update".
         """
         self.loss, grads = self.get_loss_gradients()
         _print_memory("grad obtained....")
@@ -645,11 +575,7 @@ class BaseTrainer:
         Calling it again continues from where the previous call stopped, so
         ``fit(10)`` twice runs the same 20 epochs as ``fit(20)`` once.
 
-        ``best_params``, ``best_loss``, ``best_epoch`` and the
-        ``<label>_best.xml`` they are written to follow the finite losses
-        only. A NaN or Inf epoch is still recorded in ``losses``, so the
-        history keeps its meaning, but it is never the best one and never
-        stops a later epoch from becoming it.
+        Only finite losses can become the best; NaN epochs stay in ``losses``.
 
         Parameters
         ----------
@@ -804,12 +730,8 @@ class SumTrainer(BaseTrainer):
         """
         Perform a single training step: compute loss, gradients, and update parameters.
 
-        A NaN or Inf loss of either half was already retried by
-        :meth:`_substep`, so one arriving here has survived the recovery and
-        the parameters are perturbed instead, as are non-finite gradients.
-        The joint tree is then cleared of non-finite entries and held at its
-        floors before it is split, so that neither half is ever handed a
-        parameter the force field cannot be written with.
+        Each half was already retried by :meth:`_substep`; the joint tree is
+        sanitised before it is split, so neither half is handed a bad value.
         """
         self.loss, grads = self.get_loss_gradients()
         grads = _guard_gradients(self.loss, grads, self.ffparams)
@@ -925,8 +847,6 @@ class SumTrainer(BaseTrainer):
             ),
             lr=dump_dict["lr"] if lr is None else lr,
             clip=dump_dict["clip"] if clip is None else clip,
-            # a checkpoint written before the bounds existed carries no key,
-            # and None is what asks for the defaults anyway
             param_floors=(
                 dump_dict.get("param_floors") if param_floors is None
                 else param_floors
