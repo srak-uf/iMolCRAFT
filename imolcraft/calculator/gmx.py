@@ -194,7 +194,7 @@ def _pressure_options(ensemble, pressure_bar, compressibility_bar,
 def _annealing_options(legs, dt_fs):
     """
     GROMACS native annealing entries for the legs of
-    :func:`~imolcraft.calculator.md._anneal_schedule`.
+    :func:`~imolcraft.calculator._mdcommon._anneal_schedule`.
 
     ``legs`` is a list of ``(T_from, T_to, nsteps)``; the corner times are the
     cumulative step counts converted to ps with ``dt_fs`` (this and ``dt``
