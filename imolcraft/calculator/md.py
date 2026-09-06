@@ -8,23 +8,23 @@ OpenMM (:class:`~imolcraft.calculator.omm.OpenMMCalculator`) or with GROMACS
 setting. It holds the calculator of that software and delegates the run to
 it, so the trainer builds, records and restores one kind of object whichever
 software does the sampling. The public names of
-:mod:`imolcraft.calculator.omm` are re-exported here, so
+:mod:`imolcraft.calculator._mdcommon` are re-exported here, so
 ``from imolcraft.calculator.md import VALID_ENSEMBLES`` keeps working.
 """
-from .gmx import GMXCalculator
-from .omm import (
+from ._mdcommon import (
     MD_LOG_MODES,
     NONBONDED_METHODS,
     VALID_ENSEMBLES,
-    OpenMMCalculator,
     resolve_nonbondedmethod,
 )
+from .gmx import GMXCalculator
+from .omm import OpenMMCalculator
 
 __all__ = [
     "MDCalculator",
     "SOFTWARE_SETTINGS",
     "md_sample",
-    # re-exported from omm so imolcraft.calculator.md keeps its names
+    # re-exported from _mdcommon so imolcraft.calculator.md keeps its names
     "VALID_ENSEMBLES",
     "MD_LOG_MODES",
     "NONBONDED_METHODS",

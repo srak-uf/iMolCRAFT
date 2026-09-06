@@ -42,7 +42,7 @@ import openmm.unit as unit
 
 from imolcraft.io import exporter
 
-from .omm import (
+from ._mdcommon import (
     MD_LOG_MODES,
     NONBONDED_METHODS,
     VALID_ENSEMBLES,
@@ -70,7 +70,7 @@ GMX_ENV = {
 #: ensemble; the annealing stage is skipped when there is no schedule.
 GMX_STAGES = ("min", "anneal", "relax", "prod")
 
-#: Pressure coupling of each ensemble of :data:`~imolcraft.calculator.omm.VALID_ENSEMBLES`:
+#: Pressure coupling of each ensemble of :data:`~imolcraft.calculator._mdcommon.VALID_ENSEMBLES`:
 #: ``pcoupltype`` and the masks that turn the scalar ``pressure_bar`` /
 #: ``compressibility_bar`` into the ``ref-p`` / ``compressibility`` vectors
 #: (xx yy zz xy xz yz). None means no pressure coupling.
@@ -345,7 +345,7 @@ class GMXCalculator:
         the defaults (100000 and 2000000) mean hours of wall time; there is
         no timeout.
     ensemble : str, optional
-        One of :data:`~imolcraft.calculator.omm.VALID_ENSEMBLES`. ``nve``
+        One of :data:`~imolcraft.calculator._mdcommon.VALID_ENSEMBLES`. ``nve``
         switches the thermostat and the barostat off, ``nvt`` the barostat
         only, ``isonpt`` / ``anisonpt`` / ``trinpt`` couple the pressure
         isotropically, per axis, or with the off-diagonal components as
