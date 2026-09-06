@@ -11,6 +11,65 @@ fixes and backwards-compatible additions moves the patch number.
 
 ## [Unreleased]
 
+### Added
+
+- `imolcraft.calculator.GMXCalculator` (new module
+  `imolcraft/calculator/gmx.py`), which samples one thermodynamic state with
+  GROMACS through `gmx grompp` / `gmx mdrun`. It takes the same `.pdb` as
+  `MDCalculator`, names its settings exactly as `MDCalculator` does
+  (`rcut_nm`, `temperature_K`, `dt_fs`, `nstxout`, `relax_steps`,
+  `prod_steps`, `ensemble`, ...), and follows the same `to_dict` /
+  `from_dict` and `run(ffxml, trajectory)` contract, so it is a drop-in
+  replacement. `run` takes the same `.ffxml` as `MDCalculator.run`: the
+  OpenMM `System` is built exactly as `MDCalculator` builds it (same
+  `Modeller.addExtraParticles`, `nonbondedMethod`, `nonbondedCutoff` and
+  dispersion correction), serialized, and turned into the `.top` / `.gro`
+  through `imolcraft.io.exporter(..., fmt="gmx")` in a temporary directory
+  that is removed afterwards, while the `.mdp`, `.tpr`, `.log`, `.edr` and
+  `.cpt` files of every stage are kept under `workdir` (default
+  `gmxfiles/`). Hydrogen constraints are applied from the mdp
+  (`constraints = h-bonds`) rather than baked into the exported System. The
+  Ewald parameters are OpenMM's: `ewald-rtol`, `ewald-rtol-lj` and
+  `fourierspacing` are derived from OpenMM's error tolerance (5e-4) so that
+  the splitting parameter is identical; `"LJPME"` writes
+  `lj-pme-comb-rule = Geometric` and `vdw-modifier = Potential-Shift`
+  explicitly. The pair-list radius is left to GROMACS:
+  `verlet-buffer-tolerance` is written at the GROMACS default
+  (0.005 kJ/mol/ps) and no `rlist` is, so grompp and mdrun set `rlist` and
+  `nstlist` from that tolerance; pass both `verlet-buffer-tolerance = -1`
+  and `rlist` through `mdp_extra` to fix the list manually. A single-point energy test against OpenMM (bonded terms agree
+  to < 1e-3 kJ/mol, Lennard-Jones to < 1e-3 kJ/mol with PME and < 5e-3
+  kJ/mol with LJPME, Coulomb to 3e-5 relative) is
+  part of the `gmx`-marked tests. A
+  force field with virtual sites is refused with a `ValueError`: the GROMACS
+  exporter does not translate OpenMM virtual sites to `[ virtual_sites2 ]`,
+  a known limitation of this first version. `anneal_interval` and `rigidWater`
+  are accepted for compatibility and have no effect. GROMACS-specific
+  settings (`pressure_bar`, `compressibility_bar`,
+  `tau_t_ps`, `tau_p_ps`, `tcoupl`, `pcoupl`, `min_steps`, `emtol`,
+  `gmx_bin`, `mpi_command`, `ntmpi`, `ntomp`, `maxwarn`, `mdp_templates`,
+  `mdp_extra`, `workdir`) are additions; note that `pressure_bar` is a
+  calculator setting here whereas `MDCalculator` leaves the pressure to the
+  trainer. The production trajectory is written as `.xtc` under `xtcfiles/`
+  (no `.trr`). The `.mdp` files of srak-uf/gromacs_tutorial ship as package
+  data under `imolcraft/data/mdp/` and are used as templates. `md.py` and
+  `MDCalculator` are unchanged.
+  The four execution settings (`gmx_bin`, `mpi_command`, `ntmpi`, `ntomp`)
+  default to `None` and are resolved at run time as argument > environment
+  variable (`IMOLCRAFT_GMX_BIN`, `IMOLCRAFT_GMX_MPI_COMMAND`,
+  `IMOLCRAFT_GMX_NTMPI`, `IMOLCRAFT_GMX_NTOMP`; listed in
+  `imolcraft.calculator.gmx.GMX_ENV`) > default (`gmx`, no launcher, threads
+  left to mdrun), so a batch script can point a trainer at `gmx_mpi` under
+  `srun`/`mpirun` without the checkpoint recording the job's launcher. A
+  launcher combined with `ntmpi` is refused (`gmx_mpi` does not take
+  `-ntmpi`). `mpi_command` may be a list or a string; a string (argument or
+  variable) is split like a shell would when the command is built. `ntmpi`
+  and `ntomp` must be positive integers, from either source. The resolved
+  mdrun command and the source of each value are written to the MD log at
+  the start of a run.
+- `gmx_sample(...)`, a thin wrapper over `GMXCalculator`.
+- pytest marker `gmx` for tests that need the `gmx` binary.
+
 ## [0.3.2] — 2026-09-05
 
 ### Added
