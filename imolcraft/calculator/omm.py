@@ -159,28 +159,29 @@ def _ramp_temperature(simulation, integrator, T_from, T_to, nsteps, interval):
         simulation.step(chunk)
 
 
-def _make_barostat(ensemble, T, log=None):
+def _make_barostat(ensemble, T, pressure_bar=1.0, log=None):
     """
     Barostat matching the requested NPT flavour, or None for a fixed volume.
 
     The three NPT ensembles differ in how much of the box shape they let move:
     isotropic scaling, independent axes, or a fully flexible triclinic cell.
-    ``log`` is an optional one-argument callable used to announce the choice.
+    ``T`` is the temperature in kelvin and ``pressure_bar`` the set point in
+    bar, applied to every axis of the anisotropic barostat. ``log`` is an
+    optional one-argument callable used to announce the choice.
     """
     if log is None:
         def log(_message):
             return None
 
+    pressure = pressure_bar * unit.bar
     if ensemble == "isonpt":
         log("Isotropic pressure control")
-        return openmm.MonteCarloBarostat(1.0 * unit.bar, T * unit.kelvin)
+        return openmm.MonteCarloBarostat(pressure, T * unit.kelvin)
     if ensemble == "anisonpt":
         log("Anisotropic pressure control")
-        return openmm.MonteCarloAnisotropicBarostat(
-            [1.0 * unit.bar] * 3, T * unit.kelvin
-        )
+        return openmm.MonteCarloAnisotropicBarostat([pressure] * 3, T * unit.kelvin)
     if ensemble == "trinpt":
-        return openmm.MonteCarloFlexibleBarostat(1.0 * unit.bar, T * unit.kelvin)
+        return openmm.MonteCarloFlexibleBarostat(pressure, T * unit.kelvin)
     return None
 
 
@@ -225,6 +226,9 @@ class OpenMMCalculator:
         Length of the relaxation and of the production run, in MD steps.
     ensemble : str, optional
         One of :data:`VALID_ENSEMBLES`. Default ``"nvt"``.
+    pressure_bar : float, optional
+        Barostat set point in bar for the NPT ensembles; ignored otherwise.
+        Default 1.0.
     nonbondedmethod : str, optional
         ``"PME"`` or ``"LJPME"``. Default ``"PME"``.
     dispcorr : bool, optional
@@ -260,6 +264,7 @@ class OpenMMCalculator:
         "relax_steps": 100000,
         "prod_steps": 2000000,
         "ensemble": "nvt",
+        "pressure_bar": 1.0,
         "nonbondedmethod": "PME",
         "dispcorr": False,
         "useHbondConstraint": True,
@@ -335,7 +340,9 @@ class OpenMMCalculator:
                 force.setUseDispersionCorrection(self.dispcorr)
 
         log(f"Using {self.ensemble} ensemble")
-        barostat = _make_barostat(self.ensemble, self.temperature_K, log=log)
+        barostat = _make_barostat(
+            self.ensemble, self.temperature_K, self.pressure_bar, log=log
+        )
         if barostat is not None:
             system.addForce(barostat)
 
