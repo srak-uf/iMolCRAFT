@@ -3,14 +3,16 @@
 Molecular dynamics sampling with GROMACS.
 
 :class:`GMXCalculator` is the GROMACS counterpart of
-:class:`imolcraft.calculator.md.MDCalculator`. It takes the same ``.pdb``, is
-configured with the same setting names and units, keeps the same
+:class:`imolcraft.calculator.omm.OpenMMCalculator`. It takes the same
+``.pdb``, is configured with the same setting names and units, keeps the same
 :meth:`~GMXCalculator.to_dict` / :meth:`~GMXCalculator.from_dict` contract and
 the same ``run(ffxml, trajectory)`` signature, and returns the same
 ``xtcfiles/<trajectory>`` path, so a trainer can use one in place of the
-other. GROMACS needs a ``.top`` / ``.gro`` pair rather than a ``.ffxml``:
-``run`` builds the OpenMM *System* from the ``.ffxml`` exactly as
-``MDCalculator.run`` does, serializes it, and hands it with the structure to
+other; :class:`imolcraft.calculator.md.MDCalculator` picks between the two
+with its ``software`` setting. GROMACS needs a ``.top`` / ``.gro`` pair rather
+than a ``.ffxml``: ``run`` builds the OpenMM *System* from the ``.ffxml``
+exactly as ``OpenMMCalculator.run`` does, serializes it, and hands it with the
+structure to
 :func:`imolcraft.io.exporter` (``fmt="gmx"``) in a temporary directory.
 
 The run is a sequence of ``gmx grompp`` / ``gmx mdrun`` calls, one per stage
@@ -40,7 +42,7 @@ import openmm.unit as unit
 
 from imolcraft.io import exporter
 
-from .md import (
+from .omm import (
     MD_LOG_MODES,
     NONBONDED_METHODS,
     VALID_ENSEMBLES,
@@ -68,7 +70,7 @@ GMX_ENV = {
 #: ensemble; the annealing stage is skipped when there is no schedule.
 GMX_STAGES = ("min", "anneal", "relax", "prod")
 
-#: Pressure coupling of each ensemble of :data:`~imolcraft.calculator.md.VALID_ENSEMBLES`:
+#: Pressure coupling of each ensemble of :data:`~imolcraft.calculator.omm.VALID_ENSEMBLES`:
 #: ``pcoupltype`` and the masks that turn the scalar ``pressure_bar`` /
 #: ``compressibility_bar`` into the ``ref-p`` / ``compressibility`` vectors
 #: (xx yy zz xy xz yz). None means no pressure coupling.
@@ -295,11 +297,12 @@ class GMXCalculator:
     """
     MD sampling of one thermodynamic state with GROMACS.
 
-    Mirrors :class:`~imolcraft.calculator.md.MDCalculator`: the state is fixed
-    at construction, the force field and the trajectory name are arguments of
-    :meth:`run`, and :meth:`to_dict` / :meth:`from_dict` carry the complete
-    recipe. All 17 settings of ``MDCalculator`` are accepted under the same
-    names and units; the ones below them are GROMACS-specific additions.
+    Mirrors :class:`~imolcraft.calculator.omm.OpenMMCalculator`: the state is
+    fixed at construction, the force field and the trajectory name are
+    arguments of :meth:`run`, and :meth:`to_dict` / :meth:`from_dict` carry the
+    complete recipe. All settings of ``OpenMMCalculator`` are accepted under
+    the same names and units; the ones below them are GROMACS-specific
+    additions.
 
     Units follow GROMACS: nm, ps, K, bar, kJ/mol. ``dt_fs`` (fs) and the
     annealing step counts are the only values converted (to ps).
@@ -308,7 +311,7 @@ class GMXCalculator:
     ----------
     init_structure : str
         Starting structure, a ``.pdb`` with bonds (CONECT records), exactly
-        as ``MDCalculator`` takes it. Both the ``.gro`` and the ``.top`` are
+        as ``OpenMMCalculator`` takes it. Both the ``.gro`` and the ``.top`` are
         derived from it and from the ``.ffxml`` given to :meth:`run`.
     rcut_nm : float, optional
         Nonbonded cutoff in nm, written to ``rvdw`` and ``rcoulomb``. The
@@ -322,14 +325,14 @@ class GMXCalculator:
         production. Default 300.
     anneal_T : list of float, optional
         Temperature corners of the annealing schedule in kelvin, as in
-        ``MDCalculator``. Mapped onto GROMACS native ``annealing = single``
+        ``OpenMMCalculator``. Mapped onto GROMACS native ``annealing = single``
         in a dedicated NVT stage before the relaxation. None or an empty
         list skips the stage.
     anneal_steps : list of int, optional
         MD steps of each leg (one entry fewer than ``anneal_T``); converted
         to ps for ``annealing-time``.
     anneal_interval : int, optional
-        Accepted for compatibility with ``MDCalculator`` and **not used**:
+        Accepted for compatibility with ``OpenMMCalculator`` and **not used**:
         GROMACS interpolates the set point linearly on every step.
     dt_fs : float, optional
         Timestep in fs; written as ``dt`` in ps. Default 1.0.
@@ -342,7 +345,7 @@ class GMXCalculator:
         the defaults (100000 and 2000000) mean hours of wall time; there is
         no timeout.
     ensemble : str, optional
-        One of :data:`~imolcraft.calculator.md.VALID_ENSEMBLES`. ``nve``
+        One of :data:`~imolcraft.calculator.omm.VALID_ENSEMBLES`. ``nve``
         switches the thermostat and the barostat off, ``nvt`` the barostat
         only, ``isonpt`` / ``anisonpt`` / ``trinpt`` couple the pressure
         isotropically, per axis, or with the off-diagonal components as
@@ -357,7 +360,7 @@ class GMXCalculator:
         True. The constraint is applied by GROMACS from the mdp, not baked
         into the exported topology (see :meth:`_build_system`).
     rigidWater : bool, optional
-        Accepted for compatibility with ``MDCalculator`` and **not used**:
+        Accepted for compatibility with ``OpenMMCalculator`` and **not used**:
         the System is exported with flexible water, and GROMACS keeps water
         rigid only through ``[ settles ]`` in the topology, which the
         exporter does not write.
@@ -375,9 +378,8 @@ class GMXCalculator:
         Log file used when ``md_log='file'``. Default
         ``mdlogs/<trajectory stem>.log``.
     pressure_bar : float, optional
-        ``ref-p`` in bar of the NPT ensembles. Default 1.0. Unlike
-        ``MDCalculator``, which fixes 1 bar and leaves the pressure to the
-        trainer, the pressure is a setting of this calculator.
+        ``ref-p`` in bar of the NPT ensembles. Default 1.0, the same setting
+        as ``OpenMMCalculator.pressure_bar``.
     compressibility_bar : float, optional
         Isotropic ``compressibility`` in 1/bar. Default 4.5e-5.
     tau_t_ps, tau_p_ps : float, optional
@@ -436,7 +438,7 @@ class GMXCalculator:
     """
 
     #: Settings of a run and the value used when one is left out. The first
-    #: block is MDCalculator.SETTINGS verbatim; the rest is GROMACS-specific.
+    #: block is OpenMMCalculator.SETTINGS verbatim; the rest is GROMACS-specific.
     SETTINGS = {
         "rcut_nm": 1.2,
         "temperature_K": 300.0,
@@ -513,7 +515,7 @@ class GMXCalculator:
         The complete recipe of this run, ready to be written to a checkpoint.
 
         Every setting is listed, defaults included, as
-        :meth:`MDCalculator.to_dict` does.
+        :meth:`OpenMMCalculator.to_dict` does.
         """
         record = {"init_structure": self.init_structure}
         record.update({name: getattr(self, name) for name in self.SETTINGS})
@@ -777,8 +779,8 @@ class GMXCalculator:
         """
         Topology, positions and OpenMM System of this structure under ``ffxml``.
 
-        Kept step for step in line with ``MDCalculator._build_simulation``
-        (md.py, which is deliberately left untouched): same ``PDBFile`` ->
+        Kept step for step in line with ``OpenMMCalculator._build_simulation``
+        (omm.py): same ``PDBFile`` ->
         ``ForceField`` -> ``Modeller.addExtraParticles`` -> ``createSystem``
         with the same ``nonbondedMethod`` / ``nonbondedCutoff`` and the same
         ``setUseDispersionCorrection``, so GROMACS samples the model OpenMM
@@ -829,7 +831,7 @@ class GMXCalculator:
                 f"{ffxml} places {n_vsites} virtual sites; the GROMACS exporter "
                 "does not translate OpenMM virtual sites to [ virtual_sites2 ], "
                 "so force fields with virtual sites are not supported yet. Use "
-                "MDCalculator for this force field."
+                "software='openmm' for this force field."
             )
         pdbfile = os.path.join(tmpdir, "system.pdb")
         with open(pdbfile, "w") as handle:
@@ -873,13 +875,13 @@ class GMXCalculator:
         The run minimizes, walks the annealing schedule if there is one,
         relaxes at ``T`` and finally produces the trajectory, each as a
         ``grompp`` / ``mdrun`` pair whose files are kept in ``workdir``.
-        Same arguments and return value as :meth:`MDCalculator.run`.
+        Same arguments and return value as :meth:`OpenMMCalculator.run`.
 
         Parameters
         ----------
         ffxml : str
             OpenMM force field (``.ffxml``) to sample with, as
-            :meth:`MDCalculator.run` takes it. The ``.top`` / ``.gro``
+            :meth:`OpenMMCalculator.run` takes it. The ``.top`` / ``.gro``
             GROMACS needs are generated from it and ``init_structure`` in a
             temporary directory that is removed when the run ends. A force
             field with virtual sites is refused (see :meth:`_export_inputs`).
