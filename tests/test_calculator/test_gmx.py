@@ -79,11 +79,11 @@ def test_cutoff_is_written_in_nm_without_conversion(rcut):
 
 
 def test_pair_list_is_left_to_gromacs():
-    """Neither rlist nor verlet-buffer-tolerance is written; the template's are dropped"""
+    """The GROMACS default tolerance is written and no rlist, so grompp sets it"""
     for stage in gmx.GMX_STAGES:
         options = GMXCalculator("start.pdb").mdp_options(stage)
         assert "rlist" not in options
-        assert "verlet-buffer-tolerance" not in options
+        assert float(options["verlet-buffer-tolerance"]) == pytest.approx(0.005)
         assert "nstlist" in options
     # ...unless the user pins the pair list explicitly through mdp_extra
     pinned = GMXCalculator(

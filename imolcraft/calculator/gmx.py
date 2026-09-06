@@ -99,14 +99,7 @@ _EWALD_TOLERANCE = openmm.NonbondedForce().getEwaldErrorTolerance()
 #: mdp keys of the pressure coupling that must not leak out of a template
 #: into a run without a barostat (nvt.mdp carries ``ref-p = 5.0``).
 _PCOUPL_KEYS = ("pcoupltype", "tau-p", "compressibility", "ref-p", "nstpcouple")
-
-#: Template keys removed from every stage. The templates fix the pair list
-#: with ``verlet-buffer-tolerance = -1`` and ``rlist = 1.4``; the calculator
-#: writes neither and leaves the pair-list radius to GROMACS (default
-#: tolerance 0.005 kJ/mol/ps, from which grompp and mdrun set ``rlist`` and
-#: ``nstlist``). ``mdp_extra`` can put both keys back for a fixed list.
-_TEMPLATE_KEYS_DROPPED = ("verlet-buffer-tolerance", "rlist")
-
+_VERLET_BUFFER_TOLERANCE = 0.005
 
 def _mdp_key(key):
     """
@@ -319,9 +312,9 @@ class GMXCalculator:
         derived from it and from the ``.ffxml`` given to :meth:`run`.
     rcut_nm : float, optional
         Nonbonded cutoff in nm, written to ``rvdw`` and ``rcoulomb``. The
-        pair-list radius is left to GROMACS (``verlet-buffer-tolerance`` at
-        its default, from which grompp and mdrun set ``rlist`` and
-        ``nstlist``); to fix it manually pass both
+        pair-list radius is left to GROMACS: ``verlet-buffer-tolerance`` is
+        written at its GROMACS default (0.005 kJ/mol/ps), from which grompp
+        and mdrun set ``rlist`` and ``nstlist``; to fix it manually pass both
         ``verlet-buffer-tolerance = -1`` and ``rlist`` via ``mdp_extra``.
         Default 1.2.
     temperature_K : float, optional
@@ -431,8 +424,9 @@ class GMXCalculator:
     mdp_extra : dict, optional
         Raw ``{mdp key: value}`` entries applied last to every stage, on top
         of everything the settings write. Default None. The pair-list radius
-        is left to GROMACS (``verlet-buffer-tolerance``); to fix it manually
-        pass both ``verlet-buffer-tolerance = -1`` and ``rlist`` here.
+        is left to GROMACS (``verlet-buffer-tolerance = 0.005``); to fix it
+        manually pass both ``verlet-buffer-tolerance = -1`` and ``rlist``
+        here.
     workdir : str, optional
         Directory receiving the ``.mdp``, ``.tpr``, ``.log``, ``.edr``,
         ``.cpt`` and intermediate ``.gro`` files, one set per stage named
@@ -573,8 +567,9 @@ class GMXCalculator:
             # constant offset of the energy, not of the forces.
             "vdw-modifier": "Potential-Shift" if ljpme else "None",
             "rvdw": _num(self.rcut_nm),
-            # No rlist / verlet-buffer-tolerance: the template's values are
-            # dropped (_TEMPLATE_KEYS_DROPPED) and GROMACS sets the pair list.
+            # The GROMACS default tolerance, written out for the record; no
+            # rlist, GROMACS derives it from the tolerance.
+            "verlet-buffer-tolerance": _num(_VERLET_BUFFER_TOLERANCE),
             "DispCorr": "EnerPres" if self.dispcorr else "no",
             "constraints": "h-bonds" if self.useHbondConstraint else "none",
             # Trajectories are xtc only; trr output off in every stage.
@@ -635,11 +630,10 @@ class GMXCalculator:
         """
         The complete mdp of one stage as an ordered ``{key: str}`` dict.
 
-        The template of the stage is read, the keys the calculator does not
-        carry over (:data:`_TEMPLATE_KEYS_DROPPED`) are removed, the entries
-        derived from the settings are written over it, the keys that must not
-        survive (the barostat of a template in a run without one) are
-        removed, and ``mdp_extra`` is applied last. Pure: nothing is written.
+        The template of the stage is read, the entries derived from the
+        settings are written over it, the keys that must not survive (the
+        barostat of a template in a run without one) are removed, and
+        ``mdp_extra`` is applied last. Pure: nothing is written.
 
         Parameters
         ----------
@@ -649,8 +643,6 @@ class GMXCalculator:
         if stage not in GMX_STAGES:
             raise ValueError(f"stage must be one of {GMX_STAGES}, got {stage!r}")
         options = _read_mdp(self._template(stage))
-        for key in _TEMPLATE_KEYS_DROPPED:
-            options.pop(key, None)
         options.update(self._common_options())
         if stage == "min":
             options.update({
