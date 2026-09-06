@@ -1769,3 +1769,173 @@ def test_a_history_of_nothing_but_nan_leaves_the_best_unset():
     empty = _best_stub([], [])
     BaseTrainer._restore_best(empty, {})
     assert empty.best_loss is None and empty.best_epoch is None
+
+
+# ------------------------------------------------ MD software of a sampling block
+SUPERCELL_PDB = os.path.join(TESTS, "data", "supercell_bonds.pdb")
+NOVSITE_FFXML = os.path.join(TESTS, "data", "supercell_bonds_novsite.xml")
+VSITE_FFXML = os.path.join(TESTS, "data", "vsite_average2.xml")
+
+
+def _sampling_block(**overrides):
+    """A sampling block as an existing YAML writes it, anneal_interval: 100 included"""
+    block = {
+        "init_structure": SUPERCELL_PDB,
+        "ensemble": "nvt",
+        "rcut_nm": 1.2,
+        "temperature_K": 300.0,
+        "nonbondedmethod": "PME",
+        "neff": 2,
+        "relax_steps": 10,
+        "prod_steps": 10,
+        "nstxout": 5,
+        "anneal_interval": 100,
+        "pressure_bar": 1.0,
+    }
+    block.update(overrides)
+    return block
+
+
+@pytest.fixture
+def thermo_trainer_env(tmp_path, monkeypatch):
+    """Build a ThermodynamicTrainer without running setup (no MD, no MBAR)"""
+    pytest.importorskip("dmff")
+    monkeypatch.chdir(tmp_path)
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    def make(sampling_params, ffxml=NOVSITE_FFXML, **kwargs):
+        options = {
+            "ffxml_list": [ffxml],
+            "nums_ffxml": [1],
+            "pdbfile": SUPERCELL_PDB,
+            "loss_fn": None,
+            "sampling_params": sampling_params,
+            "target_params": [
+                {"density_gcm3": {"weight": 1.0, "gt": 0.4}}
+            ] * len(sampling_params),
+            "opt_fftypes": ["NonbondedForce/charge"],
+            "label": "engine",
+            "md_log": "none",
+        }
+        options.update(kwargs)
+        return ThermodynamicTrainer(**options)
+
+    return make
+
+
+def test_a_sampling_block_runs_with_openmm_unless_told_otherwise(thermo_trainer_env):
+    from imolcraft.calculator import OpenMMCalculator
+
+    trainer = thermo_trainer_env([_sampling_block()])
+    assert trainer.md_calculators[0].software == "openmm"
+    assert type(trainer.md_calculators[0].backend) is OpenMMCalculator
+    assert trainer.md_calculators[0].md_log == "none"
+
+
+def test_software_gromacs_in_a_sampling_block_selects_the_gmx_backend(
+    thermo_trainer_env,
+):
+    """F9: the key reaches the calculator with pressure_bar and the GROMACS settings"""
+    from imolcraft.calculator import GMXCalculator
+
+    trainer = thermo_trainer_env(
+        [_sampling_block(software="gromacs", ensemble="isonpt", pressure_bar=3.0,
+                         ntomp=2, workdir="gmxrun")],
+        device="CUDA", md_log="file", md_logfile="md.log",
+    )
+    calculator = trainer.md_calculators[0]
+    assert calculator.software == "gromacs"
+    assert type(calculator.backend) is GMXCalculator
+    assert calculator.backend.pressure_bar == 3.0
+    assert calculator.backend.ntomp == 2 and calculator.backend.workdir == "gmxrun"
+    # the run-time settings of the trainer win over the block, on the backend
+    assert calculator.backend.device == "CUDA"
+    assert calculator.backend.md_log == "file"
+    assert calculator.backend.md_logfile == "md.log"
+    # the same key feeds the PV term of the reweighting
+    assert trainer.P_bar == [3.0]
+
+
+def test_each_replica_picks_its_own_software(thermo_trainer_env):
+    from imolcraft.calculator import GMXCalculator, OpenMMCalculator
+
+    trainer = thermo_trainer_env(
+        [_sampling_block(), _sampling_block(software="gromacs")]
+    )
+    assert [c.software for c in trainer.md_calculators] == ["openmm", "gromacs"]
+    assert type(trainer.md_calculators[0].backend) is OpenMMCalculator
+    assert type(trainer.md_calculators[1].backend) is GMXCalculator
+
+
+def test_a_virtual_site_force_field_is_refused_under_gromacs(thermo_trainer_env):
+    """F10: the GROMACS exporter has no virtual sites, so the trainer says so at once"""
+    with pytest.raises(ValueError) as excinfo:
+        thermo_trainer_env([_sampling_block(software="gromacs")], ffxml=VSITE_FFXML)
+    message = str(excinfo.value)
+    assert "virtual sites" in message and "software='openmm'" in message
+    assert "replica 0" in message
+
+    # the same force field is fine with the default software
+    trainer = thermo_trainer_env([_sampling_block()], ffxml=VSITE_FFXML)
+    assert trainer.num_vsites == 2
+    assert trainer.md_calculators[0].software == "openmm"
+
+
+def test_the_checkpoint_records_the_software_and_restores_the_backend(
+    thermo_trainer_env, tmp_path
+):
+    """The md_params carry software, so a restart builds the same backends"""
+    import pickle
+
+    from imolcraft.calculator import GMXCalculator, OpenMMCalculator
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    trainer = thermo_trainer_env(
+        [_sampling_block(), _sampling_block(software="gromacs", ntomp=2)]
+    )
+    trainer.opt_state = None  # set by setup, which is not run here
+    trainer.write_checkpoint(1)
+
+    ckpt = tmp_path / "train_state_engine.pkl"
+    with open(ckpt, "rb") as handle:
+        dump = pickle.load(handle)
+    assert [r["software"] for r in dump["md_params"]] == ["openmm", "gromacs"]
+    assert dump["md_params"][0]["pressure_bar"] == 1.0
+    assert "ntomp" not in dump["md_params"][0] and dump["md_params"][1]["ntomp"] == 2
+
+    restored = ThermodynamicTrainer.from_checkpoint(
+        str(ckpt), loss_fn=lambda *args: 0.0, setup=False, md_log="stdout"
+    )
+    assert type(restored.md_calculators[0].backend) is OpenMMCalculator
+    assert type(restored.md_calculators[1].backend) is GMXCalculator
+    assert restored.md_calculators[1].backend.ntomp == 2
+    # the override given to from_checkpoint reached the backends
+    assert all(c.backend.md_log == "stdout" for c in restored.md_calculators)
+
+
+def test_a_checkpoint_written_before_the_choice_restores_as_openmm(
+    thermo_trainer_env, tmp_path
+):
+    """C4: md_params without software (nor pressure_bar) still read"""
+    import pickle
+
+    from imolcraft.calculator import OpenMMCalculator
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    trainer = thermo_trainer_env([_sampling_block()])
+    trainer.opt_state = None
+    trainer.write_checkpoint(1)
+    ckpt = tmp_path / "train_state_engine.pkl"
+    with open(ckpt, "rb") as handle:
+        dump = pickle.load(handle)
+    for record in dump["md_params"]:
+        del record["software"], record["pressure_bar"]
+    with open(ckpt, "wb") as handle:
+        pickle.dump(dump, handle)
+
+    restored = ThermodynamicTrainer.from_checkpoint(
+        str(ckpt), loss_fn=lambda *args: 0.0, setup=False
+    )
+    assert restored.md_calculators[0].software == "openmm"
+    assert type(restored.md_calculators[0].backend) is OpenMMCalculator
+    assert restored.md_calculators[0].backend.pressure_bar == 1.0
