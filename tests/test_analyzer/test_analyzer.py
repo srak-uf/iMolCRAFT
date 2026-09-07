@@ -29,12 +29,12 @@ def universe():
 
 @pytest.mark.parametrize("first", [0.0, 0.3, 1.0, 5.0, 477.46, np.nan])
 def test_zero_first_bin_always_zeroes(first):
-    """r = 0 の RDF は値によらず常に 0 になる"""
+    """The RDF at r = 0 is always 0, whatever the value"""
     g = np.array([first, 1.0, 2.0])
     out = _zero_first_bin(g)
     assert out[0] == 0.0
     assert out is g  # in-place
-    assert np.array_equal(out[1:], [1.0, 2.0])  # 他のビンは触らない
+    assert np.array_equal(out[1:], [1.0, 2.0])  # the other bins are untouched
 
 
 def test_calc_rdf_first_bin_is_zero(universe):
@@ -44,7 +44,7 @@ def test_calc_rdf_first_bin_is_zero(universe):
 
 
 def test_calc_rdf_frame_returns_independent_rows(universe):
-    """フレームごとの RDF が同じ配列を共有していない"""
+    """The per-frame RDFs do not share the same array"""
     frames = calc_rdf_frame(universe, "C", "H", rmax=6.0, dr=0.05)
     assert frames.shape[0] == len(universe.trajectory)
     assert np.all(frames[:, 0] == 0.0)
@@ -87,12 +87,12 @@ def test_calc_cellpar_frame_rejects_unknown_target(universe):
 
 
 def test_package_exports_only_public_api():
-    """imolcraft.analyzer が import したモジュールを露出しないこと"""
+    """imolcraft.analyzer must not expose the modules it imports"""
     import imolcraft.analyzer as pkg
 
     exported = {n for n in vars(pkg) if not n.startswith("_")}
     assert exported == {
-        "analyzer",  # サブモジュール自身
+        "analyzer",  # the submodule itself
         "CELLPAR_INDICES",
         "calc_adf",
         "calc_adf_frame",
@@ -107,7 +107,7 @@ def test_package_exports_only_public_api():
 
 
 def test_fit_msd_line_recovers_a_straight_line():
-    """直線を与えれば窓の取り方によらず傾きと切片がそのまま返る"""
+    """For a straight line the slope and intercept come back as is, for any window"""
     t = np.arange(100) * 0.5
     msd = 3.0 * t + 7.0
     assert np.allclose(_fit_msd_line(t, msd, (0.0, 0.5)), (3.0, 7.0))
@@ -115,10 +115,10 @@ def test_fit_msd_line_recovers_a_straight_line():
 
 
 def test_fit_msd_line_uses_only_the_requested_window():
-    """窓の外がどれだけ暴れても傾きに効かない"""
+    """However wild it gets outside the window, the slope is unaffected"""
     t = np.arange(100) * 0.5
     msd = 3.0 * t
-    msd[50:] = 1e6  # 後半をノイズで潰す
+    msd[50:] = 1e6  # swamp the second half with noise
     assert np.isclose(_fit_msd_line(t, msd, (0.0, 0.5))[0], 3.0)
 
 
@@ -129,7 +129,7 @@ def test_fit_msd_line_rejects_invalid_range(fit_range):
 
 
 def test_fit_msd_line_rejects_too_few_points():
-    """点が 2 つ未満しか入らない窓は直線を引けない"""
+    """A window holding fewer than two points cannot be fitted with a line"""
     with pytest.raises(ValueError, match="at least 2"):
         _fit_msd_line(np.arange(10.0), np.arange(10.0), (0.0, 0.1))
 
@@ -139,19 +139,19 @@ def test_calc_msd_axis_and_zero_lag(universe):
     n_frames = len(universe.trajectory)
     assert lagtime.shape == msd.shape == (n_frames,)
     assert lagtime[0] == 0.0
-    assert np.isclose(msd[0], 0.0)  # ラグ 0 の変位は 0
+    assert np.isclose(msd[0], 0.0)  # the displacement at lag 0 is 0
     assert np.allclose(np.diff(lagtime), universe.trajectory.dt)
 
 
 def test_calc_msd_step_stretches_the_time_axis(universe):
-    """step でフレームを間引くと 1 点あたりの時間間隔が step 倍になる"""
+    """Thinning frames with step multiplies the time per point by step"""
     lagtime, _ = calc_msd(universe, select="element C", step=2)
     assert np.allclose(np.diff(lagtime), universe.trajectory.dt * 2)
 
 
 def test_calc_msd_applies_nojump_once(universe):
     calc_msd(universe, select="element C")
-    calc_msd(universe, select="element C")  # 2 回目でも例外にならない
+    calc_msd(universe, select="element C")  # no exception on the second call either
     assert len(universe.trajectory.transformations) == 1
 
 
@@ -166,15 +166,15 @@ def test_calc_msd_rejects_unknown_type(universe):
 
 
 def test_calc_dself_matches_the_einstein_relation(universe):
-    """calc_dself が MSD の傾き / (2d) に単位換算を掛けた値と一致する"""
+    """calc_dself matches the MSD slope / (2d) times the unit conversion"""
     lagtime, msd = calc_msd(universe, select="element C")
-    slope, _ = _fit_msd_line(lagtime, msd, (0.1, 0.5))  # 既定のフィット範囲
-    expected = slope / 6 * 1e-4  # xyz なので 2d = 6, A^2/ps -> cm^2/s
+    slope, _ = _fit_msd_line(lagtime, msd, (0.1, 0.5))  # the default fit range
+    expected = slope / 6 * 1e-4  # xyz gives 2d = 6, A^2/ps -> cm^2/s
     assert np.isclose(calc_dself(universe, select="element C"), expected)
 
 
 def test_calc_dself_can_return_the_msd_it_fitted(universe):
-    """return_msd で、フィットした MSD 曲線をそのまま受け取れる"""
+    """return_msd hands back the fitted MSD curve itself"""
     expected_lagtime, expected_msd = calc_msd(universe, select="element C")
     dself, lagtime, msd = calc_dself(
         universe, select="element C", return_msd=True

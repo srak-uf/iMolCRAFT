@@ -49,7 +49,7 @@ def test_pdb2packmol(fixed_property, priority_property):
                       (-1.041, 2.244, -0.874),
                       (-2.467, 1.740, 0.000)])
     ase.io.write("CH4.pdb", atoms)
-    # outfileをtempfileで拡張子.xyzにする
+    # Make outfile a tempfile with the .xyz extension
     with tempfile.NamedTemporaryFile(suffix=".xyz", delete=False) as tmpfile:
         outfile = tmpfile.name
         pdb2packmol(
@@ -101,6 +101,6 @@ class TestAsemol_Wrapper:
         atoms_shift.wrap()
         self.aw.atoms = atoms_shift
         unwrap_atoms = self.aw.unwrap_molecules()
-        # unwrap_atoms.positionsの一部がセルの外に出ていることを確認
+        # Check that part of unwrap_atoms.positions lies outside the cell
         assert np.any(unwrap_atoms.positions < 0)
         assert np.any(unwrap_atoms.positions > 10)

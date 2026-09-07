@@ -1,4 +1,4 @@
-"""外部プログラム（g16 / psi4 / antechamber）を必要としない部分の回帰テスト"""
+"""Regression tests for parts needing no external program (g16 / psi4 / antechamber)"""
 import copy
 import os
 
@@ -53,7 +53,7 @@ def test_get_rotatable_dihedral(smiles, n_dihedrals):
     assert len(elements) == len(dihedrals)
     for dihedral, elems in zip(dihedrals, elements):
         assert len(dihedral) == 4
-        assert len(set(dihedral)) == 4  # 4 原子はすべて異なる
+        assert len(set(dihedral)) == 4  # the four atoms are all different
         assert elems == [mol.GetAtomWithIdx(i).GetSymbol() for i in dihedral]
 
 
@@ -68,10 +68,10 @@ def test_rotate_dihedral_reaches_target(target):
 
 
 def test_rotate_dihedral_keeps_bond_lengths():
-    """二面角の回転で結合長は変わらない"""
+    """Bond lengths do not change under a dihedral rotation"""
     before = ETHANE.get_all_distances()
     rotated = rotate_dihedral(ETHANE.copy(), [1, 0, 4, 5], 90.0)
-    # 回転軸まわりの剛体回転なので C-C とメチル内の距離は保たれる
+    # A rigid rotation about the axis preserves C-C and the intra-methyl distances
     assert rotated.get_distance(0, 4) == pytest.approx(before[0, 4], abs=1e-9)
     assert rotated.get_distance(0, 1) == pytest.approx(before[0, 1], abs=1e-9)
     assert rotated.get_distance(4, 5) == pytest.approx(before[4, 5], abs=1e-9)
@@ -86,11 +86,11 @@ def test_change_distance_reaches_target(pair, target):
 
 
 def test_change_distance_translates_only_one_fragment():
-    """切った結合の反対側の断片は動かない"""
+    """The fragment on the other side of the cut bond does not move"""
     moved = change_distance(ETHANE.copy(), [0, 4], 3.0)
-    # 原子 0 側のメチル (0,1,2,3) は静止
+    # The methyl on the atom 0 side (0,1,2,3) stays put
     assert np.allclose(moved.positions[:4], ETHANE.positions[:4])
-    # 原子 4 側のメチル (4..7) は剛体移動
+    # The methyl on the atom 4 side (4..7) moves rigidly
     shift = moved.positions[4] - ETHANE.positions[4]
     assert np.allclose(moved.positions[4:] - ETHANE.positions[4:], shift)
 
@@ -101,8 +101,8 @@ def test_load_g16scan(tmp_path):
 
     angle, energy, atoms_list = load_g16scan(str(log))
     assert len(angle) == len(energy) == len(atoms_list)
-    assert np.all(np.diff(angle) > 0)          # 昇順にソートされる
-    assert energy.min() == pytest.approx(0.0)  # 最小値が 0 になるようシフト
+    assert np.all(np.diff(angle) > 0)          # sorted in ascending order
+    assert energy.min() == pytest.approx(0.0)  # shifted so the minimum is 0
     assert np.all(energy >= 0)
     for a in atoms_list:
         assert len(a) == len(atoms_list[0])
@@ -113,7 +113,7 @@ def test_load_g16scan(tmp_path):
     [(ETHANE, "optimize("), (Atoms("Li", positions=[[0, 0, 0]]), "energy(")],
 )
 def test_psi4_input_generation(atoms, task, tmp_path):
-    """多原子は構造最適化、単原子は一点計算になる"""
+    """Polyatomics get a geometry optimization, monatomics a single point"""
     out = tmp_path / "in.psi4in"
     Psi4GeoOptimizer(
         atoms, "wb97x-d", "6-31g", charge=-1, multiplicity=1, label="x"
@@ -128,7 +128,7 @@ def test_psi4_input_generation(atoms, task, tmp_path):
 
 
 def test_am1bcc_declares_pdb_input_format(tmp_path, monkeypatch):
-    """入力は PDB で書き出しているので antechamber にも -fi pdb と伝える"""
+    """The input is written as PDB, so antechamber is told -fi pdb as well"""
     from imolcraft.calculator import charge as charge_module
 
     calc = charge_module.ChargeCalculator(
@@ -139,7 +139,7 @@ def test_am1bcc_declares_pdb_input_format(tmp_path, monkeypatch):
 
     def fake_getoutput(cmd):
         captured["cmd"] = cmd
-        # antechamber の代わりに最低限の mol2 を書き出す
+        # Write a minimal mol2 instead of running antechamber
         out = cmd.split("-o ")[1].split()[0]
         with open(out, "w") as f:
             f.write("@<TRIPOS>ATOM\n")
@@ -158,7 +158,7 @@ def test_am1bcc_declares_pdb_input_format(tmp_path, monkeypatch):
 
 
 def _succinonitrile():
-    """仮想サイト付き力場に対応する実原子だけの構造"""
+    """Real-atom-only structure matching a force field with virtual sites"""
     from ase import Atoms
     from openmm.app import PDBFile
     from openmm.unit import angstrom as omm_angstrom
@@ -178,7 +178,7 @@ def _succinonitrile():
 
 @pytest.mark.parametrize("ffxml", ["vsite_average2.xml", "vsite_average3.xml"])
 def test_scan_ff_dihedral_with_virtual_sites(ffxml, tmp_path, monkeypatch):
-    """仮想サイトを含む力場でも粒子数が食い違わずスキャンできる"""
+    """A vsite force field scans without a particle count mismatch"""
     pytest.importorskip("openmm")
     from imolcraft.calculator.dihedral import scan_ff_dihedral
 
@@ -195,7 +195,7 @@ def test_scan_ff_dihedral_with_virtual_sites(ffxml, tmp_path, monkeypatch):
 
     assert np.array_equal(np.asarray(scanned), angles)
     assert min(energies) == pytest.approx(0.0)
-    # 仮想サイトは結果の構造に残らない
+    # Virtual sites do not remain in the resulting structure
     for geometry in geometries:
         assert len(geometry) == len(atoms)
         assert all(geometry.get_chemical_symbols())
@@ -219,7 +219,7 @@ def test_scan_ff_dihedral_checks_angle_count():
 
 @pytest.mark.parametrize("ffxml", ["vsite_average2.xml", "vsite_average3.xml"])
 def test_scan_ff_distance_with_virtual_sites(ffxml, tmp_path, monkeypatch):
-    """仮想サイトを含む力場でも、次の点へ渡す座標が実原子だけになる"""
+    """Even with virtual sites, only real-atom coordinates go to the next point"""
     pytest.importorskip("openmm")
     from imolcraft.calculator.distance import scan_ff_distance
 
@@ -233,14 +233,14 @@ def test_scan_ff_distance_with_virtual_sites(ffxml, tmp_path, monkeypatch):
 
     assert list(scanned) == targets
     assert len(energies) == len(targets)
-    # 仮想サイトは結果の構造に残らない
+    # Virtual sites do not remain in the resulting structure
     for geometry in geometries:
         assert len(geometry) == len(atoms)
         assert all(geometry.get_chemical_symbols())
 
 
 def test_psi4_charge_calculator_accepts_directory_none(tmp_path, monkeypatch):
-    """directory=None は基底クラスと同じくカレントディレクトリを指す"""
+    """directory=None points at the current directory, as in the base class"""
     from imolcraft.calculator import Psi4ChargeCalculator
 
     monkeypatch.chdir(tmp_path)
@@ -262,7 +262,7 @@ def test_psi4_charge_calculator_creates_missing_directory(tmp_path):
 
 
 def test_charge_calculator_does_not_mutate_module_defaults(tmp_path):
-    """独自 params を渡してもモジュールレベルの既定値は変わらない"""
+    """Passing custom params does not change the module-level defaults"""
     from imolcraft.calculator import charge as charge_module
 
     before = copy.deepcopy(charge_module.resp_params)
@@ -272,7 +272,7 @@ def test_charge_calculator_does_not_mutate_module_defaults(tmp_path):
 
     assert calc.params["method"] == "b3lyp"
     assert charge_module.resp_params == before
-    # 既定値のうち上書きしなかったものは残る
+    # The defaults that were not overridden are kept
     assert calc.params["basis"] == before["basis"]
 
 
@@ -286,7 +286,7 @@ def test_charge_calculator_instances_do_not_share_params(tmp_path):
         ETHANE, "resp", 0, "B", directory=str(tmp_path)
     )
 
-    # B は params を渡していないので既定値のまま
+    # B passed no params, so it keeps the defaults
     assert b.params["method"] == charge_module.resp_params["method"] == "hf"
     assert a.params is not b.params
     assert a.params is not charge_module.resp_params
@@ -294,7 +294,7 @@ def test_charge_calculator_instances_do_not_share_params(tmp_path):
 
 
 def test_charge_calculator_params_are_deep_copies(tmp_path):
-    """入れ子のリストを書き換えても他へ波及しない"""
+    """Rewriting a nested list does not leak into the others"""
     from imolcraft.calculator import charge as charge_module
 
     before = copy.deepcopy(charge_module.resp_params)
@@ -320,7 +320,7 @@ def _dihedral_calculator(tmp_path):
 
 @pytest.mark.parametrize("dihed_idx", [0, "0", [0]])
 def test_do_ffscan_normalises_a_bare_index(dihed_idx, tmp_path, monkeypatch):
-    """int でも str でも 1 本分のスキャンとして扱われる"""
+    """Both an int and a str are treated as a single scan"""
     from imolcraft.calculator import dihedral as dihedral_module
 
     calc = _dihedral_calculator(tmp_path)
@@ -357,17 +357,17 @@ def test_resolve_angles_accepts_qm(tmp_path):
 
 @pytest.mark.parametrize("angles", ["FF", "qm", ""])
 def test_resolve_angles_rejects_other_strings(angles, tmp_path):
-    """"QM" 以外の文字列がそのまま角度列として流れないこと"""
+    """A string other than "QM" must not flow through as an angle list"""
     calc = _dihedral_calculator(tmp_path)
     with pytest.raises(ValueError, match='angles must be "QM"'):
         calc._resolve_angles(0, angles)
 
 
 def test_pick_outer_atom_rejects_a_terminal_atom():
-    """相手以外に隣接原子が無ければ二面角は定義できない"""
+    """A dihedral is undefined without a neighbor other than the partner"""
     from imolcraft.calculator.dihedral import _pick_outer_atom
 
-    # 暗黙水素のエタンは各炭素の明示的な隣接原子が相手だけ
+    # With implicit hydrogens, each carbon's only explicit neighbor is the partner
     mol = Chem.MolFromSmiles("CC")
     with pytest.raises(ValueError, match="has no other neighbour"):
         _pick_outer_atom(mol.GetAtomWithIdx(0), 0, 1)
@@ -381,7 +381,7 @@ def test_pick_outer_atom_rejects_a_terminal_atom():
 )
 @pytest.mark.parametrize("add_hs", [True, False])
 def test_get_rotatable_dihedral_never_yields_none(smiles, add_hs):
-    """回転可能結合の SMARTS が両端の次数 >= 2 を保証するので None は出ない"""
+    """The rotatable-bond SMARTS forces degree >= 2 at both ends, so never None"""
     mol = Chem.MolFromSmiles(smiles)
     if add_hs:
         mol = Chem.AddHs(mol)

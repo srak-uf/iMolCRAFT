@@ -24,7 +24,12 @@ from ..trainer.dmff_utils import (
     get_chgparams_from_rescharges,
 )
 from .loss import _NPT_ENSEMBLES
-from .base import BaseTrainer, plot_learning_curve
+from .base import (
+    BaseTrainer,
+    _loss_is_invalid,
+    _print_memory,
+    plot_learning_curve,
+)
 from ..provenance import provenance_fields
 from ..calculator import DihedralCalculator, DistanceCalculator
 from openmm import unit
@@ -49,17 +54,40 @@ def _state_name(idx: int) -> str:
     return f"sample_{idx}"
 
 
-def _validation_record(values_per_replica: List[dict], epoch: int) -> dict:
+def _validation_record(
+    values_per_replica: List[dict], epoch: int, ffxml: str
+) -> dict:
     """
     One history record out of the per-replica validation values, keyed by the
     replica the value belongs to so that the entries of two replicas sharing a
     name stay apart.
+
+    Besides the values, a record says which force field they were measured on:
+    ``epoch`` as a number to plot against, ``ffxml`` as the file itself, so a
+    record can be traced back to the parameters that produced it even when the
+    XML files have been renamed or a restart broke the numbering.
     """
-    record = {"epoch": epoch}
+    record = {"epoch": epoch, "ffxml": ffxml}
     for idx, values in enumerate(values_per_replica):
         for name, value in values.items():
             record[f"{_state_name(idx)}/{name}"] = value
     return record
+
+
+TARGET_LOG_MODES = ("none", "low", "medium", "all")
+
+
+def _flatten_targets(values: dict, prefix: str, distributions: bool) -> dict:
+    """One replica's targets as ``prefix/target`` keys, a distribution as
+    ``prefix/target/kind`` or left out when ``distributions`` is False."""
+    flat = {}
+    for target, value in values.items():
+        if not isinstance(value, dict):
+            flat[f"{prefix}/{target}"] = value
+        elif distributions:
+            for kind, curve in value.items():
+                flat[f"{prefix}/{target}/{kind}"] = curve
+    return flat
 
 
 def _scan_positions_nm(ff_scan, potentials, num_vsites, dtype=jnp.float64):
@@ -201,6 +229,7 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.01,
         clip: Union[float, List[float]] = 0.1,
+        param_floors: Optional[dict] = None,
     ) -> None:
 
         super().__init__(
@@ -214,6 +243,7 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
             label=label,
             lr=lr,
             clip=clip,
+            param_floors=param_floors,
         )
         self.relax_steps = relax_steps
         self.inputs = {"positions": [], "pairs": [], "dihed_index": []}
@@ -288,6 +318,7 @@ class DistanceTrainer(_ScanTrainerMixin, BaseTrainer):
                     "opt_fftypes": self.opt_fftypes,
                     "lr": self.lr,
                     "clip": self.clip,
+                    "param_floors": self.param_floors_given,
                     **self._best_checkpoint_fields(),
                     **provenance_fields(),
                 }
@@ -339,6 +370,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.01,
         clip: Union[float, List[float]] = 0.1,
+        param_floors: Optional[dict] = None,
     ) -> None:
         """
         Initialize the DihedralTrainer.
@@ -365,6 +397,11 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
             Learning rate(s) for optimizer (default: 0.0001).
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
+        param_floors : dict, optional
+            Lower bound per ``Force/parameter`` name, see
+            :class:`~imolcraft.trainer.base.BaseTrainer`. The torsion
+            parameters fitted here carry none of the defaults, a torsion
+            force constant being free to change sign.
         """
         super().__init__(
             ffxml_list=[ffxml],
@@ -377,6 +414,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
             label=label,
             lr=lr,
             clip=clip,
+            param_floors=param_floors,
         )
 
         self.relax_steps = relax_steps
@@ -457,6 +495,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
                         "opt_fftypes": self.opt_fftypes,
                         "lr": self.lr,
                         "clip": self.clip,
+                        "param_floors": self.param_floors_given,
                         **self._best_checkpoint_fields(),
                         **provenance_fields(),
                     },
@@ -474,6 +513,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
         optimizer_algo: Optional[str] = None,
         lr: Optional[Union[float, List[float]]] = None,
         clip: Optional[Union[float, List[float]]] = None,
+        param_floors: Optional[dict] = None,
     ) -> "DihedralTrainer":
         """
         Rebuild a DihedralTrainer from a checkpoint.
@@ -491,7 +531,7 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
             Path to the PDB file.
         loss_fn : callable, optional
             Loss function; the stored one cannot be pickled, so it is passed in.
-        opt_fftypes, optimizer_algo, lr, clip : optional
+        opt_fftypes, optimizer_algo, lr, clip, param_floors : optional
             Override the values stored in the checkpoint.
 
         Returns
@@ -517,6 +557,12 @@ class DihedralTrainer(_ScanTrainerMixin, BaseTrainer):
             label=dump_dict["label"],
             lr=dump_dict["lr"] if lr is None else lr,
             clip=dump_dict["clip"] if clip is None else clip,
+            # a checkpoint written before the bounds existed carries no key,
+            # and None is what asks for the defaults anyway
+            param_floors=(
+                dump_dict.get("param_floors") if param_floors is None
+                else param_floors
+            ),
         )
 
         trainer.GT_scans = _qm_energies(trainer.calculator.qm_scan)
@@ -559,11 +605,14 @@ class ThermodynamicTrainer(BaseTrainer):
         optimizer_algo: str = "adam",
         lr: Union[float, List[float]] = 0.0001,
         clip: Union[float, List[float]] = 0.1,
+        param_floors: Optional[dict] = None,
         resample_freq: int = 50,
+        nan_resample_retries: int = 1,
         restart_xml: str = None,
         device: str = "CPU",
         md_log: str = "stdout",
         md_logfile: Optional[str] = None,
+        target_log: str = "medium",
     ) -> None:
         """
         Initialize the ThermodynamicTrainer.
@@ -580,6 +629,9 @@ class ThermodynamicTrainer(BaseTrainer):
             Loss function to be minimized.
         sampling_params : list of dict
             List of dictionaries containing sampling parameters for each replica.
+            A block may name the MD software with ``software`` (``"openmm"``,
+            the default, or ``"gromacs"``), per replica; the other keys of the
+            MD half are the settings of :class:`~imolcraft.calculator.MDCalculator`.
         target_params : list of dict
             List of dictionaries containing target parameters for each replica.
         validation_params : list of dict, optional
@@ -598,8 +650,22 @@ class ThermodynamicTrainer(BaseTrainer):
             Learning rate(s) for optimizer (default: 0.0001).
         clip : float or list of float, optional
             Gradient clipping value(s) (default: 0.1).
+        param_floors : dict, optional
+            Lower bound per ``Force/parameter`` name of the parameters that
+            must not go below it. Default is
+            :data:`~imolcraft.trainer.base.DEFAULT_PARAM_FLOORS`, which keeps
+            the Lennard-Jones sigma clear of zero and epsilon from turning
+            negative; ``{}`` bounds nothing.
+        nan_resample_retries : int, optional
+            Rounds of resampling and recomputing an epoch whose loss is NaN
+            or Inf (default 1, 0 disables); each round costs a full
+            resampling.
         restart_xml : str, optional
             Path to the XML file for restarting the training.
+        device : str, optional
+            Where every replica's MD runs: the OpenMM platform name for
+            ``software: openmm``; for ``software: gromacs`` anything but
+            ``"CPU"`` asks mdrun for the GPU (``-nb gpu``). Default ``"CPU"``.
         md_log : {'stdout', 'file', 'none'}, optional
             Where the MD progress and per-step state data of every replica go.
             ``'stdout'`` (default) keeps the current terminal output,
@@ -608,6 +674,12 @@ class ThermodynamicTrainer(BaseTrainer):
             Log file used when ``md_log='file'``. Default is
             ``mdlogs/<state name>.log``, one file per replica. Note that a
             single explicit path makes all replicas share (and overwrite) it.
+        target_log : {'none', 'low', 'medium', 'all'}, optional
+            How much of the target predictions of every epoch goes into
+            ``target_history``, saved in the checkpoint: the losses,
+            effective sample sizes and reweighted scalars (``'low'``), plus
+            the reweighted RDF/ADF curves (``'medium'``, default), plus the
+            per-frame values of every resampled replica (``'all'``, large).
         """
         # params
         self.sampling_params = sampling_params
@@ -615,10 +687,20 @@ class ThermodynamicTrainer(BaseTrainer):
         self.validation_params = validation_params
         self.resample_freq = resample_freq
         self.resample_counter = 0
+        self.nan_resample_retries = nan_resample_retries
+        # whether _retry_invalid_loss already resampled within this
+        # step, read and cleared by after_step
+        self._nan_resampled = False
 
         self.device = device
         self.md_log = md_log
         self.md_logfile = md_logfile
+        if target_log not in TARGET_LOG_MODES:
+            raise ValueError(
+                f"target_log must be one of {list(TARGET_LOG_MODES)}, got "
+                f"{target_log!r}"
+            )
+        self.target_log = target_log
 
         super().__init__(
             ffxml_list=ffxml_list,
@@ -630,6 +712,7 @@ class ThermodynamicTrainer(BaseTrainer):
             label=label,
             lr=lr,
             clip=clip,
+            param_floors=param_floors,
             restart_xml=restart_xml
         )
 
@@ -644,6 +727,9 @@ class ThermodynamicTrainer(BaseTrainer):
             "md_log": md_log,
             "md_logfile": md_logfile,
             "resample_freq": resample_freq,
+            "nan_resample_retries": nan_resample_retries,
+            "param_floors": param_floors,
+            "target_log": self.target_log,
         }
 
         # MD + Energy function setup
@@ -703,7 +789,7 @@ class ThermodynamicTrainer(BaseTrainer):
                 else:
                     self.topology[i] = self.pdb[i].topology
                     pos = self.pdb[i].positions
-                # self.pdbfile[i]のbasenameにvs_をつけて保存
+                # Save with "vs_" prefixed to the basename of self.pdbfile[i]
                 vs_pdbfile = f"vs_{os.path.basename(self.pdbfile[i])}"
                 with open(vs_pdbfile, "w") as f:
                     app.PDBFile.writeFile(self.topology[i], pos, f)
@@ -731,7 +817,11 @@ class ThermodynamicTrainer(BaseTrainer):
         ]
 
         # a pressure only means anything to a barostat, so a fixed-volume
-        # replica may leave it out and gets the zero PV term that implies
+        # replica may leave it out and gets the zero PV term that implies.
+        # P_bar is the pressure of the PV term of the reweighting; the same
+        # sampling key also reaches the calculator below as its barostat set
+        # point (pressure_bar, default 1 bar), so the two agree for an NPT
+        # replica and are deliberately not unified for a fixed-volume one.
         self.P_bar = [
             float(p.get("pressure_bar", 0.0)) for p in self.sampling_params
         ]
@@ -746,13 +836,13 @@ class ThermodynamicTrainer(BaseTrainer):
 
         # One calculator per replica, holding the whole recipe of its MD. The
         # calculator names its settings as the sampling section does, so the
-        # MD half of a block is simply the keys it knows: neff and
-        # pressure_bar are not among them and stay behind, and a key left out
-        # gets the calculator's own default. It is built now rather than at
-        # the first run so a bad ensemble or a broken annealing schedule shows
-        # up while the trainer is still empty.
+        # MD half of a block is simply the keys it knows (software included):
+        # neff is not among them and stays behind, and a key left out gets
+        # the calculator's own default. It is built now rather than at the
+        # first run so a bad ensemble, a broken annealing schedule or an
+        # unsupported software shows up while the trainer is still empty.
         self.md_calculators = []
-        for params in self.sampling_params:
+        for i, params in enumerate(self.sampling_params):
             settings = {
                 key: value for key, value in params.items()
                 if key in MDCalculator.SETTINGS
@@ -763,9 +853,15 @@ class ThermodynamicTrainer(BaseTrainer):
                 md_log=self.md_log,
                 md_logfile=self.md_logfile,
             )
-            self.md_calculators.append(
-                MDCalculator(params["init_structure"], **settings)
-            )
+            calculator = MDCalculator(params["init_structure"], **settings)
+            if self.num_vsites > 0 and calculator.software == "gromacs":
+                raise ValueError(
+                    f"replica {i} asks for software='gromacs', but {self.ffxml} "
+                    f"places {self.num_vsites} virtual sites and the GROMACS "
+                    "exporter does not translate OpenMM virtual sites yet; use "
+                    "software='openmm' for this force field"
+                )
+            self.md_calculators.append(calculator)
 
         # target
         if isinstance(self.target_params, dict):
@@ -801,6 +897,11 @@ class ThermodynamicTrainer(BaseTrainer):
         self.validation_history = []
         self.validation_dev_history = []
 
+        # target history, see _record_targets
+        self.target_history = []
+        self.losses_per_replica = []
+        self._fresh_frames = [False for _ in self.sampling_params]
+
         # loss function
         if not isinstance(self.loss_fn, list):
             self.loss_fn = [self.loss_fn for _ in range(len(self.sampling_params))]
@@ -831,6 +932,7 @@ class ThermodynamicTrainer(BaseTrainer):
         traj = md.load(xtcfile, top=self.pdbfile_vsite[idx])
         self.estimator.add_state(state)
         self.estimator.add_sample(Sample(traj, state_name))
+        self._fresh_frames[idx] = True
 
     def _update_validation(self, idx: int, xtcfile: str) -> None:
         """
@@ -856,7 +958,7 @@ class ThermodynamicTrainer(BaseTrainer):
         for name, deviation in self.validation_dev[idx].items():
             print(f"Validation {_state_name(idx)}/{name} deviation: {deviation:.6e}")
 
-    def _record_validation(self) -> None:
+    def _record_validation(self, epoch: int) -> None:
         """
         Append the current validation values, and their deviations from the
         references, to their histories.
@@ -869,20 +971,66 @@ class ThermodynamicTrainer(BaseTrainer):
         Only the replicas resampled in this round have fresh values; the others
         keep the ones of their last sampling, so a record always describes every
         replica. The histories ride in the checkpoint, next to the losses.
+
+        The force field the values were measured on is recorded with them:
+        ``self.ffxml``, which is the one every trajectory of this round was
+        sampled with, and ``epoch``, its epoch. That is not necessarily the
+        epoch being run: :meth:`after_step` renders the force field of the next
+        epoch before resampling with it. The number is passed in rather than
+        read off the file name because a restart starts from
+        ``chkpoint_*.xml``, whose name carries none.
         """
         if not any(self.validation_params):
             return
         self.validation_history.append(
-            _validation_record(self.validation_pred, self._epoch)
+            _validation_record(self.validation_pred, epoch, self.ffxml)
         )
         self.validation_dev_history.append(
-            _validation_record(self.validation_dev, self._epoch)
+            _validation_record(self.validation_dev, epoch, self.ffxml)
         )
+
+    def _record_targets(self, ffxml: str, neff: List[Optional[dict]]) -> None:
+        """
+        Append what the force field ``ffxml`` of this epoch gives for the
+        targets to ``target_history``.
+
+        A record holds ``epoch``, ``ffxml``, ``loss`` and, per replica, its
+        loss, ``neff``, ``resampled`` and the reweighted targets as
+        ``sample_{i}/{target}[/{kind}]``. ``target_log`` decides whether the
+        distributions (``medium``) and the per-frame values of a freshly
+        sampled replica (``all``, under ``sample_{i}/frames/``) go in.
+        """
+        fresh = self._fresh_frames
+        self._fresh_frames = [False for _ in self.sampling_params]
+        if self.target_log == "none":
+            return
+
+        record = {"epoch": self._epoch, "ffxml": ffxml, "loss": self.loss}
+        distributions = self.target_log in ("medium", "all")
+        for idx, weighted in enumerate(self.wresults):
+            name = _state_name(idx)
+            record[f"{name}/loss"] = self.losses_per_replica[idx]
+            record[f"{name}/neff"] = neff[idx]
+            record[f"{name}/resampled"] = fresh[idx]
+            record.update(_flatten_targets(weighted, name, distributions))
+            if self.target_log == "all" and fresh[idx]:
+                record.update(
+                    _flatten_targets(self.target_pred_frame[idx], f"{name}/frames", True)
+                )
+        self.target_history.append(record)
 
     def setup(self) -> None:
         """
         Set up the trainer by running MD simulations and preparing MBAR estimator.
         """
+        if self.num_vsites > 0 and any(
+            t.startswith("VirtualSite") for t in self.opt_fftypes
+        ):
+            # the pairs are cached per resampling, the vsites move every step
+            print(
+                "Warning: neighbour list not rebuilt as the vsite weights move, "
+                "only at the next resample"
+            )
         self.estimator = MBAREstimator()
         if len(self.target_gt) == 0:
             has_target_gt = False
@@ -902,7 +1050,8 @@ class ThermodynamicTrainer(BaseTrainer):
                         xtcfile, self.pdbfile_vsite[i], self.target_params[i]
                     )
                 )
-        self._record_validation()
+        # the force field the trainer starts from is the one of this epoch
+        self._record_validation(self._epoch)
         self.estimator.optimize_mbar()
         self.opt_state = self.optimizer.init(self.ffparams)
 
@@ -921,6 +1070,7 @@ class ThermodynamicTrainer(BaseTrainer):
         loss = 0.0
         self.utarget = []
         self.wresults = []
+        self.losses_per_replica = []
         for i in range(len(self.sampling_params)):
             (loss_tmp, (utarget, wresults)), grads_tmp = value_and_grad(
                 self.loss_fn[i], argnums=0, has_aux=True
@@ -940,8 +1090,7 @@ class ThermodynamicTrainer(BaseTrainer):
             grads = tree_map(lambda x, y: x + y, grads, grads_tmp)
             self.utarget.append(utarget)
             self.wresults.append(wresults)
-        if jnp.isnan(loss) is True:
-            self.resample = [True for i in range(len(self.sampling_params))]
+            self.losses_per_replica.append(loss_tmp)
 
         return loss, grads
 
@@ -956,7 +1105,7 @@ class ThermodynamicTrainer(BaseTrainer):
             return [i for i, flag in enumerate(self.resample) if flag]
         return list(range(len(self.sampling_params)))
 
-    def _resample(self) -> None:
+    def _resample(self, record_epoch: Optional[int] = None) -> None:
         """
         Resample MD trajectories and update MBAR estimator if needed.
 
@@ -964,6 +1113,13 @@ class ThermodynamicTrainer(BaseTrainer):
         ``estimator.states``: removing and re-adding a state moves it to the
         end of that list, so the positions stop matching the replica indices
         after the first resampling.
+
+        Parameters
+        ----------
+        record_epoch : int, optional
+            Epoch the validation record is filed under. Default
+            ``self._epoch + 1`` (the routine call from :meth:`after_step`);
+            the NaN recovery passes ``self._epoch``.
         """
         self.resample_counter = 0
         registered = {state.name for state in self.estimator.states}
@@ -980,7 +1136,11 @@ class ThermodynamicTrainer(BaseTrainer):
             )
             self._add_sample(idx, state_name, xtcfile)
             self._update_validation(idx, xtcfile)
-        self._record_validation()
+        # resampling runs on the force field rendered by after_step, which is
+        # the one of the next epoch, so that is what the record describes
+        self._record_validation(
+            self._epoch + 1 if record_epoch is None else record_epoch
+        )
         self.estimator.optimize_mbar()
 
     def _needs_resample(self, ii: int, ieff: dict) -> bool:
@@ -994,25 +1154,63 @@ class ThermodynamicTrainer(BaseTrainer):
         own = ieff.get(_state_name(ii))
         return own is not None and own < self.neff[ii]
 
+    def _retry_invalid_loss(self, loss, grads) -> Tuple[Any, Any]:
+        """
+        Recompute a NaN or Inf loss after resampling every replica.
+
+        Up to ``nan_resample_retries`` rounds of resampling with ``self.ffxml``,
+        the force field this loss was measured with, followed by a fresh
+        :meth:`get_loss_gradients` are run; a valid loss ends the loop. The
+        validation record is filed under the epoch being retried and the
+        parameters are left alone throughout, so a successful retry is the loss
+        of this very step rather than of a step already taken. Nothing is
+        resampled before :meth:`setup`.
+
+        Returns the loss and gradients to carry on with, which are the ones
+        passed in when no retrying happened.
+        """
+        attempt = 0
+        while _loss_is_invalid(loss) and attempt < self.nan_resample_retries:
+            attempt += 1
+            print(
+                f"Warning: Loss is NaN or Inf. Recovery attempt "
+                f"{attempt}/{self.nan_resample_retries}."
+            )
+            if getattr(self, "estimator", None) is not None:
+                print(
+                    f"Resampling every replica with {self.ffxml} and recomputing "
+                    f"the loss of epoch {self._epoch} (attempt {attempt})"
+                )
+                self.resample = [True for _ in range(len(self.sampling_params))]
+                self._resample(record_epoch=self._epoch)
+                self.resample = [False for _ in range(len(self.sampling_params))]
+                self._nan_resampled = True
+            loss, grads = self.get_loss_gradients()
+            _print_memory(f"grad obtained after recovery {attempt}....")
+        return loss, grads
+
     def after_step(self) -> None:
         """
         Update force field, input arrays, and resample if necessary after each
         optimization step.
         Handles periodic XML output and effective sample size checks.
         """
+        ffxml = self.ffxml  # the one this epoch's loss was measured with
         self.resample_counter += 1
         if self.resample_counter >= self.resample_freq:
             self.resample = [True for i in range(len(self.sampling_params))]
         loss_value = getattr(self, "loss", None)
-        loss_is_invalid = loss_value is not None and (
-            bool(jnp.isnan(loss_value)) or bool(jnp.isinf(loss_value))
-        )
-        if loss_is_invalid:
+        loss_is_invalid = loss_value is not None and _loss_is_invalid(loss_value)
+        # a recovery resampling has already run within this step, on the very
+        # force field the loss was measured with, so doing it again here would
+        # only repeat it with the perturbed parameters
+        if loss_is_invalid and not self._nan_resampled:
             print(
                 "Warning: Loss is NaN or Inf. "
                 "Resampling with the last valid force field XML."
             )
             self.resample = [True for i in range(len(self.sampling_params))]
+        self._nan_resampled = False
 
         self.ff = update_ffinfo_from_params(self.ff, self.ffparams)
         self.rescharges = update_rescharges_from_params(self.rescharges, self.ffparams)
@@ -1024,22 +1222,27 @@ class ThermodynamicTrainer(BaseTrainer):
         self.ffparams = get_chgparams_from_rescharges(self.ffparams, self.rescharges)
 
         print("Effective sample sizes:")
+        neff = [None for _ in self.sampling_params]
         for ii in range(len(self.sampling_params)):
             try:
                 ieff = self.estimator.estimate_effective_sample(
                     self.utarget[ii], decompose=True
                 )
+                neff[ii] = ieff
                 for k, v in ieff.items():
                     print(f"  {k}: {v}")
                 if self._needs_resample(ii, ieff):
                     self.resample[ii] = True
                     print(f"  {ii} -> Resample")
-                # TODO: Vsiteのposition update (self.estimator._input***)
+                # TODO: rebuild the cached neighbour list when the vsite
+                # weights have moved the virtual sites (estimator._input)
             except Exception:
                 print("Warning: Error in estimating effective sample size")
                 self.estimator.states = []
                 self.estimator.samples = []
                 self.resample = [True for i in range(len(self.sampling_params))]
+
+        self._record_targets(ffxml, neff)
 
         if True in self.resample:
             self._resample()
@@ -1089,6 +1292,8 @@ class ThermodynamicTrainer(BaseTrainer):
                     "validation_curves": self.validation_curves,
                     "validation_history": self.validation_history,
                     "validation_dev_history": self.validation_dev_history,
+                    "target_log": self.target_log,
+                    "target_history": self.target_history,
                     **self._best_checkpoint_fields(),
                     **provenance_fields(),
                 }
@@ -1140,6 +1345,9 @@ class ThermodynamicTrainer(BaseTrainer):
         md_log: Optional[str] = None,
         md_logfile: Optional[str] = None,
         resample_freq: Optional[int] = None,
+        nan_resample_retries: Optional[int] = None,
+        param_floors: Optional[dict] = None,
+        target_log: Optional[str] = None,
         setup: bool = True,
     ) -> "ThermodynamicTrainer":
         """
@@ -1177,6 +1385,9 @@ class ThermodynamicTrainer(BaseTrainer):
             "md_log": md_log,
             "md_logfile": md_logfile,
             "resample_freq": resample_freq,
+            "nan_resample_retries": nan_resample_retries,
+            "param_floors": param_floors,
+            "target_log": target_log,
         }
         restart_args.update({k: v for k, v in given.items() if v is not None})
         missing = [k for k in ("ffxml_list", "nums_ffxml", "pdbfile")
@@ -1264,6 +1475,7 @@ class ThermodynamicTrainer(BaseTrainer):
         trainer.resample_counter = dump_dict.get("resample_counter", 0)
         trainer.validation_history = dump_dict.get("validation_history", [])
         trainer.validation_dev_history = dump_dict.get("validation_dev_history", [])
+        trainer.target_history = dump_dict.get("target_history", [])
         trainer._restore_best(dump_dict)
 
         return trainer

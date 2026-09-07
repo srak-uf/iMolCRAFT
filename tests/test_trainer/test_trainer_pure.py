@@ -1,4 +1,4 @@
-"""外部プログラムや長時間の MD を必要としない trainer の回帰テスト"""
+"""Regression tests for trainer parts needing no external program or long MD"""
 import os
 
 import jax.numpy as jnp
@@ -40,7 +40,7 @@ def test_squared_error_is_non_negative(zeropoint):
 
 
 def test_squared_error_qmmin_anchors_at_the_qm_minimum():
-    """qmmin は QM の最小点で両曲線を一致させるので、その点の誤差は 0"""
+    """qmmin aligns both curves at the QM minimum, so the error there is 0"""
     e_qm = jnp.array([2.0, 0.0, 3.0])
     e_ff = jnp.array([5.0, 1.0, 7.0])
     se = _squared_error(e_ff, e_qm, "qmmin")
@@ -48,7 +48,7 @@ def test_squared_error_qmmin_anchors_at_the_qm_minimum():
 
 
 def test_squared_error_is_zero_for_a_constant_offset():
-    """auto は平均のずれを吸収するので、定数シフトは誤差にならない"""
+    """auto absorbs the mean offset, so a constant shift is not an error"""
     e_qm = jnp.array([0.0, 1.0, 2.0, 3.0])
     se = _squared_error(e_qm + 5.0, e_qm, "auto")
     assert jnp.allclose(se, jnp.square(5.0 - 5.0 / len(e_qm) * 1.0) * 0 + se)
@@ -69,7 +69,7 @@ def test_mse_energy_rejects_unknown_weight_scheme():
 
 
 def test_nonboltzmann_is_listed_but_not_implemented():
-    """既知の未実装分岐。実装されたらこのテストを消すこと"""
+    """Known unimplemented branch. Delete this test once it is implemented"""
     assert "nonboltzmann" in IMPLEMENTED_WEIGHT_SCHEMES
     with pytest.raises(UnboundLocalError):
         mse_energy(jnp.ones(3), jnp.zeros(3), weight_scheme="nonboltzmann")
@@ -125,7 +125,7 @@ def test_neutralize_rejects_mismatched_targets():
 
 
 def test_target_key_tables_agree():
-    """スカラー目標は必ず gt と weight を要求する"""
+    """Scalar targets always require gt and weight"""
     for target in SCALAR_TARGETS:
         assert REQUIRED_TARGET_KEYS[target] == ("gt", "weight")
     assert set(REQUIRED_TARGET_KEYS) >= set(SCALAR_TARGETS) | {"rdf", "adf"}
@@ -133,26 +133,26 @@ def test_target_key_tables_agree():
 
 
 def test_every_property_is_declared_once_and_completely():
-    """物性の一覧は 1 か所で、種類と必要なキーの両方を持つ"""
+    """The property list lives in one place, holding both kind and required keys"""
     assert set(PROPERTY_KINDS) == set(PROPERTY_KEYS)
     assert set(PROPERTY_KINDS.values()) <= {"scalar", "distribution"}
 
 
 def test_the_loss_takes_every_property_but_the_validation_only_ones():
-    """最適化対象は、validation 専用を除いた全物性"""
+    """The optimization targets are every property except the validation-only ones"""
     assert set(REQUIRED_TARGET_KEYS) == set(PROPERTY_KINDS) - set(
         VALIDATION_ONLY_PROPERTIES
     )
-    # loss 側が分岐に使う 2 つの組も、同じ表から導出されている
+    # The two sets the loss side branches on are derived from the same table
     assert set(SCALAR_TARGETS) | set(DISTRIBUTION_TARGETS) == set(
         REQUIRED_TARGET_KEYS
     )
-    # 逆向きは成り立つ: loss で使える物性は validation でも監視できる
+    # The converse holds: a property usable in loss can also be monitored in validation
     assert set(REQUIRED_VALIDATION_KEYS) == set(PROPERTY_KINDS)
 
 
 def test_a_validated_distribution_always_needs_its_reference():
-    """分布は参照との距離を記録するので、validation でも gt が要る"""
+    """Distributions record the distance to a reference, so validation needs gt too"""
     for name, kind in PROPERTY_KINDS.items():
         assert ("gt" in REQUIRED_VALIDATION_KEYS[name]) is (kind == "distribution")
 
@@ -223,9 +223,9 @@ def test_sum_loss_and_grads_accumulates():
     assert jnp.array_equal(grads["a"], jnp.array([4.0, 5.0]))
 
 
-# ------------------------------------------------------- checkpoint の往復
+# ------------------------------------------------------- checkpoint round trip
 def _ethane_pdb(path):
-    """ethane.xml に合う結合付き PDB を作る"""
+    """Build a bonded PDB matching ethane.xml"""
     from ase import Atoms
     from openmm.app import PDBFile
 
@@ -257,7 +257,7 @@ def _ethane_pdb(path):
 
 
 def _dummy_trainer_cls():
-    """MD も QM も走らせない最小の sub-trainer"""
+    """Minimal sub-trainer that runs neither MD nor QM"""
     import jax
 
     from imolcraft.trainer.base import BaseTrainer
@@ -284,23 +284,25 @@ def sum_trainer_env(tmp_path, monkeypatch):
     pdbfile = _ethane_pdb(tmp_path / "ethane.pdb")
     DummyTrainer = _dummy_trainer_cls()
 
-    def make(label):
-        return DummyTrainer(
-            ffxml_list=[ffxml],
-            nums_ffxml=[1],
-            pdbfile=pdbfile,
-            loss_fn=None,
-            opt_fftypes=["NonbondedForce/charge"],
-            label=label,
-            lr=0.01,
-            clip=0.1,
-        )
+    def make(label, **kwargs):
+        options = {
+            "ffxml_list": [ffxml],
+            "nums_ffxml": [1],
+            "pdbfile": pdbfile,
+            "loss_fn": None,
+            "opt_fftypes": ["NonbondedForce/charge"],
+            "label": label,
+            "lr": 0.01,
+            "clip": 0.1,
+        }
+        options.update(kwargs)
+        return DummyTrainer(**options)
 
     return make
 
 
 def test_sumtrainer_writes_a_non_empty_checkpoint(sum_trainer_env, tmp_path):
-    """dump_dict が実際に pickle される（旧実装では空ファイルだった）"""
+    """dump_dict is really pickled (the old implementation wrote an empty file)"""
     import pickle
 
     from imolcraft.trainer.base import SumTrainer
@@ -323,7 +325,7 @@ def test_sumtrainer_writes_a_non_empty_checkpoint(sum_trainer_env, tmp_path):
 
 
 def test_sumtrainer_roundtrip_restores_the_optimizer_state(sum_trainer_env, tmp_path):
-    """sub の pickle には無い opt_state が復元され、setup() で潰されない"""
+    """opt_state missing from the sub pickle is restored and survives setup()"""
     import jax
 
     from imolcraft.trainer.base import SumTrainer
@@ -349,7 +351,7 @@ def test_sumtrainer_roundtrip_restores_the_optimizer_state(sum_trainer_env, tmp_
     assert same(restored.opt_state, trainer.opt_state)
     assert restored.weight == trainer.weight
     assert [float(x) for x in restored.losses] == [float(x) for x in trainer.losses]
-    # 復元した値が sub-trainer にも配られている
+    # The restored values are distributed to the sub-trainers as well
     sub = restored.trainer1.ffparams["NonbondedForce"]["charge"]
     joint = restored.ffparams["NonbondedForce"]["charge"]
     assert jnp.array_equal(sub, joint[: len(sub)])
@@ -375,7 +377,7 @@ def test_sumtrainer_can_continue_after_restore(sum_trainer_env, tmp_path):
 
 
 def test_every_trainer_supports_checkpointing():
-    """4 クラスすべてが独自の write_checkpoint と from_checkpoint を持つ"""
+    """All four classes have their own write_checkpoint and from_checkpoint"""
     from imolcraft.trainer import (
         DihedralTrainer,
         DistanceTrainer,
@@ -389,7 +391,7 @@ def test_every_trainer_supports_checkpointing():
 
 
 def test_checkpoint_filenames_carry_the_label():
-    """4 クラスとも train_state_{label}.pkl に書く（SumTrainer で衝突しないこと）"""
+    """All four write train_state_{label}.pkl (no clash inside SumTrainer)"""
     import inspect
 
     from imolcraft.trainer import (
@@ -406,7 +408,7 @@ def test_checkpoint_filenames_carry_the_label():
 
 
 def test_loop_xml_filenames_carry_the_label():
-    """周期的な再緩和用 xml も xmlfiles/loop_{label}-{epoch}.xml に揃える"""
+    """The periodic relaxation xml also uses xmlfiles/loop_{label}-{epoch}.xml"""
     import inspect
 
     from imolcraft.trainer.trainer import _ScanTrainerMixin
@@ -423,7 +425,7 @@ def test_loop_xml_filenames_carry_the_label():
 
 
 def _decreasing_loss_trainer_cls(losses):
-    """指定した損失列を順に返す sub-trainer"""
+    """Sub-trainer that returns the given loss sequence in order"""
     import jax
 
     from imolcraft.trainer.base import BaseTrainer
@@ -446,7 +448,7 @@ def _decreasing_loss_trainer_cls(losses):
 
 
 def test_best_is_none_before_training(sum_trainer_env):
-    """fit を回す前でも属性は存在する（以前は AttributeError）"""
+    """The attributes exist even before fit runs (previously an AttributeError)"""
     from imolcraft.trainer.base import SumTrainer
 
     make = sum_trainer_env
@@ -463,7 +465,7 @@ def test_best_is_none_before_training(sum_trainer_env):
 
 
 def test_best_snapshot_survives_a_restart(sum_trainer_env, tmp_path):
-    """再開後に損失が悪化しても、過去の最良が上書きされない"""
+    """A worse loss after resuming does not overwrite the previous best"""
     import jax
 
     from imolcraft.trainer.base import SumTrainer
@@ -495,7 +497,7 @@ def test_best_snapshot_survives_a_restart(sum_trainer_env, tmp_path):
         )
     )
 
-    # 続きを回しても、悪化しているうちは最良が保たれる
+    # Running further keeps the best while the loss stays worse
     restored.fit(steps=1, checkpoint_frequency=10)
     assert float(restored.best_loss) <= best_loss
 
@@ -514,14 +516,14 @@ def test_best_checkpoint_fields_are_stored_by_every_trainer():
         write_src = inspect.getsource(cls.__dict__["write_checkpoint"])
         assert "_best_checkpoint_fields()" in write_src, cls.__name__
 
-    # DistanceTrainer の復元は今は落としてあるので、書き出し側だけを見る
+    # DistanceTrainer restore is disabled for now, so only check the writing side
     for cls in (DihedralTrainer, ThermodynamicTrainer, SumTrainer):
         from_src = inspect.getsource(cls.__dict__["from_checkpoint"])
         assert "_restore_best(dump_dict)" in from_src, cls.__name__
 
 
 def test_distance_trainer_restore_is_switched_off():
-    """復元は一旦 OFF。黙って壊れるのではなく NotImplementedError で落ちる"""
+    """Restore is off for now: NotImplementedError instead of breaking silently"""
     import pytest
 
     from imolcraft.trainer import DistanceTrainer
@@ -531,20 +533,20 @@ def test_distance_trainer_restore_is_switched_off():
 
 
 def test_thermodynamic_from_checkpoint_restores_history_explicitly():
-    """効いていなかった attr_lists ループを明示的な代入に置き換えた"""
+    """The ineffective attr_lists loop was replaced with explicit assignments"""
     import inspect
 
     from imolcraft.trainer import ThermodynamicTrainer
 
     src = inspect.getsource(ThermodynamicTrainer.__dict__["from_checkpoint"])
-    # 一致しないキー名と、_epoch ではなく epoch を作ってしまうループが消えたこと
+    # The loop with mismatched key names that created epoch instead of _epoch is gone
     assert "ff_info" not in src
     assert "attr_lists" not in src
-    # 履歴は明示的に復元する
+    # The histories are restored explicitly
     assert 'trainer.losses = dump_dict["losses"]' in src
     assert 'trainer.epochs = dump_dict["epochs"]' in src
     assert 'trainer._epoch = dump_dict["epoch"]' in src
-    # 力場は initial_ffxml 由来なので ffinfo は復元しない
+    # The force field comes from initial_ffxml, so ffinfo is not restored
     assert "ff.ffinfo" not in src
 
 
@@ -552,7 +554,7 @@ def test_thermodynamic_from_checkpoint_restores_history_explicitly():
 def test_fit_runs_exactly_the_requested_number_of_steps(
     steps, sum_trainer_env, tmp_path
 ):
-    """fit(steps) はちょうど steps エポック回る（以前は steps+1 回っていた）"""
+    """fit(steps) runs exactly steps epochs (it used to run steps+1)"""
     from imolcraft.trainer.base import SumTrainer
 
     make = sum_trainer_env
@@ -570,7 +572,7 @@ def test_fit_runs_exactly_the_requested_number_of_steps(
 
 
 def test_fit_continues_from_the_previous_call(sum_trainer_env, tmp_path):
-    """fit を分けて呼んでも合計エポック数は同じ"""
+    """Splitting fit into several calls gives the same total epoch count"""
     from imolcraft.trainer.base import SumTrainer
 
     make = sum_trainer_env
@@ -586,7 +588,7 @@ def test_fit_continues_from_the_previous_call(sum_trainer_env, tmp_path):
     assert trainer.epochs == list(range(5))
 
 
-# --------------------------------------- ThermodynamicTrainer の再サンプリング判定
+# --------------------------------------- ThermodynamicTrainer resampling decision
 def _thermo_stub(neff, states=(), resample=(), n_replicas=None):
     import types
 
@@ -601,10 +603,10 @@ def _thermo_stub(neff, states=(), resample=(), n_replicas=None):
 
 
 def test_needs_resample_matches_by_name_not_position():
-    """状態の並びが変わっても、自分のレプリカの寄与を見る"""
+    """Look at the own replica's contribution even if the state order changes"""
     from imolcraft.trainer import ThermodynamicTrainer
 
-    # sample_1 を再サンプリングした後は estimator.states が [0, 2, 1] の順になる
+    # After resampling sample_1, estimator.states is ordered [0, 2, 1]
     ieff = {"sample_0": 100, "sample_2": 100, "sample_1": 3, "Total": 203}
     stub = _thermo_stub([10, 10, 10])
 
@@ -617,14 +619,14 @@ def test_needs_resample_matches_by_name_not_position():
 def test_needs_resample_ignores_the_total_entry():
     from imolcraft.trainer import ThermodynamicTrainer
 
-    # Total だけが小さくても、自分の寄与が足りていれば再サンプリングしない
+    # A small Total alone does not trigger resampling if the own contribution suffices
     ieff = {"sample_0": 100, "Total": 1}
     stub = _thermo_stub([10])
     assert ThermodynamicTrainer._needs_resample(stub, 0, ieff) is False
 
 
 def test_needs_resample_tolerates_a_missing_entry():
-    """自分の状態がまだ登録されていない場合に落ちない"""
+    """Does not crash when the own state is not registered yet"""
     from imolcraft.trainer import ThermodynamicTrainer
 
     stub = _thermo_stub([10, 10])
@@ -666,12 +668,12 @@ def test_state_name_is_shared_by_setup_and_resample():
         assert 'f"sample_{' not in src, name
 
 
-# ------------------------------------------------------------- hook の有効性
+# ------------------------------------------------------------ hook effectiveness
 _HOOK_MARK = -77.0
 
 
 def _pure_hook(tree):
-    """引数を触らず、加工した新しい dict を返す（契約どおりの書き方）"""
+    """Return a new modified dict without touching the argument (as contracted)"""
     nb = dict(tree["NonbondedForce"])
     nb["charge"] = nb["charge"].at[0].set(_HOOK_MARK)
     out = dict(tree)
@@ -686,7 +688,7 @@ def _marked(trainer):
 
 
 def test_sub_after_update_hook_takes_effect(sum_trainer_env):
-    """sub に登録した after_update が SumTrainer 経由でも効く"""
+    """after_update registered on a sub also takes effect through SumTrainer"""
     from imolcraft.trainer.base import SumTrainer
 
     make = sum_trainer_env
@@ -716,12 +718,12 @@ def test_parent_after_update_hook_takes_effect(sum_trainer_env):
     trainer.fit(steps=1, checkpoint_frequency=1000)
 
     assert _marked(trainer)
-    # 親の hook の結果も sub へ配られる
+    # The parent hook's result is distributed to the subs as well
     assert _marked(trainer.trainer1)
 
 
 def test_sub_hooks_run_before_the_parent_hook(sum_trainer_env):
-    """sub は自分の半分、親は連結ベクトル全体を見る"""
+    """A sub sees its own half; the parent sees the whole concatenated vector"""
     from imolcraft.trainer.base import SumTrainer
 
     make = sum_trainer_env
@@ -752,7 +754,7 @@ def test_sub_hooks_run_before_the_parent_hook(sum_trainer_env):
 
 
 def test_do_modify_returns_the_value_when_no_hook_is_registered(sum_trainer_env):
-    """未登録のフック種別でも None を返さない（代入して壊れない）"""
+    """An unregistered hook kind does not return None (assignment stays safe)"""
     make = sum_trainer_env
     trainer = make("t1")
     sentinel = {"a": 1}
@@ -760,7 +762,7 @@ def test_do_modify_returns_the_value_when_no_hook_is_registered(sum_trainer_env)
 
 
 def _opt_counts(state):
-    """optax の state からステップカウンタをすべて拾う"""
+    """Collect every step counter from the optax state"""
     import jax
 
     return [
@@ -771,7 +773,7 @@ def _opt_counts(state):
 
 
 def test_sub_optimizer_state_is_not_advanced(sum_trainer_env):
-    """更新を適用しない sub の optimizer は状態も進めない"""
+    """A sub applying no update does not advance its optimizer state either"""
     from imolcraft.trainer.base import SumTrainer
 
     make = sum_trainer_env
@@ -784,14 +786,14 @@ def test_sub_optimizer_state_is_not_advanced(sum_trainer_env):
     before = _opt_counts(t1.opt_state)
     trainer.fit(steps=3, checkpoint_frequency=1000)
 
-    # 親だけが 3 回進む
+    # Only the parent advances three times
     assert _opt_counts(trainer.opt_state) == [c + 3 for c in before]
     assert _opt_counts(t1.opt_state) == before
     assert _opt_counts(t2.opt_state) == before
 
 
 def test_sub_after_grad_hook_still_applies(sum_trainer_env):
-    """optimizer.update を外しても after_grad フックは効く"""
+    """The after_grad hook still works even without optimizer.update"""
     from imolcraft.trainer.base import SumTrainer
 
     make = sum_trainer_env
@@ -812,15 +814,15 @@ def test_sub_after_grad_hook_still_applies(sum_trainer_env):
     trainer.setup()
     trainer.fit(steps=1, checkpoint_frequency=1000)
 
-    assert seen, "after_grad が呼ばれていない"
-    # trainer1 の勾配だけゼロにしたので、連結ベクトルの前半だけ動かない
+    assert seen, "after_grad was not called"
+    # Only trainer1's gradient was zeroed, so only the first half stays fixed
     half = seen[0]
     charge = trainer.ffparams["NonbondedForce"]["charge"]
     assert len(charge) == 2 * half
 
 
-# ------------------------------------ ThermodynamicTrainer の validation 記録
-def _validation_stub(params, pred, dev=None, epoch=0, label="t"):
+# ------------------------------------ ThermodynamicTrainer validation records
+def _validation_stub(params, pred, dev=None, label="t", ffxml="epoch_t-3.xml"):
     import types
 
     return types.SimpleNamespace(
@@ -830,59 +832,65 @@ def _validation_stub(params, pred, dev=None, epoch=0, label="t"):
         validation_curves=[{} for _ in params],
         validation_history=[],
         validation_dev_history=[],
+        ffxml=ffxml,
         label=label,
-        _epoch=epoch,
     )
 
 
 def test_record_validation_labels_the_values_by_replica():
-    """レプリカ番号と項目名の組で履歴に残る"""
+    """Recorded in the history keyed by replica index and item name"""
     from imolcraft.trainer import ThermodynamicTrainer
 
     stub = _validation_stub(
         [{"dself_Li": {}}, {"dself_Li": {}}],
         [{"dself_Li": 1.0}, {"dself_Li": 2.0}],
-        epoch=3,
     )
-    ThermodynamicTrainer._record_validation(stub)
+    ThermodynamicTrainer._record_validation(stub, 3)
 
     assert stub.validation_history == [
-        {"epoch": 3, "sample_0/dself_Li": 1.0, "sample_1/dself_Li": 2.0}
+        {
+            "epoch": 3,
+            "ffxml": "epoch_t-3.xml",
+            "sample_0/dself_Li": 1.0,
+            "sample_1/dself_Li": 2.0,
+        }
     ]
 
 
 def test_record_validation_keeps_the_values_of_the_untouched_replicas():
-    """再サンプリングされなかったレプリカも、前回の値のまま記録に残る"""
+    """A replica that was not resampled is still recorded with its previous value"""
     from imolcraft.trainer import ThermodynamicTrainer
 
     stub = _validation_stub(
         [{"dself_Li": {}}, {"dself_Li": {}}],
         [{"dself_Li": 1.0}, {"dself_Li": 2.0}],
-        epoch=3,
     )
-    ThermodynamicTrainer._record_validation(stub)
-    # sample_0 だけ再サンプリングされた状況
+    ThermodynamicTrainer._record_validation(stub, 3)
+    # Only sample_0 was resampled; keep the force field used at that point
     stub.validation_pred[0] = {"dself_Li": 1.5}
-    stub._epoch = 8
-    ThermodynamicTrainer._record_validation(stub)
+    stub.ffxml = "epoch_t-8.xml"
+    ThermodynamicTrainer._record_validation(stub, 8)
 
     assert stub.validation_history[-1] == {
-        "epoch": 8, "sample_0/dself_Li": 1.5, "sample_1/dself_Li": 2.0
+        "epoch": 8,
+        "ffxml": "epoch_t-8.xml",
+        "sample_0/dself_Li": 1.5,
+        "sample_1/dself_Li": 2.0,
     }
 
 
 def test_record_validation_is_skipped_without_any_target():
-    """validation を設定していない run では、履歴を作らない"""
+    """A run without validation configured creates no history"""
     from imolcraft.trainer import ThermodynamicTrainer
 
     stub = _validation_stub([{}, {}], [{}, {}])
-    ThermodynamicTrainer._record_validation(stub)
+    ThermodynamicTrainer._record_validation(stub, 0)
 
     assert stub.validation_history == []
 
 
 def test_update_validation_is_skipped_without_any_target():
-    """validation が空なら、軌跡を読みに行かない（存在しないファイルでも落ちない）"""
+    """With empty validation, no trajectory is read (a missing file does not crash)"""
     from imolcraft.trainer import ThermodynamicTrainer
 
     stub = _validation_stub([{}], [{}])
@@ -894,20 +902,1040 @@ def test_update_validation_is_skipped_without_any_target():
     assert stub.validation_curves == [{}]
 
 
+def test_resample_records_the_epoch_of_the_force_field_it_sampled_with(monkeypatch):
+    """The recorded epoch is the number of the xml used for resampling (= _epoch + 1)"""
+    import types
+    from imolcraft.trainer import ThermodynamicTrainer
+    from imolcraft.trainer import trainer as trainer_mod
+
+    monkeypatch.setattr(trainer_mod, "get_target_pred_frame", lambda *a, **k: {})
+
+    recorded = []
+    stub = types.SimpleNamespace(
+        _epoch=180,
+        ffxml="xmlfiles/epoch_t-181.xml",
+        estimator=types.SimpleNamespace(states=[], optimize_mbar=lambda: None),
+        sampling_params=[{}],
+        target_params=[{}],
+        pdbfile_vsite=["x.pdb"],
+        target_pred_frame=[{}],
+        _resample_indices=lambda: [0],
+        _run_md=lambda idx, name: "sample_0.xtc",
+        _add_sample=lambda idx, name, xtc: None,
+        _update_validation=lambda idx, xtc: None,
+        _record_validation=lambda epoch: recorded.append(epoch),
+    )
+    ThermodynamicTrainer._resample(stub)
+
+    # The trajectory was taken after after_step wrote epoch-181.xml, so record 181
+    assert recorded == [181]
+
+
 def test_record_validation_keeps_the_deviations_in_their_own_history():
-    """ズレは値とは別の履歴に、項目ごとに分かれたまま残る"""
+    """Deviations stay in a history separate from the values, split per item"""
     from imolcraft.trainer import ThermodynamicTrainer
 
     stub = _validation_stub(
         [{"rho": {}, "rdf_Li_O": {}}],
         [{"rho": 1.5}],
         dev=[{"rho": -0.05, "rdf_Li_O": 0.02}],
-        epoch=3,
     )
-    ThermodynamicTrainer._record_validation(stub)
+    ThermodynamicTrainer._record_validation(stub, 3)
 
-    # 値を持つのはスカラーだけ、ズレは分布も含めて全部
-    assert stub.validation_history == [{"epoch": 3, "sample_0/rho": 1.5}]
-    assert stub.validation_dev_history == [
-        {"epoch": 3, "sample_0/rho": -0.05, "sample_0/rdf_Li_O": 0.02}
+    # Only scalars carry values; deviations cover everything including distributions
+    assert stub.validation_history == [
+        {"epoch": 3, "ffxml": "epoch_t-3.xml", "sample_0/rho": 1.5}
     ]
+    assert stub.validation_dev_history == [
+        {
+            "epoch": 3,
+            "ffxml": "epoch_t-3.xml",
+            "sample_0/rho": -0.05,
+            "sample_0/rdf_Li_O": 0.02,
+        }
+    ]
+
+
+# ---------------------------------------------------------- target history
+def _target_stub(target_log, fresh=(True,)):
+    """A two-target stub replica: a density and one RDF, both reweighted"""
+    import types
+
+    n = len(fresh)
+    return types.SimpleNamespace(
+        _epoch=4,
+        target_log=target_log,
+        loss=3.0,
+        losses_per_replica=[1.5 for _ in range(n)],
+        wresults=[
+            {"density_gcm3": 0.9, "rdf": {"Li-O": jnp.ones(5)}} for _ in range(n)
+        ],
+        target_pred_frame=[
+            {"density_gcm3": jnp.ones(3), "rdf": {"Li-O": jnp.ones((3, 5))}}
+            for _ in range(n)
+        ],
+        _fresh_frames=list(fresh),
+        sampling_params=[{} for _ in range(n)],
+        target_history=[],
+    )
+
+
+def _record_targets(stub, neff=None):
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    if neff is None:
+        neff = [{"sample_0": 40.0, "total": 40.0}] * len(stub.sampling_params)
+    ThermodynamicTrainer._record_targets(stub, "xmlfiles/epoch_t-4.xml", neff)
+
+
+def test_target_record_low_keeps_the_scalars_only():
+    """low: losses, neff, the resampled flag and the scalar targets"""
+    stub = _target_stub("low")
+    _record_targets(stub)
+
+    assert stub.target_history == [
+        {
+            "epoch": 4,
+            "ffxml": "xmlfiles/epoch_t-4.xml",
+            "loss": 3.0,
+            "sample_0/loss": 1.5,
+            "sample_0/neff": {"sample_0": 40.0, "total": 40.0},
+            "sample_0/resampled": True,
+            "sample_0/density_gcm3": 0.9,
+        }
+    ]
+
+
+def test_target_record_medium_adds_the_distribution_curves():
+    stub = _target_stub("medium")
+    _record_targets(stub)
+
+    record = stub.target_history[0]
+    assert record["sample_0/rdf/Li-O"].shape == (5,)
+    # the reweighted curve, not the per-frame ones
+    assert not any(key.startswith("sample_0/frames/") for key in record)
+
+
+def test_target_record_all_adds_the_frames_of_the_fresh_replicas_only():
+    """all: per-frame values ride along once per resampling, per replica"""
+    stub = _target_stub("all", fresh=(True, False))
+    _record_targets(stub, neff=[{"sample_0": 40.0}, None])
+
+    record = stub.target_history[0]
+    assert record["sample_0/resampled"] is True
+    assert record["sample_1/resampled"] is False
+    assert record["sample_1/neff"] is None
+    assert record["sample_0/frames/density_gcm3"].shape == (3,)
+    assert record["sample_0/frames/rdf/Li-O"].shape == (3, 5)
+    assert "sample_1/frames/density_gcm3" not in record
+    assert record["sample_1/rdf/Li-O"].shape == (5,)
+    # recorded, so the frames count as seen: the next record has none
+    assert stub._fresh_frames == [False, False]
+    _record_targets(stub, neff=[{"sample_0": 40.0}, None])
+    assert not any(
+        key.startswith("sample_0/frames/") for key in stub.target_history[1]
+    )
+
+
+def test_target_record_none_records_nothing_but_clears_the_flags():
+    stub = _target_stub("none")
+    _record_targets(stub)
+
+    assert stub.target_history == []
+    assert stub._fresh_frames == [False]
+
+
+def test_thermodynamic_records_the_targets_before_resampling():
+    """after_step records with the ffxml of this epoch, before rendering the next"""
+    import inspect
+
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    src = inspect.getsource(ThermodynamicTrainer.__dict__["after_step"])
+    assert src.index("ffxml = self.ffxml") < src.index("renderXML")
+    assert src.index("self._record_targets(ffxml, neff)") < src.index(
+        "self._resample()"
+    )
+    # the history rides in the checkpoint and a restart puts it back
+    src = inspect.getsource(ThermodynamicTrainer.__dict__["write_checkpoint"])
+    assert '"target_history": self.target_history' in src
+    src = inspect.getsource(ThermodynamicTrainer.__dict__["from_checkpoint"])
+    assert 'dump_dict.get("target_history", [])' in src
+# ------------------------------------------- NaN loss recovery by resampling
+def _retry_stub(retries, losses, epoch=5, n=2, estimator=True):
+    """
+    Minimal ``self`` for :meth:`ThermodynamicTrainer._retry_invalid_loss`.
+
+    ``losses[0]`` is the loss handed to the retry loop, the rest are what the
+    recomputations return in order. ``calls["resample"]`` counts the
+    resampling rounds, ``calls["epochs"]`` the epochs they were filed under.
+    """
+    import types
+
+    calls = {"loss": 0, "resample": 0, "epochs": []}
+    seq = list(losses)
+
+    def get_loss_gradients():
+        calls["loss"] += 1
+        return seq[min(calls["loss"], len(seq) - 1)], {"grads": calls["loss"]}
+
+    def _resample(record_epoch=None):
+        calls["resample"] += 1
+        calls["epochs"].append(record_epoch)
+
+    stub = types.SimpleNamespace(
+        _epoch=epoch,
+        ffxml="xmlfiles/epoch_x-5.xml",
+        nan_resample_retries=retries,
+        sampling_params=[{}] * n,
+        resample=[False] * n,
+        _nan_resampled=False,
+        estimator=types.SimpleNamespace() if estimator else None,
+        get_loss_gradients=get_loss_gradients,
+        _resample=_resample,
+    )
+    return stub, calls, seq[0], {"grads": 0}
+
+
+def test_base_trainer_attempts_no_recovery_and_thermodynamic_retries_once():
+    """Nothing to renew in the base, one resampling round by default in the other"""
+    import inspect
+
+    from imolcraft.trainer import ThermodynamicTrainer
+    from imolcraft.trainer.base import BaseTrainer
+
+    # the base has nothing to resample, so a NaN comes straight back out
+    loss, grads = BaseTrainer._retry_invalid_loss(
+        object(), float("nan"), {"grads": 0}
+    )
+    assert bool(jnp.isnan(loss)) is True and grads == {"grads": 0}
+    signature = inspect.signature(ThermodynamicTrainer.__init__)
+    assert signature.parameters["nan_resample_retries"].default == 1
+
+
+@pytest.mark.parametrize(
+    "retries, losses, expected_calls, expect_nan",
+    [
+        (3, [1.5, 2.5], {"loss": 0, "resample": 0}, False),
+        (2, [float("nan")] * 4, {"loss": 2, "resample": 2}, True),
+        (0, [float("nan"), 1.0], {"loss": 0, "resample": 0}, True),
+    ],
+    ids=["finite-never-retried", "stays-invalid-after-rounds", "zero-retries"],
+)
+def test_the_retry_loop_stops_where_it_should(
+    retries, losses, expected_calls, expect_nan
+):
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    stub, calls, loss, grads = _retry_stub(retries, losses)
+    out_loss, out_grads = ThermodynamicTrainer._retry_invalid_loss(
+        stub, loss, grads
+    )
+
+    assert {key: calls[key] for key in expected_calls} == expected_calls
+    assert bool(jnp.isnan(out_loss)) is expect_nan
+    if expected_calls["loss"] == 0:
+        # nothing was recomputed, so the input comes back as it was
+        assert out_grads == {"grads": 0}
+        if not expect_nan:
+            assert out_loss == pytest.approx(losses[0], rel=1e-6, abs=1e-12)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_an_invalid_loss_is_recovered_and_recomputed(bad):
+    """A NaN or Inf loss is retried, and the retry replaces loss and gradients"""
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    stub, calls, loss, grads = _retry_stub(2, [bad, 0.25])
+    out_loss, out_grads = ThermodynamicTrainer._retry_invalid_loss(
+        stub, loss, grads
+    )
+
+    assert out_loss == 0.25
+    assert out_grads == {"grads": 1}
+    # one recovery was enough, so the second retry was never spent
+    assert calls["loss"] == 1 and calls["resample"] == 1
+
+
+def test_each_trainer_retries_its_own_loss_before_giving_up(sum_trainer_env,
+                                                             monkeypatch):
+    """The retry runs on the trainer holding the data; the perturbation after it"""
+    import jax
+
+    import imolcraft.trainer.base as base
+    from imolcraft.trainer.base import BaseTrainer, SumTrainer
+
+    make = sum_trainer_env
+    events = []
+    rescued = {"loss": jnp.float32(jnp.nan)}
+
+    def retry(self, loss, grads):
+        events.append(("retry", self.label))
+        return rescued["loss"], grads
+
+    def nan_loss(trainer):
+        return lambda: (
+            jnp.float32(jnp.nan),
+            jax.tree_util.tree_map(jnp.zeros_like, trainer.ffparams),
+        )
+
+    monkeypatch.setattr(BaseTrainer, "_retry_invalid_loss", retry)
+    monkeypatch.setattr(
+        base, "_nan_recovery_gradients",
+        lambda ffparams: events.append(("perturb",)) or ffparams,
+    )
+
+    # the retry fails: the perturbation follows it, once
+    solo = make("solo")
+    solo.setup()
+    solo.get_loss_gradients = nan_loss(solo)
+    solo.training_step()
+    assert events == [("retry", "solo"), ("perturb",)]
+
+    # the retry rescues each half on its own, so nothing is perturbed
+    events.clear()
+    rescued["loss"] = jnp.float32(0.5)
+    joint = SumTrainer(
+        make("t1"), make("t2"),
+        opt_fftypes=["NonbondedForce/charge"], weight=[1.0, 1.0], lr=0.01, clip=0.1,
+    )
+    joint.setup()
+    for sub in (joint.trainer1, joint.trainer2):
+        sub.get_loss_gradients = nan_loss(sub)
+    joint.training_step()
+    assert sorted(events) == [("retry", "t1"), ("retry", "t2")]
+
+
+def test_only_the_thermodynamic_half_of_a_sum_resamples(sum_trainer_env):
+    """The plain half falls through the base no-op, the other one resamples"""
+    import types
+
+    import jax
+
+    from imolcraft.trainer import ThermodynamicTrainer
+    from imolcraft.trainer.base import SumTrainer
+
+    make = sum_trainer_env
+    plain, thermo = make("plain"), make("thermo")
+    calls = {"resample": 0, "epochs": []}
+
+    def _resample(record_epoch=None):
+        calls["resample"] += 1
+        calls["epochs"].append(record_epoch)
+
+    # give one half the resampling retry loop and the state it reads
+    thermo._retry_invalid_loss = types.MethodType(
+        ThermodynamicTrainer._retry_invalid_loss, thermo
+    )
+    thermo._epoch = 7
+    thermo.ffxml = "xmlfiles/epoch_x-7.xml"
+    thermo.nan_resample_retries = 1
+    thermo.sampling_params = [{}, {}]
+    thermo.resample = [False, False]
+    thermo._nan_resampled = False
+    thermo.estimator = types.SimpleNamespace()
+    thermo._resample = _resample
+
+    joint = SumTrainer(
+        plain, thermo,
+        opt_fftypes=["NonbondedForce/charge"], weight=[1.0, 1.0], lr=0.01, clip=0.1,
+    )
+    joint.setup()
+    for sub in (plain, thermo):
+        sub.get_loss_gradients = (
+            lambda sub=sub: (
+                jnp.float32(jnp.nan),
+                jax.tree_util.tree_map(jnp.zeros_like, sub.ffparams),
+            )
+        )
+    joint.training_step()
+
+    # only the thermodynamic half resamples, for the epoch it is retrying,
+    # and the plain half has no _resample to call in the first place
+    assert calls["resample"] == 1 and calls["epochs"] == [7]
+    assert not hasattr(plain, "_resample")
+    assert thermo.resample == [False, False]
+
+
+def test_recovery_resamples_every_replica_for_the_epoch_being_retried():
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    stub, calls, loss, grads = _retry_stub(
+        1, [float("nan"), 0.5], epoch=665, n=3
+    )
+    ThermodynamicTrainer._retry_invalid_loss(stub, loss, grads)
+
+    # the trajectories belong to the epoch being retried, not to the next one
+    assert calls["epochs"] == [665]
+    # every replica is renewed, and the flags are left clean for after_step
+    assert stub.resample == [False, False, False]
+    assert stub._nan_resampled is True
+
+
+def test_recovery_does_nothing_before_setup():
+    """Without an estimator there is nothing to resample into"""
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    stub, calls, loss, grads = _retry_stub(
+        1, [float("nan")] * 2, estimator=False
+    )
+    ThermodynamicTrainer._retry_invalid_loss(stub, loss, grads)
+    assert calls["resample"] == 0
+    assert stub.resample == [False, False]
+    assert stub._nan_resampled is False
+
+
+def test_after_step_does_not_resample_twice_for_the_same_invalid_loss():
+    """A recovery resampling this step makes the one in after_step redundant"""
+    import inspect
+
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    src = inspect.getsource(ThermodynamicTrainer.__dict__["after_step"])
+    assert "if loss_is_invalid and not self._nan_resampled:" in src
+    # and the flag is cleared, so the next step is judged on its own
+    assert "self._nan_resampled = False" in src
+
+
+def test_resample_files_the_validation_record_under_the_given_epoch(monkeypatch):
+    import types
+
+    from imolcraft.trainer import ThermodynamicTrainer
+    from imolcraft.trainer import trainer as trainer_module
+
+    monkeypatch.setattr(
+        trainer_module, "get_target_pred_frame", lambda *a, **k: {"frame": 1}
+    )
+    recorded = []
+    stub = types.SimpleNamespace(
+        _epoch=11,
+        ffxml="ff.xml",
+        resample_counter=42,
+        sampling_params=[{}],
+        pdbfile_vsite=["vs.pdb"],
+        target_params=[{}],
+        target_pred_frame=[None],
+        estimator=types.SimpleNamespace(
+            states=[], optimize_mbar=lambda: recorded.append("mbar")
+        ),
+        _resample_indices=lambda: [0],
+        _run_md=lambda idx, name: f"{name}.xtc",
+        _add_sample=lambda idx, name, xtc: None,
+        _update_validation=lambda idx, xtc: None,
+        _record_validation=lambda epoch: recorded.append(epoch),
+    )
+
+    ThermodynamicTrainer._resample(stub, record_epoch=stub._epoch)
+    assert recorded == [11, "mbar"]
+    assert stub.resample_counter == 0
+
+    recorded.clear()
+    ThermodynamicTrainer._resample(stub)
+    assert recorded == [12, "mbar"]
+
+
+# --------------------------------------- lower bounds on physical parameters
+def _tree(sigma, epsilon, charge=(0.5, -0.5)):
+    return {
+        "NonbondedForce": {
+            "sigma": jnp.array(sigma, dtype=jnp.float64),
+            "epsilon": jnp.array(epsilon, dtype=jnp.float64),
+            "charge": jnp.array(charge, dtype=jnp.float64),
+        }
+    }
+
+
+def test_the_defaults_bound_sigma_and_epsilon_only():
+    """A charge is signed and a torsion constant may change sign, so neither is bound"""
+    from imolcraft.trainer.base import DEFAULT_PARAM_FLOORS
+
+    assert set(DEFAULT_PARAM_FLOORS) == {
+        "NonbondedForce/sigma",
+        "NonbondedForce/epsilon",
+    }
+    # a sigma divides a distance, so it has to stay clear of zero, while a
+    # switched-off Lennard-Jones site is a legitimate epsilon of zero
+    assert DEFAULT_PARAM_FLOORS["NonbondedForce/sigma"] > 0.0
+    assert DEFAULT_PARAM_FLOORS["NonbondedForce/epsilon"] == 0.0
+
+
+def test_none_asks_for_the_defaults_and_an_empty_dict_for_nothing():
+    from imolcraft.trainer.base import DEFAULT_PARAM_FLOORS, _resolve_param_floors
+
+    tree = _tree([0.3, 0.3], [0.5, 0.5])
+    assert _resolve_param_floors(tree, None) == {
+        name: float(floor) for name, floor in DEFAULT_PARAM_FLOORS.items()
+    }
+    assert _resolve_param_floors(tree, {}) == {}
+
+
+def test_a_bound_the_force_field_does_not_carry_is_dropped():
+    """A trainer fitting torsions alone carries no sigma, and must not raise"""
+    from imolcraft.trainer.base import _resolve_param_floors
+
+    torsions = {"PeriodicTorsionForce": {"proper_k": jnp.array([1.0])}}
+    assert _resolve_param_floors(torsions, None) == {}
+    assert _resolve_param_floors(
+        torsions, {"HarmonicBondForce/k": 0.0, "PeriodicTorsionForce/proper_k": -5.0}
+    ) == {"PeriodicTorsionForce/proper_k": -5.0}
+
+
+def test_a_feasible_step_is_left_untouched():
+    from imolcraft.trainer.base import _resolve_param_floors, enforce_param_floors
+
+    previous = _tree([0.30, 0.31], [0.5, 0.6])
+    stepped = _tree([0.29, 0.32], [0.4, 0.0])
+    floors = _resolve_param_floors(stepped, None)
+
+    out, report = enforce_param_floors(stepped, previous, floors)
+    assert report == {}
+    # the very same tree comes back, so nothing was copied for nothing
+    assert out is stepped
+    # an epsilon of zero is on its bound, not below it
+    assert float(out["NonbondedForce"]["epsilon"][1]) == 0.0
+    # and no bounds at all short-circuits the same way
+    out, report = enforce_param_floors(_tree([-1.0], [-1.0]), previous, {})
+    assert report == {} and float(out["NonbondedForce"]["sigma"][0]) == -1.0
+
+
+def test_a_parameter_pushed_below_its_bound_is_held_at_the_previous_value():
+    """Not parked on the bound: a sigma at the bound has no gradient left"""
+    from imolcraft.trainer.base import _resolve_param_floors, enforce_param_floors
+
+    previous = _tree([0.30, 0.31], [0.5, 0.6])
+    stepped = _tree([-0.02, 0.32], [0.4, -0.1])
+    floors = _resolve_param_floors(stepped, None)
+
+    out, report = enforce_param_floors(stepped, previous, floors)
+
+    assert list(out["NonbondedForce"]["sigma"]) == [0.30, 0.32]
+    assert list(out["NonbondedForce"]["epsilon"]) == [0.4, 0.6]
+    assert report["NonbondedForce/sigma"] == {"count": 1, "lowest": -0.02}
+    assert report["NonbondedForce/epsilon"]["count"] == 1
+    # neither input tree was written to
+    assert list(previous["NonbondedForce"]["sigma"]) == [0.30, 0.31]
+    assert list(stepped["NonbondedForce"]["sigma"]) == [-0.02, 0.32]
+
+
+def test_a_previous_value_below_the_bound_is_raised_onto_it():
+    """A force field that started out unphysical still comes out feasible"""
+    from imolcraft.trainer.base import (
+        DEFAULT_PARAM_FLOORS,
+        _resolve_param_floors,
+        enforce_param_floors,
+    )
+
+    previous = _tree([-0.5, 0.31], [0.5, 0.6])
+    stepped = _tree([-0.6, 0.32], [0.5, 0.6])
+    floors = _resolve_param_floors(stepped, None)
+
+    out, _ = enforce_param_floors(stepped, previous, floors)
+    assert float(out["NonbondedForce"]["sigma"][0]) == pytest.approx(
+        DEFAULT_PARAM_FLOORS["NonbondedForce/sigma"]
+    )
+
+
+def test_the_after_update_hook_sees_the_corrected_parameters(sum_trainer_env):
+    """The floors come before the hook, on the joint tree of a SumTrainer too"""
+    from imolcraft.trainer.base import SumTrainer
+
+    make = sum_trainer_env
+    seen = {}
+
+    def hook_for(name):
+        def hook(ffparams):
+            seen[name] = [float(v) for v in ffparams["NonbondedForce"]["sigma"]]
+            return ffparams
+
+        return hook
+
+    # a learning rate of 1 nm per step takes every sigma well below zero
+    solo = make("solo", opt_fftypes=["NonbondedForce/sigma"], lr=1.0, clip=10.0)
+    solo.add_modifyfn("after_update", hook_for("solo"))
+    solo.setup()
+    before = [float(v) for v in solo.ffparams["NonbondedForce"]["sigma"]]
+    solo.training_step()
+    assert seen["solo"] == before
+
+    joint = SumTrainer(
+        make("t1", opt_fftypes=["NonbondedForce/sigma"]),
+        make("t2", opt_fftypes=["NonbondedForce/sigma"]),
+        opt_fftypes=["NonbondedForce/sigma"], weight=[1.0, 1.0], lr=1.0, clip=10.0,
+    )
+    joint.trainer1.add_modifyfn("after_update", hook_for("t1"))
+    joint.add_modifyfn("after_update", hook_for("joint"))
+    joint.setup()
+    joint.training_step()
+    assert set(seen) == {"solo", "t1", "joint"}
+    assert all(value > 0.0 for values in seen.values() for value in values)
+
+
+@pytest.mark.parametrize("given", [None, {}])
+def test_a_real_trainer_resolves_the_bounds_it_was_given(sum_trainer_env, given):
+    """None asks for the defaults of its force field, {} for nothing"""
+    from imolcraft.trainer.base import DEFAULT_PARAM_FLOORS
+
+    trainer = sum_trainer_env("t1", param_floors=given)
+    expected = {} if given == {} else {
+        name: float(floor) for name, floor in DEFAULT_PARAM_FLOORS.items()
+    }
+    assert trainer.param_floors == expected
+    assert trainer.param_floors_given == given
+
+
+def test_every_trainer_records_the_bounds_it_was_given():
+    """A restart must not silently drop back to the defaults"""
+    import inspect
+
+    from imolcraft.trainer import DihedralTrainer, DistanceTrainer
+
+    # SumTrainer is covered by the restart test below
+    for cls in (DistanceTrainer, DihedralTrainer):
+        src = inspect.getsource(cls.__dict__["write_checkpoint"])
+        assert '"param_floors": self.param_floors_given' in src, cls.__name__
+
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    # this one rebuilds itself from restart_args rather than from loose keys
+    src = inspect.getsource(ThermodynamicTrainer.__dict__["__init__"])
+    assert '"param_floors": param_floors' in src
+    src = inspect.getsource(ThermodynamicTrainer.__dict__["from_checkpoint"])
+    assert '"param_floors": param_floors' in src
+
+
+def test_the_bounds_survive_a_sumtrainer_restart(sum_trainer_env, tmp_path):
+    from imolcraft.trainer.base import SumTrainer
+
+    make = sum_trainer_env
+    trainer = SumTrainer(
+        make("t1"), make("t2"), opt_fftypes=["NonbondedForce/charge"],
+        weight=[1.0, 1.0], lr=0.01, clip=0.1,
+        param_floors={"NonbondedForce/sigma": 0.05},
+    )
+    trainer.setup()
+    trainer.write_checkpoint(1)
+
+    restored = SumTrainer.from_checkpoint(
+        f"train_state_{trainer.label}.pkl", make("t1"), make("t2")
+    )
+    assert restored.param_floors == {"NonbondedForce/sigma": 0.05}
+
+
+def test_a_real_step_cannot_drive_sigma_negative(sum_trainer_env, capsys):
+    """End to end: the optimizer overshoots by far, and sigma stays physical"""
+    trainer = sum_trainer_env(
+        "sig", opt_fftypes=["NonbondedForce/sigma"], lr=1.0, clip=10.0
+    )
+    trainer.setup()
+    before = [float(v) for v in trainer.ffparams["NonbondedForce"]["sigma"]]
+    trainer.fit(steps=1, checkpoint_frequency=1000)
+    after = [float(v) for v in trainer.ffparams["NonbondedForce"]["sigma"]]
+
+    # a learning rate of 1 nm per step takes every sigma well below zero
+    assert all(value > 0.0 for value in after)
+    assert after == before
+    out = capsys.readouterr().out
+    assert "NonbondedForce/sigma was pushed below" in out
+    assert "lr or clip is too large" in out
+
+
+# -------------------------------------------------- guards against NaN and Inf
+@pytest.mark.parametrize(
+    "leaf, expected",
+    [(2.0, True), (float("nan"), False), (float("inf"), False), (float("-inf"), False)],
+)
+def test_tree_is_finite_looks_into_every_leaf(leaf, expected):
+    """One bad element anywhere in the nesting is enough"""
+    from imolcraft.trainer.base import tree_is_finite
+
+    tree = {
+        "NonbondedForce": {
+            "sigma": jnp.array([0.3, 0.35]),
+            "epsilon": jnp.array([0.5, 0.0]),
+        },
+        "PeriodicTorsionForce": {"k": jnp.array([-1.0, leaf])},
+    }
+    assert tree_is_finite(tree) is expected
+    assert tree_is_finite({}) is True
+
+
+def test_a_finite_tree_is_handed_back_untouched():
+    from imolcraft.trainer.base import restore_nonfinite_params
+
+    stepped = _tree([0.3, 0.35], [0.5, 0.6])
+    out, count = restore_nonfinite_params(stepped, _tree([0.2, 0.25], [0.4, 0.5]))
+
+    assert count == 0
+    assert out is stepped
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_only_the_non_finite_entries_go_back(bad):
+    """A step good everywhere else is kept, entry by entry"""
+    from imolcraft.trainer.base import restore_nonfinite_params
+
+    previous = _tree([0.30, 0.31], [0.50, 0.51], charge=(0.5, -0.5))
+    stepped = _tree([bad, 0.41], [0.60, bad], charge=(0.7, -0.7))
+    out, count = restore_nonfinite_params(stepped, previous)
+
+    assert count == 2
+    # the entries that went bad hold exactly what they held before the step
+    assert float(out["NonbondedForce"]["sigma"][0]) == 0.30
+    assert float(out["NonbondedForce"]["epsilon"][1]) == 0.51
+    # the ones that did not are the stepped values
+    assert float(out["NonbondedForce"]["sigma"][1]) == pytest.approx(
+        0.41, rel=1e-6, abs=1e-12
+    )
+    assert float(out["NonbondedForce"]["epsilon"][0]) == pytest.approx(
+        0.60, rel=1e-6, abs=1e-12
+    )
+    # a charge is not bounded but is still rescued from being non-finite
+    assert jnp.allclose(
+        out["NonbondedForce"]["charge"],
+        jnp.array([0.7, -0.7]),
+        rtol=1e-6,
+        atol=1e-12,
+    )
+    # neither input tree was written to
+    assert out is not stepped
+    assert not jnp.isfinite(stepped["NonbondedForce"]["sigma"][0])
+    assert float(previous["NonbondedForce"]["sigma"][0]) == 0.30
+    assert float(previous["NonbondedForce"]["epsilon"][1]) == 0.51
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_a_finite_loss_with_bad_gradients_still_perturbs(bad, sum_trainer_env,
+                                                         monkeypatch):
+    """A loss can be finite and still differentiate into NaN or Inf"""
+    import jax
+
+    import imolcraft.trainer.base as base
+    from imolcraft.trainer.base import tree_is_finite
+
+    trainer = sum_trainer_env("grad", opt_fftypes=["NonbondedForce/sigma"])
+    trainer.setup()
+    before = trainer.ffparams
+
+    def bad_gradients():
+        grads = jax.tree_util.tree_map(lambda x: jnp.full_like(x, bad),
+                                       trainer.ffparams)
+        return jnp.float32(1.0), grads
+
+    trainer.get_loss_gradients = bad_gradients
+    calls = []
+    real = base._nan_recovery_gradients
+    monkeypatch.setattr(
+        base, "_nan_recovery_gradients",
+        lambda ffparams: (calls.append(1), real(ffparams))[1],
+    )
+    trainer.training_step()
+
+    # the perturbation route was taken and nothing non-finite got through
+    assert len(calls) == 1
+    assert tree_is_finite(trainer.ffparams)
+    assert not jnp.allclose(
+        trainer.ffparams["NonbondedForce"]["sigma"],
+        before["NonbondedForce"]["sigma"],
+        rtol=1e-6,
+        atol=1e-12,
+    )
+
+
+def test_non_finite_parameters_never_reach_the_force_field(sum_trainer_env,
+                                                           monkeypatch, capsys):
+    """Whatever the optimizer produces, the step ends on a finite tree"""
+    import jax
+
+    import imolcraft.trainer.base as base
+    from imolcraft.trainer.base import tree_is_finite
+
+    trainer = sum_trainer_env("bad", opt_fftypes=["NonbondedForce/sigma"])
+    trainer.setup()
+    before = [float(v) for v in trainer.ffparams["NonbondedForce"]["sigma"]]
+
+    # an update straight out of a poisoned optimizer state
+    monkeypatch.setattr(
+        base.optax, "apply_updates",
+        lambda params, updates: jax.tree_util.tree_map(
+            lambda x: jnp.full_like(x, jnp.nan), params
+        ),
+    )
+    trainer.training_step()
+
+    assert tree_is_finite(trainer.ffparams)
+    after = [float(v) for v in trainer.ffparams["NonbondedForce"]["sigma"]]
+    assert after == before
+    assert "came out NaN or Inf after the update" in capsys.readouterr().out
+
+
+def _fit_stub(losses, tmp_path):
+    """Minimal ``self`` for :meth:`BaseTrainer.fit` returning fixed losses"""
+    import types
+
+    seq = list(losses)
+    rendered = []
+
+    def training_step():
+        stub.loss = seq[stub._epoch]
+        stub.ffparams = {"step": stub._epoch}
+
+    stub = types.SimpleNamespace(
+        loss=None,
+        ffparams={"step": -1},
+        losses=[],
+        epochs=[],
+        best_params=None,
+        best_epoch=None,
+        best_loss=None,
+        label=str(tmp_path / "stub"),
+        _epoch=0,
+        before_step=lambda: None,
+        after_step=lambda: None,
+        training_step=training_step,
+        write_checkpoint=lambda frequency: None,
+        ff=types.SimpleNamespace(renderXML=lambda path: rendered.append(path)),
+    )
+    return stub, rendered
+
+
+def test_a_nan_epoch_does_not_freeze_the_best_force_field(tmp_path):
+    """min() over a history holding a NaN returns NaN and never compares True"""
+    from imolcraft.trainer.base import BaseTrainer
+
+    nan = float("nan")
+    stub, rendered = _fit_stub([nan, 3.0, 1.0], tmp_path)
+    BaseTrainer.fit(stub, steps=3, checkpoint_frequency=1000)
+
+    assert stub.best_loss == pytest.approx(1.0, rel=1e-6, abs=1e-12)
+    assert stub.best_epoch == 2
+    assert stub.best_params == {"step": 2}
+    # the NaN epoch is still in the history, it is just never the best one
+    assert len(stub.losses) == 3 and jnp.isnan(jnp.float32(stub.losses[0]))
+    # epoch 1 and epoch 2 each improved on what came before
+    assert len(rendered) == 2
+
+
+def _best_stub(losses, epochs):
+    """Minimal ``self`` for :meth:`BaseTrainer._restore_best`"""
+    import types
+
+    return types.SimpleNamespace(
+        losses=list(losses),
+        epochs=list(epochs),
+        best_params=None,
+        best_epoch=None,
+        best_loss=None,
+    )
+
+
+def test_a_recorded_best_snapshot_is_restored_as_it_stands():
+    from imolcraft.trainer.base import BaseTrainer
+
+    stub = _best_stub([3.0, 1.0, 2.0], [0, 1, 2])
+    BaseTrainer._restore_best(
+        stub,
+        {"best_params": {"step": 1}, "best_epoch": 1, "best_loss": 1.0},
+    )
+
+    assert stub.best_params == {"step": 1}
+    assert stub.best_epoch == 1
+    assert stub.best_loss == pytest.approx(1.0, rel=1e-6, abs=1e-12)
+
+
+def test_an_old_checkpoint_takes_its_best_from_the_history():
+    """Before the snapshot was recorded the run printed the historical minimum"""
+    from imolcraft.trainer.base import BaseTrainer
+
+    stub = _best_stub([float("nan"), 3.0, 1.0, 2.0], [10, 11, 12, 13])
+    BaseTrainer._restore_best(stub, {"losses": stub.losses})
+
+    assert stub.best_loss == pytest.approx(1.0, rel=1e-6, abs=1e-12)
+    assert stub.best_epoch == 12
+    # the parameters of that epoch were never recorded, so there is no snapshot
+    assert stub.best_params is None
+
+
+def test_a_history_of_nothing_but_nan_leaves_the_best_unset():
+    from imolcraft.trainer.base import BaseTrainer
+
+    nan = float("nan")
+    stub = _best_stub([nan, nan], [0, 1])
+    BaseTrainer._restore_best(stub, {})
+
+    assert stub.best_loss is None
+    assert stub.best_epoch is None
+    assert stub.best_params is None
+
+    empty = _best_stub([], [])
+    BaseTrainer._restore_best(empty, {})
+    assert empty.best_loss is None and empty.best_epoch is None
+
+
+# ------------------------------------------------ MD software of a sampling block
+SUPERCELL_PDB = os.path.join(TESTS, "data", "supercell_bonds.pdb")
+NOVSITE_FFXML = os.path.join(TESTS, "data", "supercell_bonds_novsite.xml")
+VSITE_FFXML = os.path.join(TESTS, "data", "vsite_average2.xml")
+
+
+def _sampling_block(**overrides):
+    """A sampling block as an existing YAML writes it, anneal_interval: 100 included"""
+    block = {
+        "init_structure": SUPERCELL_PDB,
+        "ensemble": "nvt",
+        "rcut_nm": 1.2,
+        "temperature_K": 300.0,
+        "nonbondedmethod": "PME",
+        "neff": 2,
+        "relax_steps": 10,
+        "prod_steps": 10,
+        "nstxout": 5,
+        "anneal_interval": 100,
+        "pressure_bar": 1.0,
+    }
+    block.update(overrides)
+    return block
+
+
+@pytest.fixture
+def thermo_trainer_env(tmp_path, monkeypatch):
+    """Build a ThermodynamicTrainer without running setup (no MD, no MBAR)"""
+    pytest.importorskip("dmff")
+    monkeypatch.chdir(tmp_path)
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    def make(sampling_params, ffxml=NOVSITE_FFXML, **kwargs):
+        options = {
+            "ffxml_list": [ffxml],
+            "nums_ffxml": [1],
+            "pdbfile": SUPERCELL_PDB,
+            "loss_fn": None,
+            "sampling_params": sampling_params,
+            "target_params": [
+                {"density_gcm3": {"weight": 1.0, "gt": 0.4}}
+            ] * len(sampling_params),
+            "opt_fftypes": ["NonbondedForce/charge"],
+            "label": "engine",
+            "md_log": "none",
+        }
+        options.update(kwargs)
+        return ThermodynamicTrainer(**options)
+
+    return make
+
+
+def test_a_sampling_block_runs_with_openmm_unless_told_otherwise(thermo_trainer_env):
+    from imolcraft.calculator import OpenMMCalculator
+
+    trainer = thermo_trainer_env([_sampling_block()])
+    assert trainer.md_calculators[0].software == "openmm"
+    assert type(trainer.md_calculators[0].backend) is OpenMMCalculator
+    assert trainer.md_calculators[0].md_log == "none"
+
+
+def test_software_gromacs_in_a_sampling_block_selects_the_gmx_backend(
+    thermo_trainer_env,
+):
+    """F9: the key reaches the calculator with pressure_bar and the GROMACS settings"""
+    from imolcraft.calculator import GMXCalculator
+
+    trainer = thermo_trainer_env(
+        [_sampling_block(software="gromacs", ensemble="isonpt", pressure_bar=3.0,
+                         ntomp=2, workdir="gmxrun")],
+        device="CUDA", md_log="file", md_logfile="md.log",
+    )
+    calculator = trainer.md_calculators[0]
+    assert calculator.software == "gromacs"
+    assert type(calculator.backend) is GMXCalculator
+    assert calculator.backend.pressure_bar == 3.0
+    assert calculator.backend.ntomp == 2 and calculator.backend.workdir == "gmxrun"
+    # the run-time settings of the trainer win over the block, on the backend
+    assert calculator.backend.device == "CUDA"
+    assert calculator.backend.md_log == "file"
+    assert calculator.backend.md_logfile == "md.log"
+    # the same key feeds the PV term of the reweighting
+    assert trainer.P_bar == [3.0]
+
+
+def test_each_replica_picks_its_own_software(thermo_trainer_env):
+    from imolcraft.calculator import GMXCalculator, OpenMMCalculator
+
+    trainer = thermo_trainer_env(
+        [_sampling_block(), _sampling_block(software="gromacs")]
+    )
+    assert [c.software for c in trainer.md_calculators] == ["openmm", "gromacs"]
+    assert type(trainer.md_calculators[0].backend) is OpenMMCalculator
+    assert type(trainer.md_calculators[1].backend) is GMXCalculator
+
+
+def test_a_virtual_site_force_field_is_refused_under_gromacs(thermo_trainer_env):
+    """F10: the GROMACS exporter has no virtual sites, so the trainer says so at once"""
+    with pytest.raises(ValueError) as excinfo:
+        thermo_trainer_env([_sampling_block(software="gromacs")], ffxml=VSITE_FFXML)
+    message = str(excinfo.value)
+    assert "virtual sites" in message and "software='openmm'" in message
+    assert "replica 0" in message
+
+    # the same force field is fine with the default software
+    trainer = thermo_trainer_env([_sampling_block()], ffxml=VSITE_FFXML)
+    assert trainer.num_vsites == 2
+    assert trainer.md_calculators[0].software == "openmm"
+
+
+def test_the_checkpoint_records_the_software_and_restores_the_backend(
+    thermo_trainer_env, tmp_path
+):
+    """The md_params carry software, so a restart builds the same backends"""
+    import pickle
+
+    from imolcraft.calculator import GMXCalculator, OpenMMCalculator
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    trainer = thermo_trainer_env(
+        [_sampling_block(), _sampling_block(software="gromacs", ntomp=2)]
+    )
+    trainer.opt_state = None  # set by setup, which is not run here
+    trainer.write_checkpoint(1)
+
+    ckpt = tmp_path / "train_state_engine.pkl"
+    with open(ckpt, "rb") as handle:
+        dump = pickle.load(handle)
+    assert [r["software"] for r in dump["md_params"]] == ["openmm", "gromacs"]
+    assert dump["md_params"][0]["pressure_bar"] == 1.0
+    assert "ntomp" not in dump["md_params"][0] and dump["md_params"][1]["ntomp"] == 2
+
+    restored = ThermodynamicTrainer.from_checkpoint(
+        str(ckpt), loss_fn=lambda *args: 0.0, setup=False, md_log="stdout"
+    )
+    assert type(restored.md_calculators[0].backend) is OpenMMCalculator
+    assert type(restored.md_calculators[1].backend) is GMXCalculator
+    assert restored.md_calculators[1].backend.ntomp == 2
+    # the override given to from_checkpoint reached the backends
+    assert all(c.backend.md_log == "stdout" for c in restored.md_calculators)
+
+
+def test_a_checkpoint_written_before_the_choice_restores_as_openmm(
+    thermo_trainer_env, tmp_path
+):
+    """C4: md_params without software (nor pressure_bar) still read"""
+    import pickle
+
+    from imolcraft.calculator import OpenMMCalculator
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    trainer = thermo_trainer_env([_sampling_block()])
+    trainer.opt_state = None
+    trainer.write_checkpoint(1)
+    ckpt = tmp_path / "train_state_engine.pkl"
+    with open(ckpt, "rb") as handle:
+        dump = pickle.load(handle)
+    for record in dump["md_params"]:
+        del record["software"], record["pressure_bar"]
+    with open(ckpt, "wb") as handle:
+        pickle.dump(dump, handle)
+
+    restored = ThermodynamicTrainer.from_checkpoint(
+        str(ckpt), loss_fn=lambda *args: 0.0, setup=False
+    )
+    assert restored.md_calculators[0].software == "openmm"
+    assert type(restored.md_calculators[0].backend) is OpenMMCalculator
+    assert restored.md_calculators[0].backend.pressure_bar == 1.0

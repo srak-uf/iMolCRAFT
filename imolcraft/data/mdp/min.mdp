@@ -1,0 +1,34 @@
+; Source: https://github.com/srak-uf/gromacs_tutorial (6e2f68b33d2d5934b3bf5cf8d02d8eec28065dc7)
+integrator              = steep  ; steep | md | md-vv
+nsteps                  = 4096
+emtol                   = 100.0  ; steep option kJ mol-1 nm-1, converged when the maximum force is smaller
+emstep                  = 0.01   ; steep option nm, initial step-size
+pbc                     = xyz
+coulombtype             = PME    ; Cut-off | PME | P3M-AD
+coulomb-modifier        = None
+rcoulomb                = 1.2
+vdwtype                 = Cut-off   ; Cut-off | PME | P3M-AD
+vdw-modifier            = None
+rvdw                    = 1.2
+constraints             = all-bonds           ; all-bonds | h-bonds
+constraint-algorithm    = LINCS
+nstxout                 = 10
+nstvout                 = 10
+nstenergy               = 10
+nstxout-compressed      = 0
+compressed-x-grps       = 
+nstlist                 = 10
+ns-type                 = grid
+cutoff-scheme           = Verlet
+verlet-buffer-tolerance = 0.005         ; GROMACS default; grompp sets rlist from it
+fourierspacing          = 0.12
+pme-order               = 6
+ewald-rtol              = 1e-8
+DispCorr                = EnerPres
+lincs-order             = 8
+lincs-iter              = 2
+continuation            = no
+define                  = 
+print-nose-hoover-chain-variables = yes
+
+nstcalcenergy           = 10

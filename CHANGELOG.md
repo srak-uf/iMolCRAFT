@@ -11,6 +11,176 @@ fixes and backwards-compatible additions moves the patch number.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-07
+
+### Added
+
+- `imolcraft.calculator.GMXCalculator` (new module
+  `imolcraft/calculator/gmx.py`), which samples one thermodynamic state with
+  GROMACS through `gmx grompp` / `gmx mdrun`. It takes the same `.pdb` as
+  `MDCalculator`, names its settings exactly as `MDCalculator` does
+  (`rcut_nm`, `temperature_K`, `dt_fs`, `nstxout`, `relax_steps`,
+  `prod_steps`, `ensemble`, ...), and follows the same `to_dict` /
+  `from_dict` and `run(ffxml, trajectory)` contract, so it is a drop-in
+  replacement. `run` takes the same `.ffxml` as `MDCalculator.run`: the
+  OpenMM `System` is built exactly as `MDCalculator` builds it (same
+  `Modeller.addExtraParticles`, `nonbondedMethod`, `nonbondedCutoff` and
+  dispersion correction), serialized, and turned into the `.top` / `.gro`
+  through `imolcraft.io.exporter(..., fmt="gmx")` in a temporary directory
+  that is removed afterwards, while the `.mdp`, `.tpr`, `.log`, `.edr` and
+  `.cpt` files of every stage are kept under `workdir` (default
+  `gmxfiles/`). Hydrogen constraints are applied from the mdp
+  (`constraints = h-bonds`) rather than baked into the exported System. The
+  Ewald parameters are OpenMM's: `ewald-rtol`, `ewald-rtol-lj` and
+  `fourierspacing` are derived from OpenMM's error tolerance (5e-4) so that
+  the splitting parameter is identical; `"LJPME"` writes
+  `lj-pme-comb-rule = Geometric` and `vdw-modifier = Potential-Shift`
+  explicitly. The pair-list radius is left to GROMACS:
+  `verlet-buffer-tolerance` is written at the GROMACS default
+  (0.005 kJ/mol/ps) and no `rlist` is, so grompp and mdrun set `rlist` and
+  `nstlist` from that tolerance; pass both `verlet-buffer-tolerance = -1`
+  and `rlist` through `mdp_extra` to fix the list manually. A single-point energy test against OpenMM (bonded terms agree
+  to < 1e-3 kJ/mol, Lennard-Jones to < 1e-3 kJ/mol with PME and < 5e-3
+  kJ/mol with LJPME, Coulomb to 3e-5 relative) is
+  part of the `gmx`-marked tests. A
+  force field with virtual sites is refused with a `ValueError`: the GROMACS
+  exporter does not translate OpenMM virtual sites to `[ virtual_sites2 ]`,
+  a known limitation of this first version. `anneal_interval` and `rigidWater`
+  are accepted for compatibility and have no effect. GROMACS-specific
+  settings (`pressure_bar`, `compressibility_bar`,
+  `tau_t_ps`, `tau_p_ps`, `tcoupl`, `pcoupl`, `min_steps`, `emtol`,
+  `gmx_bin`, `mpi_command`, `ntmpi`, `ntomp`, `maxwarn`, `mdp_templates`,
+  `mdp_extra`, `workdir`) are additions. The production trajectory is
+  written as `.xtc` under `xtcfiles/` (no `.trr`). The `.mdp` files of
+  srak-uf/gromacs_tutorial ship as package data under `imolcraft/data/mdp/`
+  and are used as templates.
+  The four execution settings (`gmx_bin`, `mpi_command`, `ntmpi`, `ntomp`)
+  default to `None` and are resolved at run time as argument > environment
+  variable (`IMOLCRAFT_GMX_BIN`, `IMOLCRAFT_GMX_MPI_COMMAND`,
+  `IMOLCRAFT_GMX_NTMPI`, `IMOLCRAFT_GMX_NTOMP`; listed in
+  `imolcraft.calculator.gmx.GMX_ENV`) > default (`gmx`, no launcher, threads
+  left to mdrun), so a batch script can point a trainer at `gmx_mpi` under
+  `srun`/`mpirun` without the checkpoint recording the job's launcher. A
+  launcher combined with `ntmpi` is refused (`gmx_mpi` does not take
+  `-ntmpi`). `mpi_command` may be a list or a string; a string (argument or
+  variable) is split like a shell would when the command is built. `ntmpi`
+  and `ntomp` must be positive integers, from either source. The resolved
+  mdrun command and the source of each value are written to the MD log at
+  the start of a run.
+- `gmx_sample(...)`, a thin wrapper over `GMXCalculator`.
+- pytest marker `gmx` for tests that need the `gmx` binary.
+- **The MD software is chosen with one setting**: `MDCalculator(init_structure,
+  software="openmm")` (default) or `software="gromacs"` runs the sampling with
+  `OpenMMCalculator` or with `GMXCalculator`, which `MDCalculator` now holds
+  (`MDCalculator.backend`) and delegates `run`, `to_dict`, `device`, `md_log`
+  and `md_logfile` to. The key is named as the QM `software` of the crafter
+  is, takes the same lower-case literal names and refuses anything else with
+  `Unknown software`. A sampling block of `ThermodynamicTrainer` therefore
+  selects the software with `software: gromacs`, per replica, and the choice
+  is recorded in the checkpoint like any other setting. `MDCalculator.SETTINGS`
+  is the union of both and `imolcraft.calculator.SOFTWARE_SETTINGS` says which
+  setting applies to which; a setting of the other software given a
+  non-default value is refused with a `ValueError` rather than silently
+  ignored (a default value, such as the `anneal_interval: 100` of the
+  existing YAML files, is dropped). A force field with virtual sites combined
+  with `software="gromacs"` is refused when the trainer is built. `md_sample`
+  takes `software` as well.
+- `imolcraft.calculator.OpenMMCalculator` (new module
+  `imolcraft/calculator/omm.py`), the OpenMM calculator itself, usable
+  directly as `GMXCalculator` is.
+- `pressure_bar` is now a setting of the OpenMM sampling too (default 1.0 bar),
+  so both softwares read the same key.
+
+### Changed
+
+- **The OpenMM implementation moved from `imolcraft/calculator/md.py` to
+  `imolcraft/calculator/omm.py` as `OpenMMCalculator`.** `MDCalculator` stays
+  in `md.py` as the software-selecting entry point and delegates instead of
+  running the MD itself: constructing it, `run`, `to_dict` / `from_dict` and
+  the `device` / `md_log` / `md_logfile` attributes are unchanged, but code
+  that reached into internals such as `anneal_legs` or `_build_simulation`
+  now finds them on `MDCalculator.backend`. The parts shared by both
+  softwares (`VALID_ENSEMBLES`, `MD_LOG_MODES`, `NONBONDED_METHODS`,
+  `resolve_nonbondedmethod`, the annealing schedule and the MD log) live in
+  the new `imolcraft/calculator/_mdcommon.py`, which `omm.py` and `gmx.py`
+  both import so that neither depends on the other; the public names are
+  still importable from `imolcraft.calculator.md`. `omm.py`, `_mdcommon.py`
+  and `md.py` define `__all__`, so `openmm`, `app`, `unit`, `sys` and
+  `contextlib` no longer leak into the `imolcraft.calculator` namespace.
+- **`MDCalculator.to_dict()` records `software` and `pressure_bar`**, and a
+  `gromacs` record carries the GROMACS settings instead of the OpenMM-only
+  ones (`anneal_interval`, `rigidWater`). A record written before this
+  release restores as `software="openmm"` with `pressure_bar=1.0`, which is
+  what it used to do; a record written now cannot be read by an earlier
+  version.
+
+### Fixed
+
+- **The OpenMM barostat ignored `pressure_bar` and always ran at 1 bar**, while
+  the reweighting used the requested pressure as the PV term, so a sampling
+  block with `pressure_bar: 100` sampled 1 bar and analysed 100 bar. All three
+  NPT barostats now take `pressure_bar`. Runs at the default 1 bar are
+  unaffected; an NPT run with any other `pressure_bar` changes.
+
+## [0.3.2] — 2026-09-05
+
+### Added
+
+- **A `ThermodynamicTrainer` epoch whose loss is NaN or Inf is resampled and
+  recomputed** before being given up on. `nan_resample_retries` (default `1`,
+  `0` disables) sets how many rounds; it is stored in the checkpoint and
+  accepted by `from_checkpoint`. A loss still NaN afterwards falls back to the
+  previous perturb-and-continue behaviour.
+- **A Lennard-Jones sigma can no longer be driven to zero or below, nor an
+  epsilon negative, by an optimizer step.** A parameter that fell below its
+  bound is put back to its previous value, with a printed warning. The bounds
+  are the new `param_floors` argument of every trainer: `None` (default) is
+  `imolcraft.trainer.base.DEFAULT_PARAM_FLOORS`, sigma at `1e-3` nm and
+  epsilon at `0`; `{}` bounds nothing. They are stored in the checkpoint and
+  accepted by `from_checkpoint`; a checkpoint written before 0.3.2 gets the
+  defaults. This changes the trajectory of a run that previously walked
+  through a negative epsilon and kept going.
+- `ThermodynamicTrainer` keeps a **target history**: one record per epoch of
+  what the force field of that epoch gives for every target, next to the
+  loss. A record carries `epoch`, `ffxml`, `loss` and, per replica, the loss,
+  the effective sample sizes, whether the frames were freshly sampled, and
+  the MBAR-reweighted targets keyed `sample_{i}/{target}` (a distribution as
+  `sample_{i}/{target}/{kind}`). It lives in `trainer.target_history`, is
+  saved in the checkpoint as `target_history` and comes back through
+  `from_checkpoint`. The new `target_log` argument picks how much is kept:
+  `"low"` the scalars only, `"medium"` (default) the RDF and ADF curves as
+  well, `"all"` also the per-frame values behind them whenever a replica was
+  resampled, `"none"` nothing.
+- Every validation record of `ThermodynamicTrainer` now carries an `ffxml`
+  key next to `epoch`: the force field file the values were measured on. It
+  traces a record back to its parameters even when the XML files have been
+  renamed or a restart broke the numbering. `plot_validation` skips it, as it
+  does `epoch`, so it draws no panel for it.
+
+### Fixed
+
+- **The validation history of `ThermodynamicTrainer` labelled every record one
+  epoch behind the force field it was measured on.** `after_step` renders the
+  force field of the next epoch, `xmlfiles/epoch_<label>-<N+1>.xml`, and
+  resamples with it, but the record was stamped with the epoch being run, `N`.
+  A record now carries the epoch of the force field that produced it, so it
+  matches both the number in the XML file name printed by `Resampling ... by`
+  and the epoch of the loss measured on that same force field. The record
+  written by `setup` keeps epoch 0, the initial force field, which also
+  removes the duplicate epoch 0 that appeared when the first epoch resampled.
+  Histories restored from a checkpoint written before this fix keep their old
+  labels, so a run continued across it mixes the two conventions.
+- **A parameter that came out NaN or Inf ended the run**, the next epoch
+  writing a force field OpenMM refuses. Non-finite gradients now take the
+  same perturbation route a NaN loss does, and a parameter that is NaN or Inf
+  after the update is put back to its previous value, with a printed warning.
+- **A NaN loss froze the best force field for the rest of the run.** The best
+  is now tracked over the finite losses only; NaN epochs stay in `losses`.
+- **A checkpoint without the best-so-far snapshot made a restart report
+  `Best Loss: None at epoch None`.** The best loss and its epoch are read off
+  the restored history instead; `best_params` stays None.
+- Two packmol scratch files are untracked again and, with `.claude/`, ignored.
+
 ## [0.3.1] — 2026-08-26
 
 ### Added
@@ -128,6 +298,8 @@ fixes and backwards-compatible additions moves the patch number.
 Not itemized. `0.2.1` was set on 2026-04-08 and the releases before it were
 not tagged, so their history lives in `git log` alone.
 
-[Unreleased]: https://github.com/srak-uf/iMolCRAFT/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/srak-uf/iMolCRAFT/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/srak-uf/iMolCRAFT/compare/v0.3.2...v0.4.0
+[0.3.2]: https://github.com/srak-uf/iMolCRAFT/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/srak-uf/iMolCRAFT/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/srak-uf/iMolCRAFT/releases/tag/v0.3.0

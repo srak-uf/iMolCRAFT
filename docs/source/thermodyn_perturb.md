@@ -187,11 +187,21 @@ The trainer supports multiple MD ensembles:
 #### Resampling Strategy
 
 Adaptive resampling is triggered when:
-- Loss becomes NaN (indicates poor reweighting)
+- Loss becomes NaN (see below)
 - Effective sample size drops below user-specified threshold
 - Predefined resampling frequency is reached
 
 This ensures the method remains stable across the optimization landscape.
+
+A NaN or Inf loss is not given up on right away: every replica is resampled
+with `trainer.ffxml`, the force field the loss was measured with, and the loss
+of the same epoch is computed again, the parameters untouched.
+`nan_resample_retries` (default `1`, `0` disables) sets how many such rounds
+are allowed; each costs a full resampling. A loss still NaN afterwards falls
+back to the old behaviour, a small random perturbation of the parameters and
+the epoch recorded as NaN. Resampling cures a NaN of the sampling only; one
+from the parameters themselves is prevented by the
+[lower bounds](#gradient-and-parameter-modification-functions).
 
 #### Validation Properties
 
@@ -293,7 +303,13 @@ trainer = ThermodynamicTrainer(
 The results live in the checkpoint, like the rest of the training state:
 
 - `validation_history` / `validation_dev_history`: one record per resampling of
-  the values and of their deviations, keyed `sample_{i}/{entry}`
+  the values and of their deviations, keyed `sample_{i}/{entry}`. Every record
+  also says which force field it describes: `epoch`, and `ffxml`, the file
+  itself. That is the force field the trajectories were sampled with, which is
+  the one written at the end of the epoch that resampled -- the number printed
+  by `Resampling ... by xmlfiles/epoch_LABEL-N.xml` -- and not the epoch being
+  run at the time. The first record comes from `setup`, on the force field the
+  run starts from
 - `validation_pred` / `validation_dev` / `validation_curves`: the latest values,
   the latest deviations, and the curves they came from, the MSD as
   `(lagtime_ps, msd_A2)` columns and a distribution as `(x, pred, gt)` columns
@@ -305,6 +321,53 @@ reference. Three figures are written next to the learning curve:
 `validation_dev_LABEL.png`, the deviations against the epoch with a line at
 zero, and `validation_curves_LABEL_{i}.png`, the curves behind them -- the one
 to look at to check that the MSD is straight over the fitted window.
+
+## Target history
+
+Besides the loss, the trainer keeps what the force field of every epoch gives
+for the targets themselves: the reweighted density, cell lengths, RDF and ADF
+curves the loss is computed from. They are appended to
+`trainer.target_history`, one record per epoch, and saved in the checkpoint as
+`target_history`, next to `target_gt`:
+
+```python
+import pickle
+
+with open("train_state_ff_opt.pkl", "rb") as f:
+    state = pickle.load(f)
+
+state["target_gt"]   # the references, one dict per replica
+history = state["target_history"]
+epochs = [record["epoch"] for record in history]
+rho = [record["sample_0/density_gcm3"] for record in history]
+rdf_last = history[-1]["sample_0/rdf/Li_O"]   # the reweighted curve
+```
+
+A record carries `epoch` and `ffxml`, the force field whose parameters the
+loss of that epoch was measured with (the file rendered at the end of the
+previous epoch, or the one the run started from for epoch 0), `loss`, and per
+replica, keyed `sample_{i}/...`: the replica's own `loss`, its effective sample
+sizes `neff` (keyed by state name, None when the estimate failed), `resampled`,
+whether its frames were freshly sampled for this epoch, and the reweighted
+targets, a scalar as `sample_{i}/{target}` and a distribution as
+`sample_{i}/{target}/{kind}`. How much of that is kept is chosen with the
+`target_log` argument of `ThermodynamicTrainer`:
+
+| `target_log` | Recorded per epoch |
+| --- | --- |
+| `"none"` | Nothing. |
+| `"low"` | `epoch`, `ffxml`, the losses, `neff`, `resampled` and the reweighted scalar targets. |
+| `"medium"` (default) | `"low"` plus the reweighted RDF and ADF curves, one per kind. |
+| `"all"` | `"medium"` plus the per-frame values every target was reweighted from, under `sample_{i}/frames/...`, recorded for a replica in the epoch its frames were resampled and left out until the next resampling. |
+
+```python
+trainer = ThermodynamicTrainer(..., target_log="all")
+```
+
+`"all"` adds one curve per frame at every resampling, so the checkpoint grows
+by frames × bins per distribution each time; it is meant for a run one wants
+to re-analyse offline. The history is restored by `from_checkpoint`, and
+passing `target_log` there changes the mode for the continued run.
 
 ## Usage Example
 ### 1. Parameter optimization
@@ -415,17 +478,57 @@ Everything else may be left out:
 
 | Key | Left out |
 | --- | --- |
-| `pressure_bar` | No PV term, which is what a fixed volume means. Required for the NPT ensembles, where a barostat needs it. |
+| `software` | `openmm`. `gromacs` runs the replica with GROMACS instead (see below). |
+| `pressure_bar` | Required for the NPT ensembles: it is the set point of the barostat and the pressure of the PV term of the reweighting. A fixed-volume replica may leave it out and gets no PV term. |
 | `dispcorr` | No dispersion correction. |
 | `dt_fs`, `nstxout`, `relax_steps`, `prod_steps` | `MDCalculator` uses its own defaults. |
 | `anneal_T`, `anneal_steps`, `anneal_interval` | No annealing. |
 
-Each block becomes one `imolcraft.calculator.MDCalculator`, which is what
-actually runs the MD. The calculator names its settings exactly as the keys
-above are named, so a sampling block needs no translation and the defaults of
-the second half live in `MDCalculator.SETTINGS` rather than being restated
-here. `neff` and `pressure_bar` are not settings of the MD and stay with the
-trainer.
+Each block becomes one `imolcraft.calculator.MDCalculator`, which hands the
+run to `OpenMMCalculator` or `GMXCalculator` according to `software`. The
+calculator names its settings exactly as the keys above are named, so a
+sampling block needs no translation and the defaults of the second half live
+in `MDCalculator.SETTINGS` rather than being restated here. `neff` is not a
+setting of the MD and stays with the trainer.
+
+#### Choosing the MD Software
+
+`software` names the program that samples the replica, with the same
+lower-case literal names the QM `software` of the crafter uses (`psi4`,
+`g16`): `openmm` (default) or `gromacs`. Anything else, `GROMACS` included,
+is refused with `Unknown software`. The choice is per replica and is
+recorded in the checkpoint with the other MD settings, so a restart samples
+with the same program.
+
+```yaml
+sampling:
+  - init_structure: supercell.pdb
+    software: gromacs
+    ensemble: isonpt
+    temperature_K: 300.0
+    pressure_bar: 1.0
+    rcut_nm: 1.2
+    nonbondedmethod: PME
+    neff: 100
+    ntomp: 8
+```
+
+Both programs read the same keys (`rcut_nm`, `temperature_K`, `dt_fs`,
+`ensemble`, `pressure_bar`, `anneal_T`, ...), in the same units. GROMACS adds
+its own (`compressibility_bar`, `tau_t_ps`, `tau_p_ps`, `tcoupl`, `pcoupl`,
+`min_steps`, `emtol`, `gmx_bin`, `mpi_command`, `ntmpi`, `ntomp`, `maxwarn`,
+`mdp_templates`, `mdp_extra`, `workdir`; see `GMXCalculator`), while
+`anneal_interval` and `rigidWater` mean something to OpenMM only.
+`imolcraft.calculator.SOFTWARE_SETTINGS` lists which key belongs to which. A
+key of the other program is dropped when it holds its default value, so an
+OpenMM block that spells out `anneal_interval: 100` runs under GROMACS as it
+is, and refused with a `ValueError` otherwise, so `ntomp: 8` under OpenMM
+does not go unnoticed.
+
+The trainer's `device` is the OpenMM platform name for `openmm`; for
+`gromacs` anything but `CPU` asks `mdrun` for the GPU (`-nb gpu`). A force
+field that places virtual sites cannot be sampled with GROMACS yet (the
+exporter does not translate them), and the trainer says so when it is built.
 
 #### Restarting from a Checkpoint
 
@@ -523,6 +626,42 @@ This function is called after parameter updates to enforce chemical constraints:
   - `target_lists`: List of atom indices for each constraint group (e.g., all BF₄ atoms)
   - `target_charges`: Target net charge for each group (e.g., -1.0 for BF₄⁻)
 - **Purpose**: Ensures that any numerical drift from charge updates is corrected, maintaining chemical validity
+
+**Lower bounds on the parameters**
+
+A Lennard-Jones sigma divides a distance and a negative epsilon turns the
+well into a barrier, so after every step the trainer puts a parameter that
+fell below its bound back to the value it held before the step -- not onto
+the bound, where a switched-off site has no gradient to climb back with. Each
+correction prints a line; a run full of them means `lr` or `clip` is too large:
+
+```
+Warning: NonbondedForce/sigma was pushed below 0.001 in 2 place(s), the lowest to -0.00417. Held at the values of the previous step. Repeated warnings mean lr or clip is too large for this parameter.
+```
+
+The bounds are the `param_floors` argument, keyed like `opt_fftypes`:
+
+| `param_floors` | Effect |
+| --- | --- |
+| omitted (`None`) | `imolcraft.trainer.base.DEFAULT_PARAM_FLOORS`: `NonbondedForce/sigma` at `1e-3` nm, `NonbondedForce/epsilon` at `0` kJ/mol. |
+| `{}` | Nothing is bounded. |
+| `{"NonbondedForce/sigma": 0.05, "HarmonicBondForce/k": 0.0}` | Exactly these, replacing the defaults. |
+
+```python
+trainer = ThermodynamicTrainer(..., param_floors={"NonbondedForce/sigma": 0.05})
+```
+
+A bound naming a force the field does not carry is ignored; charges and
+torsion force constants are deliberately not bounded. The correction runs
+*before* the `"after_update"` hook below, which keeps the last word, and every
+checkpoint records the bounds it was given.
+
+A bound cannot catch a NaN (`NaN < 1e-3` is `False`), so the step guards
+itself twice more: non-finite gradients take the same random perturbation a
+NaN loss does, and a parameter that comes out NaN or Inf after the update is
+put back to its previous value before the bounds are applied. The best force
+field (`best_params`, `<label>_best.xml`) is tracked over the finite losses
+only, so a NaN epoch does not freeze it.
 
 **`trainer.add_modifyfn(hook_point, function)` - API for registering modifications**
 

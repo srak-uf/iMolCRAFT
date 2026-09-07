@@ -55,7 +55,7 @@ include = ["imolcraft*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-imolcraft = ["data/*.xml", "data/*.ini"]
+imolcraft = ["data/*.xml", "data/*.ini", "data/mdp/*.mdp"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
@@ -67,4 +67,5 @@ markers = [
     "tp: tests for thermodynamic-property training",
     "dihedral: tests for dihedral-parameter training",
     "distance: tests for distance-scan training",
+    "gmx: tests that require the GROMACS gmx binary",
 ]

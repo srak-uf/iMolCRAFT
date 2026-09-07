@@ -246,7 +246,7 @@ def _assign_fsalike(mol, nc, mol2d=None):
     if len(fsalike_Nindex) == 0 or len(fsalike_Sindex) == 0:
         return None
 
-    # Sに結合しているO原子のindexをfsalike_Oindexに追加
+    # Add the indices of the O atoms bonded to S to fsalike_Oindex
     fsalike_Oindex = []
     for i in fsalike_Sindex:
         for bond in atoms[i].GetBonds():

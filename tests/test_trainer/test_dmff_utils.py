@@ -7,14 +7,14 @@ import jax.numpy as jnp
 
 
 def test_parser_dmffyaml(tmp_path):
-    # parser_dmffyaml は入力 yaml と同じ場所に *_parsed.yaml を書き出すので、
-    # tests/data/ を汚さないよう入力一式を tmp_path にコピーしてから実行する
+    # parser_dmffyaml writes *_parsed.yaml next to the input yaml, so copy the whole
+    # input set into tmp_path first to keep tests/data/ clean
     data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
     for name in ("dmff.yml", "LiBH4.cif"):
         shutil.copy(os.path.join(data_dir, name), tmp_path / name)
 
     d = dmff_utils.parser_dmffyaml(str(tmp_path / "dmff.yml"))
-    assert (tmp_path / "dmff_parsed.yaml").is_file()  # 出力先は tmp_path
+    assert (tmp_path / "dmff_parsed.yaml").is_file()  # the output goes to tmp_path
     assert set(d.keys()) == set(['sampling', 'targets', 'validation'])
     assert set(d["targets"].keys()) == set([
         'density_gcm3', 'La_A', 'Lc_A', 'rdf', 'adf'
@@ -32,7 +32,7 @@ def test_parser_dmffyaml(tmp_path):
 
 
 def test_check_validation_accepts_the_targets_of_the_loss():
-    """loss で使える物性は validation でも使える"""
+    """A property usable in loss is usable in validation too"""
     params = {
         "rho": {"property": "density_gcm3"},
         "a": {"property": "La_A"},
@@ -51,7 +51,7 @@ def test_check_validation_rejects_an_unknown_metric():
 
 
 def test_check_validation_requires_a_reference_for_a_distribution():
-    """分布は参照が無いと採点できないので gt 必須"""
+    """A distribution cannot be scored without a reference, so gt is required"""
     with pytest.raises(KeyError):
         dmff_utils._check_validation({
             "rdf_LiO": {"property": "rdf", "elem1": "Li", "elem2": "O",
@@ -60,7 +60,7 @@ def test_check_validation_requires_a_reference_for_a_distribution():
 
 
 def test_parser_dmffyaml_rejects_dself_as_a_target(tmp_path):
-    """dself_cm2s は摂動論で扱えないので targets には書けない"""
+    """dself_cm2s cannot be handled perturbatively, so it cannot go in targets"""
     data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
     for name in ("dmff.yml", "LiBH4.cif"):
         shutil.copy(os.path.join(data_dir, name), tmp_path / name)
@@ -77,7 +77,7 @@ def test_parser_dmffyaml_rejects_dself_as_a_target(tmp_path):
 
 
 def test_parser_dmffyaml_rejects_a_dispersion_correction_with_ljpme(tmp_path):
-    """LJPME は長距離分散を自前で足すので、分散補正との併用は二重計上"""
+    """LJPME adds the long-range dispersion itself, so a correction double counts"""
     data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
     for name in ("dmff.yml", "LiBH4.cif"):
         shutil.copy(os.path.join(data_dir, name), tmp_path / name)
@@ -111,7 +111,7 @@ def test_validation_only_properties_are_absent_from_the_targets():
 
 
 def test_check_validation_defaults_to_an_empty_section():
-    """validation を書かなくても、呼ぶ側は空 dict を受け取れる"""
+    """Even without a validation block the caller receives an empty dict"""
     assert dmff_utils._check_validation(None) == {}
 
 
@@ -126,7 +126,7 @@ def test_check_validation_requires_the_property_key():
 
 
 def test_check_validation_requires_the_keys_of_the_property():
-    # dself_cm2s は select が必須
+    # dself_cm2s requires select
     with pytest.raises(KeyError):
         dmff_utils._check_validation({"x": {"property": "dself_cm2s"}})
 
@@ -135,7 +135,7 @@ def test_get_validation_gt_keeps_only_the_blocks_with_a_reference():
     params = {
         "a": {"property": "dself_cm2s", "select": "all", "gt": 1.0e-6},
         "b": {"property": "dself_cm2s", "select": "element Li"},
-        # 分布の gt はファイル名で、記録するのも参照との距離なので対象外
+        # A distribution gt is a filename and only the distance is recorded, so skip
         "c": {"property": "rdf", "elem1": "Li", "elem2": "O",
               "rcut12_A": 8.0, "gt": "rdf.txt", "metric": "wrightfactor"},
     }
@@ -157,7 +157,7 @@ def test_check_validation_rejects_an_unknown_scalar_metric():
 
 
 def test_check_validation_rejects_a_scalar_metric_without_a_reference():
-    """ズレの測り方だけ指定して、測る相手がないのは書き間違い"""
+    """Giving only how to measure the deviation, with no target, is a mistake"""
     with pytest.raises(KeyError, match="gt"):
         dmff_utils._check_validation(
             {"x": {"property": "density_gcm3", "metric": "relerr"}}
@@ -181,7 +181,7 @@ def test_score_scalar_follows_the_metric_of_the_block():
 
 
 def test_score_distribution_rejects_a_reference_of_another_length(tmp_path):
-    """ビン数が合わない参照は、黙って比較せずに落とす"""
+    """A reference with a mismatched bin count fails instead of silently comparing"""
     gt_file = tmp_path / "rdf.txt"
     np.savetxt(gt_file, np.column_stack([np.arange(5.0), np.ones(5)]))
     block = {"gt": str(gt_file), "metric": "wrightfactor"}
@@ -198,7 +198,7 @@ def test_score_distribution_is_zero_for_a_perfect_match(tmp_path):
 
     score, curve = dmff_utils._score_distribution(gt, block)
     assert np.isclose(score, 0.0)
-    # 曲線は x, pred, gt の 3 列
+    # The curve has three columns: x, pred, gt
     assert curve.shape == (4, 3)
 
 
@@ -208,7 +208,7 @@ def test_plot_validation_curves_does_nothing_without_curves(tmp_path):
 
 
 def test_plot_validation_does_nothing_without_history(tmp_path):
-    # 空の履歴で図を書こうとして落ちない
+    # Plotting from an empty history does not crash
     dmff_utils.plot_validation([], label=str(tmp_path / "validation"))
     assert not (tmp_path / "validation.png").exists()
 

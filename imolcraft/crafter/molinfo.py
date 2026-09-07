@@ -556,7 +556,7 @@ class Crafter:
     # ------------------------------------------------------------------
     # geometry optimization
     # ------------------------------------------------------------------
-    # GeoOptimizerとして別ファイルに移す案もあり
+    # Could also be split out into a separate file as a GeoOptimizer
     @staticmethod
     def _resolve_geoopt_params(kwargs):
         """

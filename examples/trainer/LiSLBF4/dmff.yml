@@ -6,8 +6,10 @@ sampling:
     nonbondedmethod: LJPME
     temperature_K: 233.15
     pressure_bar: 1.0
-    # anneal_T は温度点、anneal_steps は各レグの MD ステップ数（1 つ少ない）
-    # 例: anneal_T: [300.0, 400.0, 300.0] / anneal_steps: [5000, 5000]
+    # anneal_T: the temperatures the run passes through
+    # anneal_steps: MD steps of each ramp between them (one entry fewer than anneal_T)
+    # e.g. anneal_T: [300.0, 400.0, 300.0] / anneal_steps: [5000, 5000]
+    #      -> 300 K to 400 K over 5000 steps, then back to 300 K over 5000 steps
     anneal_T: null
     anneal_steps: null
     anneal_interval: 100

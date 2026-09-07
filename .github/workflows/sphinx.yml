@@ -33,7 +33,7 @@ jobs:
           cd docs
           make html
 
-      # - name: List uploaded artifacts  # アーティファクトの内容をリスト表示
+      # - name: List uploaded artifacts  # List the artifact contents
       #   run: ls -al ./doc
 
       - name: Upload artifact

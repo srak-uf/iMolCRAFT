@@ -10,6 +10,7 @@ from ase.io import write
 from openmm.app import PDBFile
 import tempfile
 import os
+import pickle
 import pytest
 
 
@@ -240,13 +241,13 @@ class TestThermodynamicTrainer:
         self.trainer.setup()
         self.trainer.fit(10, 2)
         assert len(self.trainer.losses) > 1
-        # validation は再サンプリングのたびに 1 レコード増える
+        # validation gains one record per resampling
         assert len(self.trainer.validation_history) > 0
         assert all(
             'sample_0/dself_C' in record and 'sample_0/rho' in record
             for record in self.trainer.validation_history
         )
-        # gt を書いた項目は、そのズレも項目ごとに残る
+        # An item with a gt keeps its deviation as well, split per item
         assert len(self.trainer.validation_dev_history) == len(
             self.trainer.validation_history
         )
@@ -254,9 +255,41 @@ class TestThermodynamicTrainer:
             'sample_0/dself_C' in record and 'sample_0/rho' in record
             for record in self.trainer.validation_dev_history
         )
-        # ズレは既定の relerr、つまり (pred - gt) / gt
+        # The recorded epoch is the xml number of the force field the value came from.
+        # Only the setup record is 0 (initial ff); the rest are unique and in range
+        epochs = [record['epoch'] for record in self.trainer.validation_history]
+        assert epochs[0] == 0
+        assert epochs == sorted(set(epochs))
+        assert epochs[-1] <= self.trainer._epoch
+        assert all(
+            os.path.exists(f"xmlfiles/epoch_test_tp-{epoch}.xml")
+            for epoch in epochs[1:]
+        )
+        # The force field itself is recorded too, so it matches up with the number
+        assert all(
+            record['ffxml'] == f"xmlfiles/epoch_test_tp-{record['epoch']}.xml"
+            for record in self.trainer.validation_history[1:]
+        )
+        # The deviation is the default relerr, i.e. (pred - gt) / gt
         assert self.trainer.validation_dev[0]['rho'] == pytest.approx(
             (self.trainer.validation_pred[0]['rho'] - 0.4) / 0.4
         )
-        # MSD 曲線は pkl に残るので、あとからフィット範囲を検証できる
+        # The MSD curve stays in the pkl, so the fit range can be checked later
         assert self.trainer.validation_curves[0]['dself_C'].shape[1] == 2
+        # The target history has one record per epoch, on the ff of that epoch,
+        # and rides in the checkpoint
+        history = self.trainer.target_history
+        assert [record['epoch'] for record in history] == list(range(10))
+        assert all(
+            record['ffxml'] == f"xmlfiles/epoch_test_tp-{record['epoch']}.xml"
+            for record in history[1:]
+        )
+        assert [float(record['loss']) for record in history] == pytest.approx(
+            [float(loss) for loss in self.trainer.losses]
+        )
+        assert history[0]['sample_0/resampled'] is True
+        assert 'sample_0/density_gcm3' in history[-1]
+        with open("train_state_test_tp.pkl", "rb") as f:
+            dump = pickle.load(f)
+        assert dump['target_log'] == 'medium'
+        assert [record['epoch'] for record in dump['target_history']] == list(range(9))

@@ -401,7 +401,7 @@ def scan_ff_distance(ffxml, distances, dist_atidx, atoms, atoms_list=None, bonds
             ff_distance_atoms.append(atoms)
 
     ff_pot_kjmol = np.array(distance_ff_energy)  # (ff_pot - ff_pot.min())
-    # distancesを小さい順にソート
+    # Sort by ascending distance
     zip_sort = sorted(zip(distances, ff_pot_kjmol, ff_distance_atoms))
     distances, ff_pot_kjmol, ff_distance_atoms = zip(*zip_sort)
 

@@ -95,6 +95,11 @@ mdlogs/
 *_offsets.npz
 *_offsets.lock
 
+### Agent working files ###
+# Claude Code keeps its plans and session state here; CLAUDE.md at the root is
+# the part of it that is checked in.
+/.claude/
+
 ### Run artefacts dropped in the repository root ###
 # These names also belong to committed fixtures under tests/data/ and
 # examples/, so they are anchored to the root rather than matched anywhere.
@@ -106,8 +111,14 @@ mdlogs/
 /system.xml
 /vs_*.pdb
 /ethane/
+/atoms_0.pdb
+/pack_tmp.inp
+/packmol_tmp.pdb
 
 ### Test fixtures ###
 # tests/data/ holds committed input data; exempt it from the generic
 # patterns above (test_*log in particular).
 !tests/data/test_dihed_0.log
+
+### GROMACS tutorial clone (separate repository, its .mdp files ship under imolcraft/data/mdp/) ###
+gromacs_tutorial/

@@ -496,13 +496,13 @@ def reorder_atoms(atoms1, atoms2, chemical_bonds):
     reordered_atoms2 : ase.Atoms
         The reordered atoms2 object.
     """
-    # グラフが同型かどうかをチェック
+    # Check whether the two graphs are isomorphic
     GM = _element_graph_matcher(atoms1, atoms2, chemical_bonds)
     if not GM.is_isomorphic():
-        raise ValueError("分子1と分子2は同型ではありません。")
+        raise ValueError("molecule 1 and molecule 2 are not isomorphic.")
 
-    # 同型の場合、対応するノードのマッピングを取得し、
-    # 分子2の原子を分子1の原子の順序に従って並べ替え
+    # If isomorphic, get the mapping of the corresponding nodes and reorder
+    # the atoms of molecule 2 to follow the atom order of molecule 1
     mapping = GM.mapping
     reordered_atoms2 = atoms2[[mapping[i] for i in range(len(atoms1))]]
 

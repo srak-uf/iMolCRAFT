@@ -358,7 +358,7 @@ def load_g16scan(g16logfile):
                 sc_tmp[j].position = sc[j]
             aseatoms.append(sc_tmp)
 
-        # 昇順でソート
+        # Sort in ascending order
         angle, energy, aseatoms = zip(*sorted(zip(angle, energy, aseatoms)))
         angle = np.array(angle)
         energy = np.array(energy)
@@ -603,7 +603,7 @@ def scan_ff_dihedral(
 
     ff_pot = np.array(dihedral_ffenergy)
     ff_pot_kjmol = ff_pot - ff_pot.min()
-    # anglesを小さい順にソート
+    # Sort by ascending angle
     zip_sort = sorted(zip(angles, ff_pot_kjmol, ff_dihedatoms))
     angles, ff_pot_kjmol, ff_dihedatoms = zip(*zip_sort)
 

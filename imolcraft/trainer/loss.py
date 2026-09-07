@@ -99,7 +99,7 @@ def mse_energy(
     if weight_scheme not in IMPLEMENTED_WEIGHT_SCHEMES:
         raise ValueError(f"Unknown weight scheme: {weight_scheme}")
 
-    # [(e_mm[0] - e_qm[0] - delta_e)^2, (e_mm[1]-e_qm[1]-delta_e)^2,..] のarrayを作成
+    # Build [(e_mm[0] - e_qm[0] - delta_e)^2, (e_mm[1]-e_qm[1]-delta_e)^2, ..]
     se_array = _squared_error(e_ff, e_qm, zeropoint)
     var_qm = jnp.var(e_qm) if norm_var else 1.0
 
