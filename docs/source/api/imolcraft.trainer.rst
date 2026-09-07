@@ -36,6 +36,14 @@ imolcraft.trainer.properties module
    :show-inheritance:
    :undoc-members:
 
+imolcraft.trainer.selection module
+----------------------------------
+
+.. automodule:: imolcraft.trainer.selection
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 imolcraft.trainer.trainer module
 --------------------------------
 
