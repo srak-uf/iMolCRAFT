@@ -11,6 +11,29 @@ fixes and backwards-compatible additions moves the patch number.
 
 ## [Unreleased]
 
+### Added
+
+- `imolcraft.trainer.selection` (new module), which picks the epoch of a
+  `ThermodynamicTrainer` run from its validation history, after the fact.
+  `select_epoch(train_state)` reads a checkpoint (path, directory, dict or the
+  trainer itself), splits the resampled epochs into `band_count` (default 5)
+  bands of equal size, drops the bands whose mean loss is above `loss_tol`
+  (default 1.5) times the smallest, takes the band whose mean signed relative
+  deviation `(pred - gt) / gt` of the monitored property is closest to zero,
+  and adopts the epoch of smallest loss inside it; the band mean and its
+  standard error are the validation score of the run, and the `ffxml` of the
+  adopted epoch is reported with it. `select_run` compares several runs (a
+  learning-rate sweep, say): the runs within `z * sqrt(SE_a^2 + SE_b^2)`
+  (default `z = 2.5`) of the best are tied, and the tie is broken by the mean
+  loss of the best band. Both return dataclasses (`EpochSelection`,
+  `RunSelection`) that carry the bands, the notes on the assumptions (lag-1
+  autocorrelation of the within-band residuals, points that are not
+  resampled epochs, missing `gt`) and, apart from the decision, a one-way F
+  statistic and a bootstrap estimate of the selection bias.
+  `python -m imolcraft.trainer.selection train_state_x.pkl [...]
+  [--sensitivity 3 5 8]` prints the same as tables. The `best_epoch` /
+  `best_params` of the trainer are unchanged and still mean the smallest loss.
+
 ## [0.4.0] — 2026-09-07
 
 ### Added
