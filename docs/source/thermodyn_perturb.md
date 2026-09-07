@@ -478,17 +478,57 @@ Everything else may be left out:
 
 | Key | Left out |
 | --- | --- |
-| `pressure_bar` | No PV term, which is what a fixed volume means. Required for the NPT ensembles, where a barostat needs it. |
+| `software` | `openmm`. `gromacs` runs the replica with GROMACS instead (see below). |
+| `pressure_bar` | Required for the NPT ensembles: it is the set point of the barostat and the pressure of the PV term of the reweighting. A fixed-volume replica may leave it out and gets no PV term. |
 | `dispcorr` | No dispersion correction. |
 | `dt_fs`, `nstxout`, `relax_steps`, `prod_steps` | `MDCalculator` uses its own defaults. |
 | `anneal_T`, `anneal_steps`, `anneal_interval` | No annealing. |
 
-Each block becomes one `imolcraft.calculator.MDCalculator`, which is what
-actually runs the MD. The calculator names its settings exactly as the keys
-above are named, so a sampling block needs no translation and the defaults of
-the second half live in `MDCalculator.SETTINGS` rather than being restated
-here. `neff` and `pressure_bar` are not settings of the MD and stay with the
-trainer.
+Each block becomes one `imolcraft.calculator.MDCalculator`, which hands the
+run to `OpenMMCalculator` or `GMXCalculator` according to `software`. The
+calculator names its settings exactly as the keys above are named, so a
+sampling block needs no translation and the defaults of the second half live
+in `MDCalculator.SETTINGS` rather than being restated here. `neff` is not a
+setting of the MD and stays with the trainer.
+
+#### Choosing the MD Software
+
+`software` names the program that samples the replica, with the same
+lower-case literal names the QM `software` of the crafter uses (`psi4`,
+`g16`): `openmm` (default) or `gromacs`. Anything else, `GROMACS` included,
+is refused with `Unknown software`. The choice is per replica and is
+recorded in the checkpoint with the other MD settings, so a restart samples
+with the same program.
+
+```yaml
+sampling:
+  - init_structure: supercell.pdb
+    software: gromacs
+    ensemble: isonpt
+    temperature_K: 300.0
+    pressure_bar: 1.0
+    rcut_nm: 1.2
+    nonbondedmethod: PME
+    neff: 100
+    ntomp: 8
+```
+
+Both programs read the same keys (`rcut_nm`, `temperature_K`, `dt_fs`,
+`ensemble`, `pressure_bar`, `anneal_T`, ...), in the same units. GROMACS adds
+its own (`compressibility_bar`, `tau_t_ps`, `tau_p_ps`, `tcoupl`, `pcoupl`,
+`min_steps`, `emtol`, `gmx_bin`, `mpi_command`, `ntmpi`, `ntomp`, `maxwarn`,
+`mdp_templates`, `mdp_extra`, `workdir`; see `GMXCalculator`), while
+`anneal_interval` and `rigidWater` mean something to OpenMM only.
+`imolcraft.calculator.SOFTWARE_SETTINGS` lists which key belongs to which. A
+key of the other program is dropped when it holds its default value, so an
+OpenMM block that spells out `anneal_interval: 100` runs under GROMACS as it
+is, and refused with a `ValueError` otherwise, so `ntomp: 8` under OpenMM
+does not go unnoticed.
+
+The trainer's `device` is the OpenMM platform name for `openmm`; for
+`gromacs` anything but `CPU` asks `mdrun` for the GPU (`-nb gpu`). A force
+field that places virtual sites cannot be sampled with GROMACS yet (the
+exporter does not translate them), and the trainer says so when it is built.
 
 #### Restarting from a Checkpoint
 

@@ -5,7 +5,7 @@ import shutil
 
 import pytest
 
-from imolcraft.calculator import GMXCalculator, gmx, gmx_sample, md
+from imolcraft.calculator import GMXCalculator, MDCalculator, _mdcommon, gmx, gmx_sample, omm
 
 DATA = os.path.join(os.path.dirname(__file__), "..", "data")
 PDB = os.path.join(DATA, "supercell_bonds.pdb")
@@ -124,15 +124,15 @@ def test_annealing_options_are_empty_without_a_schedule():
     assert "annealing" not in options and options["nsteps"] == "0"
 
 
-@pytest.mark.parametrize("ensemble", md.VALID_ENSEMBLES)
+@pytest.mark.parametrize("ensemble", _mdcommon.VALID_ENSEMBLES)
 def test_every_md_ensemble_is_accepted(ensemble):
-    """The ensemble set is md.VALID_ENSEMBLES, nve included"""
+    """The ensemble set is _mdcommon.VALID_ENSEMBLES, nve included"""
     calc = GMXCalculator("start.pdb", ensemble=ensemble)
     assert calc.mdp_options("prod")["integrator"] == "md"
 
 
 def test_gmx_pcoupl_covers_exactly_the_md_ensembles():
-    assert set(gmx.GMX_PCOUPL) == set(md.VALID_ENSEMBLES)
+    assert set(gmx.GMX_PCOUPL) == set(_mdcommon.VALID_ENSEMBLES)
 
 
 @pytest.mark.parametrize("ensemble", ["nve", "nvt"])
@@ -356,21 +356,21 @@ def test_calculator_expands_the_annealing_schedule_on_construction():
 
 
 def test_settings_are_a_superset_of_the_openmm_calculator():
-    """A.9: every MDCalculator setting is accepted under the same name"""
-    assert set(md.MDCalculator.SETTINGS) <= set(GMXCalculator.SETTINGS)
-    for name, default in md.MDCalculator.SETTINGS.items():
+    """A.9: every OpenMMCalculator setting is accepted under the same name"""
+    assert set(omm.OpenMMCalculator.SETTINGS) <= set(GMXCalculator.SETTINGS)
+    for name, default in omm.OpenMMCalculator.SETTINGS.items():
         assert GMXCalculator.SETTINGS[name] == default
 
 
 def test_a_sampling_block_for_the_openmm_calculator_is_accepted_as_is():
-    calc = GMXCalculator("start.pdb", **md.MDCalculator.SETTINGS)
+    calc = GMXCalculator("start.pdb", **omm.OpenMMCalculator.SETTINGS)
     assert calc.rigidWater is False and calc.anneal_interval == 100
 
 
-def test_module_reuses_the_openmm_constants_and_exports_little():
-    assert gmx.VALID_ENSEMBLES is md.VALID_ENSEMBLES
-    assert gmx.MD_LOG_MODES is md.MD_LOG_MODES
-    assert gmx.NONBONDED_METHODS is md.NONBONDED_METHODS
+def test_module_reuses_the_common_constants_and_exports_little():
+    assert gmx.VALID_ENSEMBLES is _mdcommon.VALID_ENSEMBLES
+    assert gmx.MD_LOG_MODES is _mdcommon.MD_LOG_MODES
+    assert gmx.NONBONDED_METHODS is _mdcommon.NONBONDED_METHODS
     assert set(gmx.__all__) == {"GMXCalculator", "gmx_sample", "GMX_STAGES", "GMX_PCOUPL", "GMX_ENV"}
 
 
@@ -600,13 +600,13 @@ def test_run_command_uses_a_list_and_no_shell(monkeypatch):
 
 
 def test_build_system_matches_the_openmm_calculator():
-    """The System GROMACS gets is the one MDCalculator would integrate (minus constraints)"""
+    """The System GROMACS gets is the one OpenMMCalculator would integrate (minus constraints)"""
     from openmm import NonbondedForce, unit
 
     calc = GMXCalculator(PDB, rcut_nm=1.0, nonbondedmethod="LJPME", dispcorr=True)
     topology, positions, system = calc._build_system(FFXML)
 
-    reference = md.MDCalculator(
+    reference = omm.OpenMMCalculator(
         PDB, rcut_nm=1.0, nonbondedmethod="LJPME", dispcorr=True,
         useHbondConstraint=False,
     )
@@ -683,6 +683,23 @@ def test_smoke_run_with_gromacs(tmp_path, monkeypatch):
     # The .top / .gro inputs lived in a temporary directory, not in workdir
     assert not any(p.suffix == ".top" for p in (tmp_path / "gmxfiles").iterdir())
     assert not any(p.suffix in (".top", ".gro", ".mdp") for p in tmp_path.iterdir())
+
+
+@pytest.mark.gmx
+@pytest.mark.skipif(shutil.which("gmx") is None, reason="gmx binary not on PATH")
+def test_smoke_run_through_the_facade(tmp_path, monkeypatch):
+    """MDCalculator(software='gromacs').run hands the run to GROMACS"""
+    mdtraj = pytest.importorskip("mdtraj")
+    monkeypatch.chdir(tmp_path)
+    calc = MDCalculator(
+        PDB, software="gromacs", ensemble="nvt", min_steps=50, relax_steps=50,
+        prod_steps=100, nstxout=20, md_log="none",
+    )
+    xtc = calc.run(FFXML, "facade_0.xtc")
+
+    assert xtc == os.path.join("xtcfiles", "facade_0.xtc")
+    assert mdtraj.load(xtc, top=PDB).n_atoms == 10
+    assert (tmp_path / "gmxfiles" / "facade_0_prod.tpr").exists()
 
 
 @pytest.mark.gmx

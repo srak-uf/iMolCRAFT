@@ -48,12 +48,10 @@ fixes and backwards-compatible additions moves the patch number.
   settings (`pressure_bar`, `compressibility_bar`,
   `tau_t_ps`, `tau_p_ps`, `tcoupl`, `pcoupl`, `min_steps`, `emtol`,
   `gmx_bin`, `mpi_command`, `ntmpi`, `ntomp`, `maxwarn`, `mdp_templates`,
-  `mdp_extra`, `workdir`) are additions; note that `pressure_bar` is a
-  calculator setting here whereas `MDCalculator` leaves the pressure to the
-  trainer. The production trajectory is written as `.xtc` under `xtcfiles/`
-  (no `.trr`). The `.mdp` files of srak-uf/gromacs_tutorial ship as package
-  data under `imolcraft/data/mdp/` and are used as templates. `md.py` and
-  `MDCalculator` are unchanged.
+  `mdp_extra`, `workdir`) are additions. The production trajectory is
+  written as `.xtc` under `xtcfiles/` (no `.trr`). The `.mdp` files of
+  srak-uf/gromacs_tutorial ship as package data under `imolcraft/data/mdp/`
+  and are used as templates.
   The four execution settings (`gmx_bin`, `mpi_command`, `ntmpi`, `ntomp`)
   default to `None` and are resolved at run time as argument > environment
   variable (`IMOLCRAFT_GMX_BIN`, `IMOLCRAFT_GMX_MPI_COMMAND`,
@@ -69,6 +67,58 @@ fixes and backwards-compatible additions moves the patch number.
   the start of a run.
 - `gmx_sample(...)`, a thin wrapper over `GMXCalculator`.
 - pytest marker `gmx` for tests that need the `gmx` binary.
+- **The MD software is chosen with one setting**: `MDCalculator(init_structure,
+  software="openmm")` (default) or `software="gromacs"` runs the sampling with
+  `OpenMMCalculator` or with `GMXCalculator`, which `MDCalculator` now holds
+  (`MDCalculator.backend`) and delegates `run`, `to_dict`, `device`, `md_log`
+  and `md_logfile` to. The key is named as the QM `software` of the crafter
+  is, takes the same lower-case literal names and refuses anything else with
+  `Unknown software`. A sampling block of `ThermodynamicTrainer` therefore
+  selects the software with `software: gromacs`, per replica, and the choice
+  is recorded in the checkpoint like any other setting. `MDCalculator.SETTINGS`
+  is the union of both and `imolcraft.calculator.SOFTWARE_SETTINGS` says which
+  setting applies to which; a setting of the other software given a
+  non-default value is refused with a `ValueError` rather than silently
+  ignored (a default value, such as the `anneal_interval: 100` of the
+  existing YAML files, is dropped). A force field with virtual sites combined
+  with `software="gromacs"` is refused when the trainer is built. `md_sample`
+  takes `software` as well.
+- `imolcraft.calculator.OpenMMCalculator` (new module
+  `imolcraft/calculator/omm.py`), the OpenMM calculator itself, usable
+  directly as `GMXCalculator` is.
+- `pressure_bar` is now a setting of the OpenMM sampling too (default 1.0 bar),
+  so both softwares read the same key.
+
+### Changed
+
+- **The OpenMM implementation moved from `imolcraft/calculator/md.py` to
+  `imolcraft/calculator/omm.py` as `OpenMMCalculator`.** `MDCalculator` stays
+  in `md.py` as the software-selecting entry point and delegates instead of
+  running the MD itself: constructing it, `run`, `to_dict` / `from_dict` and
+  the `device` / `md_log` / `md_logfile` attributes are unchanged, but code
+  that reached into internals such as `anneal_legs` or `_build_simulation`
+  now finds them on `MDCalculator.backend`. The parts shared by both
+  softwares (`VALID_ENSEMBLES`, `MD_LOG_MODES`, `NONBONDED_METHODS`,
+  `resolve_nonbondedmethod`, the annealing schedule and the MD log) live in
+  the new `imolcraft/calculator/_mdcommon.py`, which `omm.py` and `gmx.py`
+  both import so that neither depends on the other; the public names are
+  still importable from `imolcraft.calculator.md`. `omm.py`, `_mdcommon.py`
+  and `md.py` define `__all__`, so `openmm`, `app`, `unit`, `sys` and
+  `contextlib` no longer leak into the `imolcraft.calculator` namespace.
+- **`MDCalculator.to_dict()` records `software` and `pressure_bar`**, and a
+  `gromacs` record carries the GROMACS settings instead of the OpenMM-only
+  ones (`anneal_interval`, `rigidWater`). A record written before this
+  release restores as `software="openmm"` with `pressure_bar=1.0`, which is
+  what it used to do; a record written now cannot be read by an earlier
+  version.
+
+### Fixed
+
+- **The OpenMM barostat ignored `pressure_bar` and always ran at 1 bar**, while
+  the reweighting used the requested pressure as the PV term, so a sampling
+  block with `pressure_bar: 100` sampled 1 bar and analysed 100 bar. All three
+  NPT barostats now take `pressure_bar`. Runs at the default 1 bar are
+  unaffected; an NPT run with any other `pressure_bar` changes.
 
 ## [0.3.2] — 2026-09-05
 

@@ -629,6 +629,9 @@ class ThermodynamicTrainer(BaseTrainer):
             Loss function to be minimized.
         sampling_params : list of dict
             List of dictionaries containing sampling parameters for each replica.
+            A block may name the MD software with ``software`` (``"openmm"``,
+            the default, or ``"gromacs"``), per replica; the other keys of the
+            MD half are the settings of :class:`~imolcraft.calculator.MDCalculator`.
         target_params : list of dict
             List of dictionaries containing target parameters for each replica.
         validation_params : list of dict, optional
@@ -659,6 +662,10 @@ class ThermodynamicTrainer(BaseTrainer):
             resampling.
         restart_xml : str, optional
             Path to the XML file for restarting the training.
+        device : str, optional
+            Where every replica's MD runs: the OpenMM platform name for
+            ``software: openmm``; for ``software: gromacs`` anything but
+            ``"CPU"`` asks mdrun for the GPU (``-nb gpu``). Default ``"CPU"``.
         md_log : {'stdout', 'file', 'none'}, optional
             Where the MD progress and per-step state data of every replica go.
             ``'stdout'`` (default) keeps the current terminal output,
@@ -810,7 +817,11 @@ class ThermodynamicTrainer(BaseTrainer):
         ]
 
         # a pressure only means anything to a barostat, so a fixed-volume
-        # replica may leave it out and gets the zero PV term that implies
+        # replica may leave it out and gets the zero PV term that implies.
+        # P_bar is the pressure of the PV term of the reweighting; the same
+        # sampling key also reaches the calculator below as its barostat set
+        # point (pressure_bar, default 1 bar), so the two agree for an NPT
+        # replica and are deliberately not unified for a fixed-volume one.
         self.P_bar = [
             float(p.get("pressure_bar", 0.0)) for p in self.sampling_params
         ]
@@ -825,13 +836,13 @@ class ThermodynamicTrainer(BaseTrainer):
 
         # One calculator per replica, holding the whole recipe of its MD. The
         # calculator names its settings as the sampling section does, so the
-        # MD half of a block is simply the keys it knows: neff and
-        # pressure_bar are not among them and stay behind, and a key left out
-        # gets the calculator's own default. It is built now rather than at
-        # the first run so a bad ensemble or a broken annealing schedule shows
-        # up while the trainer is still empty.
+        # MD half of a block is simply the keys it knows (software included):
+        # neff is not among them and stays behind, and a key left out gets
+        # the calculator's own default. It is built now rather than at the
+        # first run so a bad ensemble, a broken annealing schedule or an
+        # unsupported software shows up while the trainer is still empty.
         self.md_calculators = []
-        for params in self.sampling_params:
+        for i, params in enumerate(self.sampling_params):
             settings = {
                 key: value for key, value in params.items()
                 if key in MDCalculator.SETTINGS
@@ -842,9 +853,15 @@ class ThermodynamicTrainer(BaseTrainer):
                 md_log=self.md_log,
                 md_logfile=self.md_logfile,
             )
-            self.md_calculators.append(
-                MDCalculator(params["init_structure"], **settings)
-            )
+            calculator = MDCalculator(params["init_structure"], **settings)
+            if self.num_vsites > 0 and calculator.software == "gromacs":
+                raise ValueError(
+                    f"replica {i} asks for software='gromacs', but {self.ffxml} "
+                    f"places {self.num_vsites} virtual sites and the GROMACS "
+                    "exporter does not translate OpenMM virtual sites yet; use "
+                    "software='openmm' for this force field"
+                )
+            self.md_calculators.append(calculator)
 
         # target
         if isinstance(self.target_params, dict):
