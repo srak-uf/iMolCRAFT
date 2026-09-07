@@ -322,6 +322,86 @@ reference. Three figures are written next to the learning curve:
 zero, and `validation_curves_LABEL_{i}.png`, the curves behind them -- the one
 to look at to check that the MSD is straight over the fitted window.
 
+##### Choosing the epoch from the validation
+
+The trainer's `best_epoch` / `best_params` (and the `*_best.xml` it writes)
+are the epoch of smallest **loss**. The validation says something else: it is
+measured on trajectories run with the parameters of the epoch, never enters the
+loss, and on a real run the epoch of smallest loss is often not in the band
+where the validated property is closest to its reference.
+`imolcraft.trainer.selection` turns the validation history into a choice of
+epoch, after the run, without touching `best_epoch`:
+
+```python
+from imolcraft.trainer.selection import select_epoch, select_run
+
+sel = select_epoch("train_state_s_opt.pkl")     # or a directory, the dict, the trainer
+print(sel.epoch, sel.ffxml, f"{sel.score:+.3f} +/- {sel.score_se:.3f}")
+for band in sel.bands:
+    print(band.epoch_lo, band.epoch_hi, band.dev_mean, band.loss_mean, band.admissible)
+
+# a learning-rate sweep: one selection per run, then the run
+best = select_run([select_epoch(p, label=p) for p in ("lr_1e-4", "lr_2e-4")])
+print(best.winner.label, best.epoch, [r.label for r in best.tied])
+```
+
+```bash
+# same thing as tables; needs the conda environment because the checkpoint
+# holds jax arrays
+python -m imolcraft.trainer.selection lr_1e-4 lr_2e-4 --sensitivity 3 5 8
+```
+
+The rule, whose only parameters are `band_count` (default 5) and `loss_tol`
+(default 1.5):
+
+1. The evaluation points are the records of `validation_history` -- the
+   resampled epochs, at which the MBAR weights are uniform so that both the
+   loss and the validation are out of sample. NaN/inf values are dropped and
+   counted in `notes`.
+2. The deviation is recomputed as `(pred - gt) / gt` from the `gt` of the
+   entry, so it does not depend on the `metric` of the YAML. Only an entry
+   without `gt` falls back to `validation_dev_history`, which is then in
+   whatever that metric gives -- the unit of the property for `diff` -- and a
+   note says so; scores of two runs are then comparable only under the same
+   metric. Nothing is converted.
+3. The points are split, in time order, into `band_count` bands of equal size.
+   Every band gets `mean(dev) +/- SE` and `mean(loss)` (the loss at the
+   nearest recorded epoch, from `target_history` or from `epochs` / `losses`).
+4. The **admissible** bands are those with
+   `mean(loss) <= loss_tol * min(mean(loss))`. This drops the burn-in by the
+   loss alone; the deviation plays no part in it.
+5. `sigma`, the noise of a single point, is the within-band standard deviation
+   pooled over the admissible bands, and `SE = sigma / sqrt(n)`.
+6. The **best band** is the admissible band of smallest `|mean(dev)|`; its
+   mean and SE are the `score` and `score_se` of the run. Inside the band the
+   points are equivalent as far as the validation can resolve, so the epoch of
+   smallest loss in it is adopted -- not the point of smallest `|dev|`, which
+   would just pick the noise.
+7. Between runs, `select_run` ranks by `|score|`; the runs within
+   `z * sqrt(SE_a^2 + SE_b^2)` of the first (`z = 2.5` by default) are `tied`
+   with it, and the `winner` is the tied run of smallest best-band mean loss.
+
+`select_epoch` needs a `monitor` (`sample_{i}/{entry}`) only when the run
+validates more than one entry; with a single one it is found. It needs at
+least `2 * band_count` points and notes fewer than `3 * band_count`. What
+else `notes` may say, and what to make of it:
+
+- *lag-1 autocorrelation ... white-noise assumption is doubtful* (`|r| > 0.3`):
+  the SE, and with it the tie between runs, is not to be trusted. `autocorr1`
+  is always computed; the correction `n * (1 - r) / (1 + r)` is left to you.
+- *selection bias ... exceeds the SE*: picking the smallest of `band_count`
+  band means flatters the score by that much. The bias is measured by a
+  parametric bootstrap (`n_boot`, `seed`) and, like the one-way F statistic
+  between the admissible bands, is reported in `diagnostics` and never used
+  for the decision.
+- *some validation points are not resampled epochs*: they are not out of
+  sample; check the validation settings.
+
+A tied set with more than one run means the validation does not separate them:
+the run is then chosen by the loss, and the report says so. `--sensitivity 3 5 8`
+shows how the choice moves with the number of bands; a run whose adopted epoch
+jumps between band counts has a flat or noisy validation curve.
+
 ## Target history
 
 Besides the loss, the trainer keeps what the force field of every epoch gives
