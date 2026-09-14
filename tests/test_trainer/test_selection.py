@@ -15,6 +15,7 @@ epochs, one replica, ``dself_S`` validated). It was made with::
 and ``select_epoch`` on the full pkl and on the fixture agree exactly.
 """
 import gzip
+import inspect
 import json
 import os
 import pickle
@@ -28,20 +29,23 @@ import pytest
 import imolcraft.trainer
 from imolcraft.trainer import selection
 from imolcraft.trainer.selection import (
-    Band,
     EpochSelection,
-    RunSelection,
-    SelectionDiagnostics,
+    PermutationDiagnostics,
     extract_history,
+    format_epoch_selection,
     load_history,
     main,
     select_epoch,
-    select_run,
 )
 
 FIXTURE = os.path.join(
     os.path.dirname(__file__), "..", "data", "train_state_history_s_opt.json.gz"
 )
+
+#: Points, burn-in points and averaging window of ``_synthetic``.
+SYN_POINTS, SYN_BURN, SYN_WINDOW = 100, 20, 16
+#: Epoch ``_synthetic`` is built to have the selection adopt.
+SYN_EPOCH = 320
 
 
 def _history(epochs, dev, loss, gt=1.0, entry="dself_S", extra_entries=None,
@@ -95,20 +99,32 @@ def _history(epochs, dev, loss, gt=1.0, entry="dself_S", extra_entries=None,
     return state
 
 
-def _synthetic(band_means=(-0.6, -0.3, -0.1, -0.2, -0.25), per_band=10, seed=1):
+def _flat_loss(m=SYN_POINTS, burn=SYN_BURN, base=1e-3):
+    """A loss that is ``10 * base`` over the burn-in and exactly ``base`` after."""
+    loss = np.full(m, base)
+    loss[:burn] = 10.0 * base
+    return loss
+
+
+def _synthetic(m=SYN_POINTS, burn=SYN_BURN, zero_at=80.5, slope=-0.02,
+               seed=1, loss=None, noise=0.005):
     """
-    5 bands x 10 points: band 1 is burn-in (loss 10x), bands 2-5 have the
-    given mean deviations plus sd 0.01 noise; one point of band 3 (k = 25,
-    epoch 100) has the smallest loss of that band.
+    A run whose deviation crosses zero at a known point.
+
+    ``dev`` is the straight line ``slope * (k - zero_at)`` plus noise, so the
+    mean over a window of ``SYN_WINDOW = 16`` points is the value at the
+    middle of the window and the best window is the one centred on
+    ``zero_at``. With ``burn = 20`` points of ten times the loss the burn-in
+    ends at index 20, ``n_used = 80``, ``w = 16`` and the adopted point is
+    index ``k + 7`` of the best window, that is epoch ``SYN_EPOCH = 320``.
+    The noise (sd 0.005) is far smaller than the step between neighbouring
+    window means (``|slope| = 0.02``), so the choice is not a coin toss.
     """
     rng = np.random.default_rng(seed)
-    n_bands = len(band_means)
-    m = n_bands * per_band
     epochs = [4 * k for k in range(m)]
-    dev = np.repeat(band_means, per_band) + rng.normal(0.0, 0.01, m)
-    loss = 1e-3 * (1.0 + 0.1 * rng.uniform(size=m))
-    loss[:per_band] *= 10.0
-    loss[25] = 0.5e-3
+    dev = slope * (np.arange(m) - zero_at) + rng.normal(0.0, noise, m)
+    if loss is None:
+        loss = _flat_loss(m, burn)
     return _history(epochs, dev, loss)
 
 
@@ -118,81 +134,321 @@ def real_history():
         return json.load(f)
 
 
-# ------------------------------------------------------------------ T1, T2
-def test_synthetic_picks_the_band_closest_to_zero_and_its_smallest_loss():
-    sel = select_epoch(_synthetic())
+# ---------------------------------------------------------------------- S1
+def test_window_size_is_round_n_over_five_clipped_in_integer_arithmetic():
+    assert [selection._window_size(n) for n in
+            (10, 24, 25, 27, 28, 125, 136, 174, 175, 300)] == \
+           [5, 5, 5, 5, 6, 25, 27, 35, 35, 35]
+    for n in range(10, 1001):
+        w = selection._window_size(n)
+        assert type(w) is int
+        assert w == min(selection.WINDOW_MAX,
+                        max(selection.WINDOW_MIN, (2 * n + 5) // 10))
+        assert w == min(35, max(5, int(np.floor(n / 5 + 0.5))))   # half up
+    body = inspect.getsource(selection._window_size).split('"""')[2]
+    assert "round" not in body          # no banker's rounding, no float
+
+
+# ---------------------------------------------------------------------- S2
+def test_median_smooth_shrinks_the_window_at_the_ends():
+    got = selection._median_smooth(np.array([9.0, 8, 7, 1, 1, 1, 1]), 5)
+    np.testing.assert_allclose(got, [8.0, 7.5, 7.0, 1.0, 1.0, 1.0, 1.0])
+    # shorter than the window: every index is still defined
+    np.testing.assert_allclose(selection._median_smooth(np.array([3.0, 1.0]), 5),
+                               [2.0, 2.0])
+    np.testing.assert_allclose(selection._median_smooth(np.array([5.0]), 5), [5.0])
+
+
+# ---------------------------------------------------------------------- S3
+def test_burn_in_drops_the_front_by_the_smoothed_loss():
+    sel = select_epoch(_synthetic(), diagnostics=False)
+    assert sel.n_points == SYN_POINTS
+    assert sel.burn_in_points == SYN_BURN
+    assert sel.burn_in_epoch == 4 * (SYN_BURN - 1)
+    assert sel.n_used == SYN_POINTS - SYN_BURN
+
+
+def test_a_single_loss_spike_does_not_move_the_burn_in():
+    """The running median is blind to one outlier among equal neighbours."""
+    loss = _flat_loss()
+    loss[60] = 1.0                       # a thousand times the plateau
+    sel = select_epoch(_synthetic(loss=loss), diagnostics=False)
+    assert sel.burn_in_points == SYN_BURN
+    assert sel.epoch == SYN_EPOCH
+
+
+def test_a_flat_loss_drops_nothing():
+    sel = select_epoch(_synthetic(loss=np.full(SYN_POINTS, 1e-3)),
+                       diagnostics=False)
+    assert sel.burn_in_points == 0
+    assert sel.burn_in_epoch is None
+    assert sel.n_used == SYN_POINTS
+
+
+def test_the_burn_in_shrinks_as_loss_tol_grows():
+    # the loss decays over the first 40 points and is flat afterwards
+    loss = np.concatenate([np.geomspace(1e-1, 1e-3, 40), np.full(60, 1e-3)])
+    state = _synthetic(loss=loss)
+    dropped = [select_epoch(state, loss_tol=t, diagnostics=False).burn_in_points
+               for t in (1.0, 1.5, 2.0, 5.0, 50.0)]
+    assert dropped == sorted(dropped, reverse=True)
+    assert dropped[0] > dropped[-1]
+
+
+# ---------------------------------------------------------------------- S4
+def test_the_window_closest_to_zero_is_adopted_and_the_loss_dip_is_ignored():
+    loss = _flat_loss()
+    loss[25] = 1e-9                      # a deep dip far from the zero crossing
+    loss[95] = 1e-9
+    sel = select_epoch(_synthetic(loss=loss), diagnostics=False)
     assert isinstance(sel, EpochSelection)
-    assert sel.n_points == 50
-    assert sel.band_count == 5
-    assert len(sel.bands) == 5 and all(isinstance(b, Band) for b in sel.bands)
-    assert sel.bands[0].admissible is False
-    assert [b.admissible for b in sel.bands] == [False, True, True, True, True]
-    assert sel.best.index == 3
-    assert sel.best is sel.bands[2]
-    assert sel.epoch == 100                       # k = 25, the smallest loss of band 3
-    assert sel.ffxml == "xmlfiles/epoch_t-100.xml"
-    assert sel.loss_at_epoch == pytest.approx(0.5e-3)
-    assert sel.score == pytest.approx(-0.1, abs=0.02)
-    assert sel.score_se == pytest.approx(sel.sigma / np.sqrt(10))
-    assert sel.best.dev_mean == sel.score and sel.best.dev_se == sel.score_se
+    assert sel.window == SYN_WINDOW
+    assert sel.n_windows == sel.n_used - sel.window + 1 == 65
+    assert sel.epoch == SYN_EPOCH
+    assert sel.epoch not in (4 * 25, 4 * 95)
+    assert sel.window_lo == 4 * 73 and sel.window_hi == 4 * 88
+    assert sel.epoch == sel.window_lo + 4 * ((SYN_WINDOW - 1) // 2)
+    assert abs(sel.score) < 0.005
+    assert sel.ffxml == f"xmlfiles/epoch_t-{SYN_EPOCH}.xml"
     assert sel.monitor == "sample_0/dself_S"
     assert sel.label == "t"
-    assert sel.notes == []
 
 
-def test_admissibility_depends_on_the_loss_only():
-    """With a huge loss_tol the burn-in band is admissible; the best is unchanged."""
-    sel = select_epoch(_synthetic(), loss_tol=100.0)
-    assert all(b.admissible for b in sel.bands)
-    assert sel.best.index == 3
-    assert sel.epoch == 100
-    # the burn-in band has a large |dev| and is not chosen although admissible
-    assert abs(sel.bands[0].dev_mean) > abs(sel.best.dev_mean)
+def test_the_adopted_epoch_is_the_centre_point_of_the_window():
+    sel = select_epoch(_synthetic(), diagnostics=False)
+    ep, dev, _, _, _ = extract_history(_synthetic())
+    used = ep[sel.burn_in_points:]
+    k = int(np.where(used == sel.window_lo)[0][0])
+    assert sel.epoch == used[k + (sel.window - 1) // 2]
+    # the ends can never be adopted
+    assert sel.epoch not in used[:(sel.window - 1) // 2].tolist()
+    assert sel.epoch not in used[len(used) - sel.window // 2:].tolist()
+    np.testing.assert_allclose(
+        sel.score, dev[sel.burn_in_points:][k:k + sel.window].mean(), atol=1e-12)
 
 
-def test_within_the_best_band_the_epoch_is_the_smallest_loss_not_the_smallest_dev():
+# ---------------------------------------------------------------------- S5
+def test_the_loss_never_chooses_the_epoch():
+    """Any loss with the same burn-in gives the same window."""
+    ref = select_epoch(_synthetic(), diagnostics=False)
+    rng = np.random.default_rng(5)
+    others = []
+    for factor in (np.ones(SYN_POINTS),
+                   1.0 + rng.uniform(0.0, 0.4, SYN_POINTS),
+                   1.0 + 0.3 * (np.arange(SYN_POINTS) % 7)):
+        loss = _flat_loss() * factor
+        loss[SYN_BURN:] = np.minimum(loss[SYN_BURN:], 1.4e-3)   # keep the gate
+        others.append(select_epoch(_synthetic(loss=loss), diagnostics=False))
+    for sel in others:
+        assert sel.burn_in_points == ref.burn_in_points
+        assert (sel.epoch, sel.window_lo, sel.window_hi) == \
+               (ref.epoch, ref.window_lo, ref.window_hi)
+        assert sel.score == ref.score
+
+
+# ---------------------------------------------------------------------- S6
+def test_the_ends_of_the_run_cannot_be_adopted_and_are_noted():
+    dev = np.full(SYN_POINTS, 0.4)
+    dev[SYN_BURN:SYN_BURN + 2] = 0.0      # the points closest to zero sit
+    dev[-2:] = 0.0                        # at the very ends of the used range
+    state = _history([4 * k for k in range(SYN_POINTS)], dev, _flat_loss())
+    sel = select_epoch(state, diagnostics=False)
+    assert sel.epoch not in (4 * SYN_BURN, 4 * (SYN_BURN + 1),
+                             4 * (SYN_POINTS - 2), 4 * (SYN_POINTS - 1))
+    assert sel.window_lo == 4 * SYN_BURN          # the first full window
+    assert sel.epoch == 4 * (SYN_BURN + (SYN_WINDOW - 1) // 2)
+    assert len([n for n in sel.notes if "first or the last full window" in n]) == 1
+
+
+# ---------------------------------------------------------------------- S7
+def test_sigma_is_the_adjacent_difference_estimate_and_the_se_follows_it():
+    m = 40
+    dev = np.tile([0.0, 1.0], m // 2)
+    sel = select_epoch(_history([4 * k for k in range(m)], dev, np.full(m, 1e-3)),
+                       diagnostics=False)
+    assert sel.n_used == m and sel.window == 8
+    np.testing.assert_allclose(sel.sigma, np.sqrt(np.mean(np.diff(dev) ** 2) / 2),
+                               atol=1e-12)
+    np.testing.assert_allclose(sel.sigma, 1.0 / np.sqrt(2.0), atol=1e-12)
+    np.testing.assert_allclose(sel.score_se, sel.sigma / np.sqrt(sel.window),
+                               atol=1e-12)
+    np.testing.assert_allclose(sel.optimism, 2.0 * sel.score_se, atol=1e-12)
+
+
+# ---------------------------------------------------------------------- S8
+def test_a_costly_window_is_warned_about_but_the_epoch_does_not_move():
+    ref = select_epoch(_synthetic(), diagnostics=False)
+    costly, cheap = _flat_loss(), _flat_loss(base=1.2e-3)
+    costly[70:90] = 1.2e-3                # the adopted window is 73-88
+    cheap[70:90] = 1.0e-3
+    hot = select_epoch(_synthetic(loss=costly), diagnostics=False)
+    cold = select_epoch(_synthetic(loss=cheap), diagnostics=False)
+    assert hot.epoch == cold.epoch == ref.epoch
+    assert hot.loss_ratio > 1.0 and cold.loss_ratio < 1.0
+    assert len([n for n in hot.notes if "higher-loss" in n]) == 1
+    assert [n for n in cold.notes if "higher-loss" in n] == []
+    np.testing.assert_allclose(hot.window_loss_mean, 1.2e-3, rtol=1e-12)
+    np.testing.assert_allclose(hot.loss_median, 1.0e-3, rtol=1e-12)
+    np.testing.assert_allclose(hot.loss_at_epoch, 1.2e-3, rtol=1e-12)
+    np.testing.assert_allclose(ref.loss_ratio, 1.0, rtol=1e-12)
+    assert ref.notes == []                # a flat loss says nothing at all
+
+
+# ---------------------------------------------------------------------- S9
+def test_too_few_points_and_bad_arguments_are_rejected():
+    rng = np.random.default_rng(2)
+    nine = _history(range(9), rng.normal(0, 0.01, 9), np.full(9, 1e-3))
+    with pytest.raises(ValueError, match="loss_tol"):
+        select_epoch(nine)
+    # 29 points of which 20 are burn-in leave 9
+    short = _synthetic(m=29, zero_at=24.5)
+    with pytest.raises(ValueError, match="loss_tol"):
+        select_epoch(short)
+    with pytest.raises(ValueError, match="window"):
+        select_epoch(_synthetic(), window=2)
+    with pytest.raises(ValueError, match="window"):
+        select_epoch(_synthetic(), window=SYN_POINTS - SYN_BURN + 1)
+    with pytest.raises(ValueError, match="loss_tol"):
+        select_epoch(_synthetic(), loss_tol=0.9)
+    assert select_epoch(_synthetic(), window=9, diagnostics=False).window == 9
+
+
+def test_a_short_run_is_noted_when_the_window_hits_its_limit():
+    sel = select_epoch(_synthetic(m=40, zero_at=30.5), diagnostics=False)
+    assert sel.n_used == 20 and sel.window == selection.WINDOW_MIN
+    assert len([n for n in sel.notes if "lower limit" in n]) == 1
+
+
+# --------------------------------------------------------------------- S10
+def test_the_permutation_test_is_reproducible_and_never_decides(monkeypatch):
     state = _synthetic()
-    # make the point of smallest |dev| in band 3 different from the smallest loss
-    k_min_loss = 25
-    idx = [k for k in range(20, 30) if k != k_min_loss]
-    k_zero = idx[0]
-    state["validation_history"][k_zero]["sample_0/dself_S"] = 1.0    # dev exactly 0
-    sel = select_epoch(state)
-    assert sel.best.index == 3
-    assert sel.epoch == 4 * k_min_loss
-    assert sel.epoch != 4 * k_zero
+    a = select_epoch(state)
+    b = select_epoch(state)
+    assert isinstance(a.diagnostics, PermutationDiagnostics)
+    assert a.diagnostics == b.diagnostics
+    assert a.diagnostics.n_perm == selection.DEFAULT_PERMUTATION
+    assert a.diagnostics.seed == 0
+    assert 0.0 < a.diagnostics.p_value <= 1.0
+
+    c = select_epoch(state, n_perm=137, seed=3)
+    assert c.diagnostics.n_perm == 137 and c.diagnostics.seed == 3
+    assert (c.epoch, c.score, c.window_lo) == (a.epoch, a.score, a.window_lo)
+
+    off = select_epoch(state, diagnostics=False)
+    assert off.diagnostics is None
+    assert off.epoch == a.epoch
+    none = select_epoch(state, n_perm=0)
+    assert none.diagnostics is None
+    assert any("permutation" in n for n in none.notes)
+
+    def boom(*args, **kwargs):            # the decision draws no random number
+        raise AssertionError("default_rng must not be called")
+
+    monkeypatch.setattr(np.random, "default_rng", boom)
+    assert select_epoch(state, diagnostics=False).epoch == a.epoch
 
 
-# ---------------------------------------------------------------------- T3
+def test_the_permutation_p_value_sees_a_trend():
+    state = _synthetic()
+    with_trend = select_epoch(state, n_perm=200)
+    assert with_trend.diagnostics.p_value < 0.5
+
+
+# --------------------------------------------------------------------- S11
+def test_regression_on_the_real_run(real_history):
+    sel = select_epoch(real_history)
+    assert sel.monitor == "sample_0/dself_S"
+    assert sel.label == "s_opt"
+    assert sel.n_points == 171
+    assert sel.burn_in_points == 35
+    assert sel.burn_in_epoch == 187
+    assert sel.n_used == 136
+    assert sel.window == 27
+    assert sel.n_windows == 110
+    assert sel.epoch == 618
+    assert (sel.window_lo, sel.window_hi) == (543, 759)
+    assert sel.ffxml == "xmlfiles/epoch_s_opt-618.xml"
+    np.testing.assert_allclose(sel.score, -0.154686, atol=1e-6)
+    np.testing.assert_allclose(sel.sigma, 0.127056, atol=1e-6)
+    np.testing.assert_allclose(sel.score_se, 0.024452, atol=1e-6)
+    np.testing.assert_allclose(sel.optimism, 2 * sel.score_se, atol=1e-12)
+    np.testing.assert_allclose(sel.dev_at_epoch, -0.143042, atol=1e-5)
+    np.testing.assert_allclose(sel.loss_at_epoch, 3.836178e-04, rtol=1e-6)
+    np.testing.assert_allclose(sel.window_loss_mean, 4.223878e-04, rtol=1e-6)
+    np.testing.assert_allclose(sel.loss_median, 3.844891e-04, rtol=1e-6)
+    np.testing.assert_allclose(sel.loss_ratio, 1.0986, atol=1e-3)
+    assert len([n for n in sel.notes if "higher-loss" in n]) == 1
+    assert sel.diagnostics.p_value <= 0.02
+    assert (sel.diagnostics.n_perm, sel.diagnostics.seed) == (2000, 0)
+
+
+def test_the_real_run_keeps_its_epoch_whatever_the_loss_says(real_history):
+    """With the burn-in pinned, the loss cannot move the window."""
+    ref = select_epoch(real_history, burn_in=187, diagnostics=False)
+    assert ref.epoch == 618 and ref.n_used == 136
+    scrambled = json.loads(json.dumps(real_history))
+    for rec in scrambled["target_history"]:
+        if "loss" in rec:
+            rec["loss"] = float(rec["loss"]) * (1.0 + 0.3 * (rec["epoch"] % 7))
+    sel = select_epoch(scrambled, burn_in=187, diagnostics=False)
+    assert (sel.epoch, sel.window_lo, sel.window_hi) == (618, 543, 759)
+    assert sel.score == ref.score
+
+
+# --------------------------------------------------------------------- S12
+def test_regression_with_a_hand_set_burn_in(real_history):
+    sel = select_epoch(real_history, burn_in=300, diagnostics=False)
+    assert sel.n_used == 125
+    assert sel.window == 25
+    assert sel.epoch == 635
+    assert (sel.window_lo, sel.window_hi) == (557, 776)
+    np.testing.assert_allclose(sel.score, -0.153765, atol=1e-6)
+    np.testing.assert_allclose(sel.sigma, 0.121295, atol=1e-6)
+    np.testing.assert_allclose(sel.score_se, 0.024259, atol=1e-6)
+
+
+def test_regression_fallbacks_agree_on_the_real_run(real_history):
+    ref = select_epoch(real_history, diagnostics=False)
+    no_target = {k: v for k, v in real_history.items() if k != "target_history"}
+    sel = select_epoch(no_target, diagnostics=False)
+    assert sel.epoch == 618
+    np.testing.assert_allclose(sel.score, ref.score, atol=1e-12)
+    no_gt = json.loads(json.dumps(real_history))
+    del no_gt["validation_params"][0]["dself_S"]["gt"]
+    sel = select_epoch(no_gt, diagnostics=False)
+    assert sel.epoch == 618
+    np.testing.assert_allclose(sel.score, ref.score, atol=1e-12)
+    assert any("validation_dev_history" in n for n in sel.notes)
+
+
+# ---------------------------------------- kept from the previous rule (T3)
 def test_monitor_is_found_when_unique_and_required_otherwise():
     state = _synthetic()
-    assert select_epoch(state).monitor == "sample_0/dself_S"
+    assert select_epoch(state, diagnostics=False).monitor == "sample_0/dself_S"
 
-    rng = np.random.default_rng(1)
-    two = _history([4 * k for k in range(50)], rng.normal(0, 0.01, 50),
-                   1e-3 * np.ones(50), extra_entries={"rho": 1.5})
+    two = _synthetic()
+    for key in ("validation_history", "validation_dev_history"):
+        for rec in two[key]:
+            rec["sample_0/rho"] = 0.5 * rec["sample_0/dself_S"]
+    two["validation_params"][0]["rho"] = {"property": "density_gcm3", "gt": 1.0}
     with pytest.raises(ValueError) as err:
         select_epoch(two)
     assert "sample_0/dself_S" in str(err.value) and "sample_0/rho" in str(err.value)
-    sel = select_epoch(two, monitor="sample_0/rho")
+    sel = select_epoch(two, monitor="sample_0/rho", diagnostics=False)
     assert sel.monitor == "sample_0/rho"
-    # dev of rho is half that of dself_S in _history
-    ref = select_epoch(two, monitor="sample_0/dself_S")
-    assert sel.score == pytest.approx(0.5 * ref.score)
 
 
-# ---------------------------------------------------------------------- T4
+# ------------------------------------------------------------------- (T4)
 def test_without_gt_the_recorded_deviation_is_used_and_noted():
     state = _synthetic()
-    ref = select_epoch(state)
+    ref = select_epoch(state, diagnostics=False)
     del state["validation_params"][0]["dself_S"]["gt"]
-    sel = select_epoch(state)
+    sel = select_epoch(state, diagnostics=False)
     fallback = [n for n in sel.notes if "validation_dev_history" in n]
-    assert len(fallback) == 1
-    assert "metric" in fallback[0]
+    assert len(fallback) == 1 and "metric" in fallback[0]
     # validation_dev_history holds relerr here, so the numbers do not change
     assert sel.epoch == ref.epoch
-    assert sel.score == pytest.approx(ref.score)
+    np.testing.assert_allclose(sel.score, ref.score, atol=1e-12)
     assert ref.notes == []
 
 
@@ -202,43 +458,26 @@ def test_dev_is_recomputed_from_gt():
     for rec in state["validation_dev_history"]:
         rec["sample_0/dself_S"] = 99.0
     ep, dev, loss, monitor, notes = extract_history(state)
-    assert ep.shape == dev.shape == loss.shape == (50,)
-    assert np.all(np.abs(dev) < 1.0)
+    assert ep.shape == dev.shape == loss.shape == (SYN_POINTS,)
+    assert np.all(np.abs(dev) < 2.0)
     assert monitor == "sample_0/dself_S" and notes == []
 
 
-# ---------------------------------------------------------------------- T5
-def test_too_few_points_and_bad_band_count_are_rejected():
-    rng = np.random.default_rng(2)
-    nine = _history(range(9), rng.normal(0, 0.01, 9), 1e-3 * np.ones(9))
-    with pytest.raises(ValueError, match="10"):
-        select_epoch(nine, band_count=5)
-    with pytest.raises(ValueError, match="band_count"):
-        select_epoch(_synthetic(), band_count=1)
-
-    twelve = _history(range(12), rng.normal(0, 0.01, 12), 1e-3 * np.ones(12))
-    sel = select_epoch(twelve, band_count=5)
-    assert sel.n_points == 12
-    assert any("12" in n and "band_count=5" in n for n in sel.notes)
-    fifteen = _history(range(15), rng.normal(0, 0.01, 15), 1e-3 * np.ones(15))
-    assert select_epoch(fifteen, band_count=5).notes == []
-
-
-# ---------------------------------------------------------------------- T6
+# ------------------------------------------------------------------- (T6)
 def test_nan_points_are_dropped_and_counted():
     state = _synthetic()
-    for k in (3, 17, 41):
+    for k in (3, 41, 77):
         state["validation_history"][k]["sample_0/dself_S"] = float("nan")
-    state["validation_history"][17]["sample_0/dself_S"] = float("inf")
-    sel = select_epoch(state)
-    assert sel.n_points == 47
+    state["validation_history"][41]["sample_0/dself_S"] = float("inf")
+    sel = select_epoch(state, diagnostics=False)
+    assert sel.n_points == SYN_POINTS - 3
     assert any("3" in n and "NaN" in n for n in sel.notes)
 
 
-# ---------------------------------------------------------------------- T7
+# ------------------------------------------------------------------- (T7)
 def test_every_input_form_gives_the_same_result(tmp_path):
     state = _synthetic()
-    ref = select_epoch(state)
+    ref = select_epoch(state, diagnostics=False)
 
     trainer_like = types.SimpleNamespace(**state)
     pkl = tmp_path / "train_state_t.pkl"
@@ -246,13 +485,11 @@ def test_every_input_form_gives_the_same_result(tmp_path):
         pickle.dump(state, f)
 
     for source in (trainer_like, pkl, str(pkl), tmp_path):
-        sel = select_epoch(source)
-        assert sel.epoch == ref.epoch
-        assert sel.score == ref.score and sel.score_se == ref.score_se
-        assert sel.bands == ref.bands
-    assert select_epoch(pkl).label == "train_state_t.pkl"
-    assert select_epoch(tmp_path).label == tmp_path.name
-    assert select_epoch(pkl, label="lr=1e-4").label == "lr=1e-4"
+        sel = select_epoch(source, label="t", diagnostics=False)
+        assert sel == ref
+    assert select_epoch(pkl, diagnostics=False).label == "train_state_t.pkl"
+    assert select_epoch(tmp_path, diagnostics=False).label == tmp_path.name
+    assert select_epoch(pkl, label="lr=1e-4", diagnostics=False).label == "lr=1e-4"
 
     empty = tmp_path / "empty"
     empty.mkdir()
@@ -282,154 +519,43 @@ def test_load_history_keeps_only_the_history_keys_as_floats(real_history):
     assert all(type(r["loss"]) is float for r in h["target_history"])
     assert all(set(r) == {"epoch", "loss", "sample_0/resampled"} for r in h["target_history"])
     assert all(type(r["sample_0/resampled"]) is bool for r in h["target_history"])
-    assert select_epoch(h).epoch == select_epoch(state).epoch
+    assert select_epoch(h, diagnostics=False).epoch == \
+        select_epoch(state, diagnostics=False).epoch
     # idempotent, and the fixture is such a reduced dict
     assert load_history(h) == h
     assert set(load_history(real_history)) <= set(selection.HISTORY_KEYS)
 
 
-# ---------------------------------------------------------------------- T8
+# ------------------------------------------------------------------- (T8)
 def test_loss_lookup_falls_back_to_epochs_and_losses_and_uses_the_nearest_epoch():
     state = _synthetic()
-    ref = select_epoch(state)
+    ref = select_epoch(state, diagnostics=False)
     without = _synthetic()
     del without["target_history"]
-    sel = select_epoch(without)
+    sel = select_epoch(without, diagnostics=False)
     assert sel.epoch == ref.epoch
-    assert sel.bands == ref.bands
     assert sel.loss_at_epoch == ref.loss_at_epoch
+    assert sel.window_loss_mean == ref.window_loss_mean
 
     # a validation record one epoch past the last recorded loss
     last = max(without["epochs"])
     without["validation_history"][-1]["epoch"] = last + 1
-    sel = select_epoch(without)
-    assert sel.bands[-1].epoch_hi == last + 1
-    assert sel.bands[-1].loss_mean == pytest.approx(ref.bands[-1].loss_mean)
+    ep, _, loss, _, _ = extract_history(without)
+    assert ep[-1] == last + 1
+    assert loss[-1] == without["losses"][last]
 
 
 def test_points_that_are_not_resampled_epochs_are_noted():
     state = _synthetic()
     for rec in state["target_history"]:
-        if rec["epoch"] == 100:
+        if rec["epoch"] == SYN_EPOCH:
             rec["sample_0/resampled"] = False
-    sel = select_epoch(state)
+    sel = select_epoch(state, diagnostics=False)
     assert any("resampled" in n for n in sel.notes)
-    assert sel.epoch == 100                        # the note does not change the choice
+    assert sel.epoch == SYN_EPOCH              # the note does not change the choice
 
 
-# ---------------------------------------------------------------------- T9
-def test_select_run_ties_and_breaks_the_tie_by_the_band_mean_loss():
-    a = select_epoch(_synthetic(), label="a")
-    cheaper = _synthetic()
-    for rec in cheaper["target_history"]:
-        rec["loss"] *= 0.9
-    cheaper["losses"] = [0.9 * x for x in cheaper["losses"]]
-    b = select_epoch(cheaper, label="b")
-    assert a.score == b.score
-
-    run = select_run([a, b])
-    assert isinstance(run, RunSelection)
-    assert run.tied == [a, b] or run.tied == [b, a]
-    assert run.winner is b
-    assert run.epoch == b.epoch
-    assert run.z == selection.DEFAULT_Z
-
-    shifted = _synthetic()
-    for rec in shifted["validation_history"]:
-        rec["sample_0/dself_S"] += 1.0             # dev + 1.0 everywhere
-    c = select_epoch(shifted, label="c")
-    run = select_run([c, a, b])
-    assert run.ranked[-1] is c
-    assert c not in run.tied
-    assert run.winner is b
-
-    # a large z makes everything tied; the tie-break is still the loss
-    run = select_run([c, a, b], z=1e6)
-    assert len(run.tied) == 3 and run.winner is b
-
-    with pytest.raises(ValueError):
-        select_run([])
-
-
-# --------------------------------------------------------------------- T10
-def test_diagnostics_are_deterministic_and_optional():
-    state = _synthetic()
-    a = select_epoch(state, seed=0)
-    b = select_epoch(state, seed=0)
-    assert isinstance(a.diagnostics, SelectionDiagnostics)
-    assert a.diagnostics == b.diagnostics
-    assert a.diagnostics.n_boot == selection.DEFAULT_BOOTSTRAP
-    assert a.diagnostics.f_df == (3, 36)          # 4 admissible bands of 10 points
-    assert a.diagnostics.f_stat > 1.0             # the band means really differ
-
-    c = select_epoch(state, seed=1)
-    assert c.diagnostics.selection_bias != a.diagnostics.selection_bias
-    assert c.diagnostics.selection_bias == pytest.approx(
-        a.diagnostics.selection_bias, abs=0.01)
-    assert (c.epoch, c.score) == (a.epoch, a.score)   # the seed never touches the decision
-
-    assert select_epoch(state, diagnostics=False).diagnostics is None
-    assert select_epoch(state, n_boot=0).diagnostics.selection_bias == 0.0
-
-
-def test_autocorrelated_residuals_are_noted():
-    """A slow oscillation inside the bands breaks the white-noise assumption."""
-    m = 50
-    epochs = [4 * k for k in range(m)]
-    dev = -0.2 + 0.1 * np.sin(np.arange(m) * 2 * np.pi / 10)
-    sel = select_epoch(_history(epochs, dev, 1e-3 * np.ones(m)))
-    assert abs(sel.autocorr1) > selection.AUTOCORR_WARN
-    assert any("autocorrelation" in n for n in sel.notes)
-
-
-# --------------------------------------------------------------------- T11
-def test_regression_on_the_real_run(real_history):
-    sel = select_epoch(real_history, band_count=5)
-    assert sel.monitor == "sample_0/dself_S"
-    assert sel.n_points == 171
-    assert sel.label == "s_opt"
-    assert sel.epoch == 882
-    assert sel.ffxml == "xmlfiles/epoch_s_opt-882.xml"
-    assert (sel.best.epoch_lo, sel.best.epoch_hi) == (572, 951)
-    assert sel.best.n == 34
-    assert sel.score == pytest.approx(-0.189697, abs=1e-5)
-    assert sel.score_se == pytest.approx(0.021632, abs=1e-5)
-    assert sel.sigma == pytest.approx(0.126137, abs=1e-5)
-    assert sel.best.loss_mean == pytest.approx(3.887463e-4, rel=1e-4)
-    assert sel.loss_at_epoch == pytest.approx(2.596065e-4, rel=1e-4)
-    assert sel.autocorr1 == pytest.approx(-0.0802, abs=1e-3)
-    assert [b.admissible for b in sel.bands] == [False, True, True, True, True]
-    assert sel.diagnostics.f_stat == pytest.approx(4.2117, abs=1e-3)
-    assert sel.diagnostics.f_df == (3, 132)
-    assert sel.diagnostics.selection_bias == pytest.approx(0.00956, abs=1e-4)
-    assert sel.notes == []
-
-
-@pytest.mark.parametrize("band_count, epoch, lo, hi", [
-    (3, 882, 442, 1041),
-    (5, 882, 572, 951),
-    (8, 578, 560, 751),
-])
-def test_regression_band_count_sensitivity(real_history, band_count, epoch, lo, hi):
-    sel = select_epoch(real_history, band_count=band_count, diagnostics=False)
-    assert sel.epoch == epoch
-    assert (sel.best.epoch_lo, sel.best.epoch_hi) == (lo, hi)
-
-
-def test_regression_fallbacks_agree_on_the_real_run(real_history):
-    ref = select_epoch(real_history)
-    no_target = {k: v for k, v in real_history.items() if k != "target_history"}
-    assert select_epoch(no_target).epoch == 882
-    assert select_epoch(no_target).score == pytest.approx(ref.score)
-    no_gt = json.loads(json.dumps(real_history))
-    del no_gt["validation_params"][0]["dself_S"]["gt"]
-    sel = select_epoch(no_gt)
-    assert sel.epoch == 882
-    assert sel.score == pytest.approx(ref.score)
-    assert any("validation_dev_history" in n for n in sel.notes)
-
-
-# --------------------------------------------------------------------- T12
+# ------------------------------------------------------------------ (T12)
 def test_replica_key_pattern_matches_the_trainer_convention():
     from imolcraft.trainer.trainer import _state_name
 
@@ -440,7 +566,7 @@ def test_replica_key_pattern_matches_the_trainer_convention():
     assert not selection._RESAMPLED_RE.match(_state_name(3) + "/loss")
 
 
-# --------------------------------------------------------------------- T13
+# --------------------------------------------------------------------- S13
 def test_public_names_are_exported_from_the_trainer_package():
     for name in selection.__all__:
         assert hasattr(imolcraft.trainer, name), name
@@ -448,42 +574,65 @@ def test_public_names_are_exported_from_the_trainer_package():
     for name in ("np", "os", "pickle", "re", "argparse", "Any", "Sequence"):
         assert name not in selection.__all__
     assert "main" not in selection.__all__
-    assert selection.DEFAULT_BAND_COUNT == 5
     assert selection.DEFAULT_LOSS_TOL == 1.5
-    assert selection.DEFAULT_Z == 2.5
-    assert selection.DEFAULT_BOOTSTRAP == 2000
+    assert selection.DEFAULT_PERMUTATION == 2000
+    assert selection.LOSS_MEDIAN_WINDOW == 5
+    assert (selection.WINDOW_MIN, selection.WINDOW_MAX) == (5, 35)
+    assert selection.MIN_POINTS == 10
+    assert selection.LOSS_WARN_RATIO == 1.0
 
 
-# --------------------------------------------------------------------- T14
-def test_cli_prints_the_selection_and_the_sensitivity(tmp_path, capsys, real_history):
+def test_the_retired_rule_is_gone():
+    for name in ("Band", "SelectionDiagnostics", "RunSelection", "select_run",
+                 "format_run_selection", "DEFAULT_BAND_COUNT", "DEFAULT_Z",
+                 "DEFAULT_BOOTSTRAP"):
+        assert not hasattr(selection, name), name
+    with open(selection.__file__, encoding="utf-8") as f:
+        source = f.read()
+    assert "band" not in source.lower()
+
+
+# --------------------------------------------------------------------- S14
+def test_cli_prints_the_selection(tmp_path, capsys, real_history):
     pkl = tmp_path / "train_state_s_opt.pkl"
     with open(pkl, "wb") as f:
         pickle.dump(real_history, f)
 
-    assert main([str(pkl), "--sensitivity", "3", "5"]) == 0
+    assert main([str(pkl)]) == 0
     out = capsys.readouterr().out
-    assert "adopted epoch = 882" in out
+    assert "adopted epoch = 618" in out
+    assert "543-759" in out
     assert "monitor=sample_0/dself_S" in out
-    assert "sensitivity to band_count [3, 5]" in out
-    assert "442-1041" in out and "572-951" in out
-    assert "F(3,132)" in out
-    assert "comparison of the runs" not in out
+    assert "+/-" in out and "optimism" in out
+    assert "permutation test, 2000 shuffles" in out
 
-    other = tmp_path / "other"
-    other.mkdir()
-    with open(other / "train_state_o.pkl", "wb") as f:
-        pickle.dump(real_history, f)
-    assert main([str(pkl), str(other), "--no-diagnostics", "--band-count", "8",
-                 "--z", "2.5", "--loss-tol", "1.5", "--bootstrap", "10",
-                 "--monitor", "sample_0/dself_S"]) == 0
+    assert main([str(pkl), "--burn-in", "300", "--no-diagnostics"]) == 0
     out = capsys.readouterr().out
-    assert "comparison of the runs" in out
-    assert "tied set (2/2)" in out
-    assert "adopted epoch = 578" in out
-    assert "F(" not in out
+    assert "adopted epoch = 635" in out
+    assert "permutation" not in out
+
+    assert main([str(pkl), "--window", "27", "--loss-tol", "1.5",
+                 "--permutations", "100", "--monitor", "sample_0/dself_S"]) == 0
+    out = capsys.readouterr().out
+    assert "adopted epoch = 618" in out
+    assert "permutation test, 100 shuffles" in out
+
+    for gone in ("--band-count", "--z", "--bootstrap", "--sensitivity"):
+        with pytest.raises(SystemExit):
+            main([str(pkl), gone, "5"])
 
 
-# --------------------------------------------------------------------- T15
+def test_the_report_always_states_the_optimism_and_the_error(real_history):
+    text = format_epoch_selection(select_epoch(real_history, diagnostics=False))
+    assert "[optimism]" in text
+    assert "flatters" in text and "worse" in text
+    assert "-0.155 +/- 0.024" in text
+    assert "sigma of one point 0.127" in text
+    assert "[reference only] dev at epoch 618 alone" in text
+    assert text.isascii()
+
+
+# --------------------------------------------------------------------- S15
 def test_module_source_is_ascii():
     with open(selection.__file__, encoding="utf-8") as f:
         source = f.read()
