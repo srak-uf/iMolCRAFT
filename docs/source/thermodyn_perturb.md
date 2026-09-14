@@ -326,33 +326,44 @@ to look at to check that the MSD is straight over the fitted window.
 
 The trainer's `best_epoch` / `best_params` (and the `*_best.xml` it writes)
 are the epoch of smallest **loss**. The validation says something else: it is
-measured on trajectories run with the parameters of the epoch, never enters the
-loss, and on a real run the epoch of smallest loss is often not in the band
-where the validated property is closest to its reference.
-`imolcraft.trainer.selection` turns the validation history into a choice of
-epoch, after the run, without touching `best_epoch`:
+measured on trajectories run with the parameters of the epoch and never enters
+the loss. `imolcraft.trainer.selection` turns the validation history into a
+choice of epoch, after the run, without touching `best_epoch`:
 
 ```python
-from imolcraft.trainer.selection import select_epoch, select_run
+from imolcraft.trainer.selection import select_epoch, format_epoch_selection
 
-sel = select_epoch("train_state_s_opt.pkl")     # or a directory, the dict, the trainer
+sel = select_epoch("train_state_s_opt.pkl")   # or a directory, the dict, the trainer
 print(sel.epoch, sel.ffxml, f"{sel.score:+.3f} +/- {sel.score_se:.3f}")
-for band in sel.bands:
-    print(band.epoch_lo, band.epoch_hi, band.dev_mean, band.loss_mean, band.admissible)
-
-# a learning-rate sweep: one selection per run, then the run
-best = select_run([select_epoch(p, label=p) for p in ("lr_1e-4", "lr_2e-4")])
-print(best.winner.label, best.epoch, [r.label for r in best.tied])
+print(format_epoch_selection(sel))            # the same report the CLI prints
 ```
 
 ```bash
-# same thing as tables; needs the conda environment because the checkpoint
+# same thing as a report; needs the conda environment because the checkpoint
 # holds jax arrays
-python -m imolcraft.trainer.selection lr_1e-4 lr_2e-4 --sensitivity 3 5 8
+python -m imolcraft.trainer.selection s_opt
 ```
 
-The rule, whose only parameters are `band_count` (default 5) and `loss_tol`
-(default 1.5):
+###### Why the loss does not choose the epoch
+
+A property in `imolcraft.trainer.properties.VALIDATION_ONLY_PROPERTIES` --
+`dself_cm2s` is the usual one -- can never be a target: it is measured on the
+fresh trajectory and there is no reweighted estimate of it, so it does not
+enter the loss at any epoch. On a real run the two are simply unrelated (the
+partial correlation between the loss and the deviation, epoch removed, is
++0.007), and a loss that dips at one epoch says nothing at all about how good
+the self-diffusion coefficient is there. Choosing the epoch of smallest loss
+inside a promising stretch of the run therefore just picks the noise of the
+loss. The loss is used for one thing only: to say where the burn-in ended.
+
+The deviation itself is noisy too. One validation point of a self-diffusion
+coefficient out of a few nanoseconds scatters by `sigma` ~ 0.13 in relative
+terms, which is as large as the drift the training produces, so a single
+epoch cannot be told from its neighbours. What can be told apart is the
+*average over a stretch of neighbouring epochs*, whose error is
+`sigma / sqrt(w)` for `w` points.
+
+###### The rule
 
 1. The evaluation points are the records of `validation_history` -- the
    resampled epochs, at which the MBAR weights are uniform so that both the
@@ -362,45 +373,76 @@ The rule, whose only parameters are `band_count` (default 5) and `loss_tol`
    entry, so it does not depend on the `metric` of the YAML. Only an entry
    without `gt` falls back to `validation_dev_history`, which is then in
    whatever that metric gives -- the unit of the property for `diff` -- and a
-   note says so; scores of two runs are then comparable only under the same
-   metric. Nothing is converted.
-3. The points are split, in time order, into `band_count` bands of equal size.
-   Every band gets `mean(dev) +/- SE` and `mean(loss)` (the loss at the
-   nearest recorded epoch, from `target_history` or from `epochs` / `losses`).
-4. The **admissible** bands are those with
-   `mean(loss) <= loss_tol * min(mean(loss))`. This drops the burn-in by the
-   loss alone; the deviation plays no part in it.
-5. `sigma`, the noise of a single point, is the within-band standard deviation
-   pooled over the admissible bands, and `SE = sigma / sqrt(n)`.
-6. The **best band** is the admissible band of smallest `|mean(dev)|`; its
-   mean and SE are the `score` and `score_se` of the run. Inside the band the
-   points are equivalent as far as the validation can resolve, so the epoch of
-   smallest loss in it is adopted -- not the point of smallest `|dev|`, which
-   would just pick the noise.
-7. Between runs, `select_run` ranks by `|score|`; the runs within
-   `z * sqrt(SE_a^2 + SE_b^2)` of the first (`z = 2.5` by default) are `tied`
-   with it, and the `winner` is the tied run of smallest best-band mean loss.
+   note says so. `score`, `score_se`, `sigma`, `optimism` and `dev_at_epoch`
+   are all in that same unit; nothing is converted.
+3. **Burn-in.** The loss is smoothed with a centred running median of five
+   points (the window shrinks at the two ends, so every point has a smoothed
+   value) and the points before it first falls to `loss_tol` (default 1.5)
+   times its smallest value over the whole run are dropped. A single spike of
+   the loss cannot move that boundary, which is why the median is used.
+   Points after the boundary are never dropped, so the range kept is
+   contiguous.
+4. **Window.** `w = clip(round(n / 5), 5, 35)` points, with `n` the number of
+   points kept. The window is counted in points, not in epochs, so a run that
+   validates rarely is smoothed just as much as one that validates often.
+5. **Choice.** The deviation is averaged over every full window of `w`
+   consecutive points and the window of smallest `|mean|` wins; the adopted
+   epoch is its centre point (the lower of the two middle points when `w` is
+   even). Nothing else enters this step -- no loss, no tie-break inside the
+   window -- so the same checkpoint always gives the same epoch.
 
-`select_epoch` needs a `monitor` (`sample_{i}/{entry}`) only when the run
-validates more than one entry; with a single one it is found. It needs at
-least `2 * band_count` points and notes fewer than `3 * band_count`. What
-else `notes` may say, and what to make of it:
+```python
+w = clip(round(n / 5), 5, 35)
+k = argmin over windows of |mean(dev[k : k + w])|
+epoch = epochs[k + (w - 1) // 2]
+```
 
-- *lag-1 autocorrelation ... white-noise assumption is doubtful* (`|r| > 0.3`):
-  the SE, and with it the tie between runs, is not to be trusted. `autocorr1`
-  is always computed; the correction `n * (1 - r) / (1 + r)` is left to you.
-- *selection bias ... exceeds the SE*: picking the smallest of `band_count`
-  band means flatters the score by that much. The bias is measured by a
-  parametric bootstrap (`n_boot`, `seed`) and, like the one-way F statistic
-  between the admissible bands, is reported in `diagnostics` and never used
-  for the decision.
+###### How to read the score
+
+`score` is the mean deviation of the adopted window and `score_se` is
+`sigma / sqrt(w)`, with `sigma` estimated from the differences of neighbouring
+points (`sqrt(mean(diff ** 2) / 2)`), which cancels the drift.
+
+The score is **optimistic**, and the report says so on its own line. It is the
+smallest `|mean|` out of `n_windows` windows, so a minimum comes out low even
+when the validation does not depend on the epoch at all -- by about
+`optimism = 2 * score_se`. Quote the score as `score +/- score_se`, never on
+its own, and do not promise that the adopted force field reproduces it: on the
+run shipped with the tests the report is `-0.155 +/- 0.024` while the
+deviation of that epoch measured on points the rule never saw is `-0.186`.
+
+`dev_at_epoch`, the single point at the adopted epoch, is reference only and
+scatters by `sigma` (0.127 on that run), not by the standard error. A
+permutation test (`diagnostics`, `n_perm`, `seed`) asks whether the validation
+depends on the epoch at all; like the loss of the window it is reported and
+never used, and the adopted epoch is the same whatever seed it is given.
+
+###### What `notes` may say
+
+- *the adopted window sits in a higher-loss part of the run*: the mean loss of
+  the window is above the median loss of the points used. The epoch is **not**
+  moved -- the loss is not what this rule optimises -- but it is worth looking
+  at the force field before shipping it.
+- *the smoothed loss climbs back above ...*: the loss rose again after the
+  burn-in. Those points are kept anyway so that the range stays contiguous.
+- *... is few* / *... is many*: the window hit its lower (5) or upper (35)
+  limit, so the score is noisier, or the smoothing relatively weaker, than the
+  rule intends.
+- *the best window is the first or the last full window of the run*: the
+  deviation may still be moving there. The `(w - 1) // 2` points at the start
+  and the `w // 2` at the end can never be adopted, by construction.
+- *no gt found ...*: the deviation comes from `validation_dev_history` and is
+  in the unit that `metric` gives.
 - *some validation points are not resampled epochs*: they are not out of
   sample; check the validation settings.
 
-A tied set with more than one run means the validation does not separate them:
-the run is then chosen by the loss, and the report says so. `--sensitivity 3 5 8`
-shows how the choice moves with the number of bands; a run whose adopted epoch
-jumps between band counts has a flat or noisy validation curve.
+`select_epoch` needs a `monitor` (`sample_{i}/{entry}`) only when the run
+validates more than one entry; with a single one it is found. It raises
+`ValueError` rather than falling back quietly when fewer than ten points are
+left after the burn-in. `burn_in=EPOCH` (`--burn-in`) replaces the automatic
+burn-in by "keep the points after this epoch" and `window=N` (`--window`)
+overrides the window; both are there to check how much the answer moves, and
+the defaults are what the rule is validated with.
 
 ## Target history
 
