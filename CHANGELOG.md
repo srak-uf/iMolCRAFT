@@ -30,9 +30,11 @@ fixes and backwards-compatible additions moves the patch number.
 - `--loss-tol` (and the `loss_tol` argument) keeps its name and its default 1.5
   but now gates the burn-in on the smoothed loss instead of admitting bands.
 - `EpochSelection` reports the window instead of the bands: `window`,
-  `n_windows`, `window_lo`, `window_hi`, `n_used`, `burn_in_points`,
-  `burn_in_epoch`, `sigma`, `optimism`, `dev_at_epoch`, `window_loss_mean`,
-  `loss_median` and `loss_ratio`. `n_points` now counts every finite validation
+  `n_windows`, `window_lo`, `window_hi`, `n_used`, `used_lo`, `used_hi`,
+  `burn_in_points`, `burn_in_lo`, `burn_in_epoch`, `burn_in_request`,
+  `loss_tol`, `sigma`, `optimism`, `dev_at_epoch`, `window_loss_mean`,
+  `loss_median` and `loss_ratio`. The `abs_score` property is gone with
+  `select_run`, the only thing that ranked by it. `n_points` now counts every finite validation
   point of the run, before the burn-in. `score` is the window mean and comes
   with `score_se`; it is the smallest of many windows, so it flatters the epoch
   by about `2 * score_se` even with no signal, and the report says so. A

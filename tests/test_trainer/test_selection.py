@@ -164,16 +164,39 @@ def test_burn_in_drops_the_front_by_the_smoothed_loss():
     sel = select_epoch(_synthetic(), diagnostics=False)
     assert sel.n_points == SYN_POINTS
     assert sel.burn_in_points == SYN_BURN
+    assert sel.burn_in_lo == 0
     assert sel.burn_in_epoch == 4 * (SYN_BURN - 1)
     assert sel.n_used == SYN_POINTS - SYN_BURN
+    assert (sel.used_lo, sel.used_hi) == (4 * SYN_BURN, 4 * (SYN_POINTS - 1))
+    assert sel.burn_in_request is None
+    assert sel.loss_tol == selection.DEFAULT_LOSS_TOL
 
 
-def test_a_single_loss_spike_does_not_move_the_burn_in():
-    """The running median is blind to one outlier among equal neighbours."""
+@pytest.mark.parametrize("index", [10, 60])
+def test_a_single_loss_dip_does_not_move_the_burn_in(index):
+    """
+    The gate is set from a running *median*, so one point cannot move it.
+
+    A dip of a factor 1e6 at a single point is what a mean would trip over:
+    smoothing the loss with a mean of five points would drag the smallest
+    smoothed loss down by a factor five, tighten the gate and push the burn-in
+    past its true end (index 22 instead of 20 here). The median ignores the
+    outlier altogether, whether it falls inside the burn-in (index 10) or in
+    the converged part (index 60).
+    """
     loss = _flat_loss()
-    loss[60] = 1.0                       # a thousand times the plateau
+    loss[index] = 1e-9
     sel = select_epoch(_synthetic(loss=loss), diagnostics=False)
     assert sel.burn_in_points == SYN_BURN
+    assert sel.epoch == SYN_EPOCH
+
+
+def test_a_loss_spike_next_to_the_burn_in_moves_it_by_at_most_one_point():
+    """An upward outlier at the boundary is not smeared over the window."""
+    loss = _flat_loss()
+    loss[21] = 1.0                       # a thousand times the plateau
+    sel = select_epoch(_synthetic(loss=loss), diagnostics=False)
+    assert SYN_BURN <= sel.burn_in_points <= SYN_BURN + 1
     assert sel.epoch == SYN_EPOCH
 
 
@@ -181,8 +204,10 @@ def test_a_flat_loss_drops_nothing():
     sel = select_epoch(_synthetic(loss=np.full(SYN_POINTS, 1e-3)),
                        diagnostics=False)
     assert sel.burn_in_points == 0
+    assert sel.burn_in_lo is None
     assert sel.burn_in_epoch is None
     assert sel.n_used == SYN_POINTS
+    assert sel.used_lo == 0
 
 
 def test_the_burn_in_shrinks_as_loss_tol_grows():
@@ -361,7 +386,11 @@ def test_regression_on_the_real_run(real_history):
     assert sel.label == "s_opt"
     assert sel.n_points == 171
     assert sel.burn_in_points == 35
-    assert sel.burn_in_epoch == 187
+    assert sel.burn_in_lo == 0
+    assert sel.burn_in_epoch == 187          # the last epoch dropped
+    assert sel.used_lo == 191                # the first epoch that passed the gate
+    assert sel.used_hi == 1984
+    assert sel.burn_in_request is None
     assert sel.n_used == 136
     assert sel.window == 27
     assert sel.n_windows == 110
@@ -402,6 +431,10 @@ def test_regression_with_a_hand_set_burn_in(real_history):
     assert sel.window == 25
     assert sel.epoch == 635
     assert (sel.window_lo, sel.window_hi) == (557, 776)
+    assert sel.burn_in_request == 300
+    assert sel.burn_in_points == 46 and sel.used_lo > 300
+    # the remark about the loss is made whoever set the burn-in
+    assert any("climbs back" in n for n in sel.notes)
     np.testing.assert_allclose(sel.score, -0.153765, atol=1e-6)
     np.testing.assert_allclose(sel.sigma, 0.121295, atol=1e-6)
     np.testing.assert_allclose(sel.score_se, 0.024259, atol=1e-6)
@@ -605,11 +638,28 @@ def test_cli_prints_the_selection(tmp_path, capsys, real_history):
     assert "monitor=sample_0/dself_S" in out
     assert "+/-" in out and "optimism" in out
     assert "permutation test, 2000 shuffles" in out
+    # the burn-in line says what was dropped and where the gate was passed
+    assert "burn-in: 35 point(s) dropped, epochs 0-187" in out
+    assert "1.5 x its smallest value at epoch 191" in out
+    assert "used 136 point(s), epochs 191-1984" in out
+    assert "window = 27 points (round(n / 5), clipped to [5, 35])" in out
 
     assert main([str(pkl), "--burn-in", "300", "--no-diagnostics"]) == 0
     out = capsys.readouterr().out
     assert "adopted epoch = 635" in out
     assert "permutation" not in out
+    assert "requested by burn_in=300, not by the loss" in out
+    assert "running median of the loss first falls" not in out
+
+    assert main([str(pkl), "--window", "11", "--no-diagnostics"]) == 0
+    out = capsys.readouterr().out
+    assert "window = 11 points (set by hand)" in out
+    assert "round(n / 5)" not in out
+
+    assert main([str(pkl), "--loss-tol", "3.0", "--no-diagnostics"]) == 0
+    out = capsys.readouterr().out
+    assert "adopted epoch = 621" in out
+    assert "3 x its smallest value at epoch" in out
 
     assert main([str(pkl), "--window", "27", "--loss-tol", "1.5",
                  "--permutations", "100", "--monitor", "sample_0/dself_S"]) == 0

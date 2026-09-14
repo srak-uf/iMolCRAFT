@@ -401,9 +401,10 @@ def _median_smooth(x: np.ndarray, width: int) -> np.ndarray:
                      for i in range(n)], dtype=float)
 
 
-def _burn_in_start(loss: np.ndarray, loss_tol: float) -> tuple[int, np.ndarray]:
+def _burn_in_start(loss: np.ndarray,
+                   loss_tol: float) -> tuple[int, np.ndarray, float]:
     """
-    First index at which the run counts as converged, and the smoothed loss.
+    First index at which the run counts as converged, with the gate it passed.
 
     The loss is smoothed with a centred running median of
     :data:`LOSS_MEDIAN_WINDOW` points and compared with ``loss_tol`` times the
@@ -426,11 +427,13 @@ def _burn_in_start(loss: np.ndarray, loss_tol: float) -> tuple[int, np.ndarray]:
         Index of the first point that passes the gate (0 when nothing is
         dropped).
     smoothed : ndarray of float, shape (n,)
-        The running median the gate was applied to.
+        The running median the gate was applied to, same unit as ``loss``.
+    gate : float
+        ``loss_tol * min(smoothed)``, the value the gate sits at.
     """
     smoothed = _median_smooth(loss, LOSS_MEDIAN_WINDOW)
     gate = float(loss_tol) * float(smoothed.min())
-    return int(np.argmax(smoothed <= gate)), smoothed
+    return int(np.argmax(smoothed <= gate)), smoothed, gate
 
 
 def _window_size(n: int) -> int:
@@ -571,9 +574,14 @@ class EpochSelection:
     label: str
     monitor: str                 #: history key followed, e.g. ``sample_0/dself_S``
     n_points: int                #: finite validation points in the run, before the burn-in
+    loss_tol: float              #: multiple of the smallest smoothed loss the gate sat at
+    burn_in_request: int | None  #: the ``burn_in`` asked for (None: the loss decided)
     burn_in_points: int          #: points dropped at the front
+    burn_in_lo: int | None       #: first dropped epoch (None when nothing was dropped)
     burn_in_epoch: int | None    #: last dropped epoch (None when nothing was dropped)
     n_used: int                  #: ``n_points - burn_in_points``
+    used_lo: int                 #: first epoch used, the one that passed the burn-in
+    used_hi: int                 #: last epoch used, the last of the run
     window: int                  #: averaging window, in points
     n_windows: int               #: ``n_used - window + 1`` full windows
     epoch: int                   #: adopted epoch: centre point of the best window
@@ -591,11 +599,6 @@ class EpochSelection:
     loss_ratio: float            #: ``window_loss_mean / loss_median``
     notes: list[str] = field(default_factory=list)
     diagnostics: PermutationDiagnostics | None = None
-
-    @property
-    def abs_score(self) -> float:
-        """``|score|``, how far the adopted window sits from the reference."""
-        return abs(self.score)
 
 
 # --------------------------------------------------------------------------
@@ -682,12 +685,12 @@ def select_epoch(
     n_points = int(ep.size)
 
     # ---- the decision ----------------------------------------------------
-    # 1. Burn-in. The only step that looks at the loss.
-    if burn_in is None:
-        start, smoothed_loss = _burn_in_start(loss, loss_tol)
-    else:
-        start = int(np.searchsorted(ep, int(burn_in), side="right"))
-        smoothed_loss = None
+    # 1. Burn-in. The only step that looks at the loss. The gate is worked out
+    #    even when the caller pins the burn-in, so that the same remarks about
+    #    the loss are reported either way; only `start` decides anything.
+    gate_start, smoothed_loss, gate = _burn_in_start(loss, loss_tol)
+    start = gate_start if burn_in is None \
+        else int(np.searchsorted(ep, int(burn_in), side="right"))
     ep_u, dev_u, loss_u = ep[start:], dev[start:], loss[start:]
     n_used = int(ep_u.size)
     if n_used < MIN_POINTS:
@@ -721,14 +724,12 @@ def select_epoch(
     loss_median = float(np.median(loss_u))
     loss_ratio = window_loss_mean / loss_median if loss_median else float("nan")
 
-    if smoothed_loss is not None and start > 0:
-        gate = loss_tol * float(smoothed_loss.min())
-        above = np.where(smoothed_loss[start:] > gate)[0]
-        if above.size:
-            notes.append(
-                f"the smoothed loss climbs back above {loss_tol:g} x its smallest "
-                f"value at epoch {int(ep_u[above[0]])}; those points are kept all "
-                f"the same, so that the range used stays contiguous")
+    above = np.where(smoothed_loss[start:] > gate)[0]
+    if above.size:
+        notes.append(
+            f"the smoothed loss climbs back above {loss_tol:g} x its smallest "
+            f"value at epoch {int(ep_u[above[0]])}; those points are kept all "
+            f"the same, so that the range used stays contiguous")
     if window is None and n_used < 5 * WINDOW_MIN:
         notes.append(
             f"{n_used} point(s) is few: the window is clipped at its lower limit "
@@ -763,9 +764,13 @@ def select_epoch(
 
     return EpochSelection(
         label=label or _default_label(source, state), monitor=monitor,
-        n_points=n_points, burn_in_points=start,
+        n_points=n_points, loss_tol=float(loss_tol),
+        burn_in_request=None if burn_in is None else int(burn_in),
+        burn_in_points=start,
+        burn_in_lo=int(ep[0]) if start > 0 else None,
         burn_in_epoch=int(ep[start - 1]) if start > 0 else None,
-        n_used=n_used, window=w, n_windows=n_windows,
+        n_used=n_used, used_lo=int(ep_u[0]), used_hi=int(ep_u[-1]),
+        window=w, n_windows=n_windows,
         epoch=epoch, ffxml=_ffxml_at(state, epoch),
         window_lo=int(ep_u[k]), window_hi=int(ep_u[k + w - 1]),
         score=score, score_se=score_se, sigma=sigma, optimism=2.0 * score_se,
@@ -794,15 +799,25 @@ def format_epoch_selection(sel: EpochSelection) -> str:
         smallest of many windows and therefore optimistic.
     """
     out = [f"# {sel.label}   monitor={sel.monitor}   points={sel.n_points}"]
-    if sel.burn_in_points:
-        out.append(f"  burn-in: {sel.burn_in_points} point(s) dropped, through epoch "
-                   f"{sel.burn_in_epoch} (there the running median of the loss first "
-                   f"falls to the accepted multiple of its smallest value)")
+    if sel.burn_in_request is None:
+        why_dropped = (f"the running median of the loss first falls to "
+                       f"{sel.loss_tol:g} x its smallest value at epoch {sel.used_lo}")
+        why_kept = (f"the running median of the loss is already within "
+                    f"{sel.loss_tol:g} x its smallest value at epoch {sel.used_lo}, "
+                    f"the first validation point")
     else:
-        out.append("  burn-in: no point dropped (the loss is already down at the "
-                   "first validation point)")
-    out.append(f"  used {sel.n_used} point(s)   window = {sel.window} points "
-               f"(round(n / 5), clipped to [{WINDOW_MIN}, {WINDOW_MAX}]), "
+        why_dropped = f"requested by burn_in={sel.burn_in_request}, not by the loss"
+        why_kept = (f"burn_in={sel.burn_in_request} is at or before the first "
+                    f"validation point, epoch {sel.used_lo}; the loss was not asked")
+    if sel.burn_in_points:
+        out.append(f"  burn-in: {sel.burn_in_points} point(s) dropped, epochs "
+                   f"{sel.burn_in_lo}-{sel.burn_in_epoch} ({why_dropped})")
+    else:
+        out.append(f"  burn-in: no point dropped ({why_kept})")
+    how = ("set by hand" if sel.window != _window_size(sel.n_used) else
+           f"round(n / 5), clipped to [{WINDOW_MIN}, {WINDOW_MAX}]")
+    out.append(f"  used {sel.n_used} point(s), epochs {sel.used_lo}-{sel.used_hi}   "
+               f"window = {sel.window} points ({how}), "
                f"{sel.n_windows} full windows")
     out.append(f"  adopted epoch = {sel.epoch}   window epochs {sel.window_lo}-{sel.window_hi} "
                f"({sel.window} points; the adopted epoch is the centre point)   "
