@@ -11,6 +11,46 @@ fixes and backwards-compatible additions moves the patch number.
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-09-14
+
+### Changed
+
+- `imolcraft.trainer.selection.select_epoch` now chooses the epoch by smoothing
+  the validation deviation instead of by the loss inside a band. The monitored
+  property is validation-only (`dself_cm2s` and the like never enter the loss)
+  and is uncorrelated with the loss, so picking the smallest loss inside the
+  best band was latching onto single-epoch loss dips. The new rule drops the
+  burn-in (the points before the running median of the loss first falls to
+  `loss_tol` times its smallest value), averages the signed relative deviation
+  over a window of `w = clip(round(n / 5), 5, 35)` consecutive points and adopts
+  the centre point of the window whose mean is closest to zero. On a held-out
+  check this halves the error of the adopted epoch (|dev| 0.153 against 0.227
+  for the old rule and 0.242 for no selection). The same run that used to give
+  epoch 882 now gives epoch 618.
+- `--loss-tol` (and the `loss_tol` argument) keeps its name and its default 1.5
+  but now gates the burn-in on the smoothed loss instead of admitting bands.
+- `EpochSelection` reports the window instead of the bands: `window`,
+  `n_windows`, `window_lo`, `window_hi`, `n_used`, `burn_in_points`,
+  `burn_in_epoch`, `sigma`, `optimism`, `dev_at_epoch`, `window_loss_mean`,
+  `loss_median` and `loss_ratio`. `n_points` now counts every finite validation
+  point of the run, before the burn-in. `score` is the window mean and comes
+  with `score_se`; it is the smallest of many windows, so it flatters the epoch
+  by about `2 * score_se` even with no signal, and the report says so. A
+  permutation test of the epoch dependence replaces the F statistic and the
+  bootstrap bias, and like them it never enters the decision. `select_epoch`
+  also takes `burn_in` (an epoch threshold) and `window` (a window in points)
+  to override the two automatic steps, and `n_perm` in place of `n_boot`.
+
+### Removed
+
+- The band rule and everything that belonged to it: `Band`,
+  `SelectionDiagnostics`, `RunSelection`, `select_run`,
+  `format_run_selection`, `DEFAULT_BAND_COUNT`, `DEFAULT_Z`,
+  `DEFAULT_BOOTSTRAP`, the `band_count` / `n_boot` arguments of `select_epoch`
+  and the `--band-count`, `--z`, `--bootstrap` and `--sensitivity` options of
+  `python -m imolcraft.trainer.selection`. Comparing several runs is no longer
+  part of the module.
+
 ## [0.4.1] — 2026-09-08
 
 ### Added
@@ -323,7 +363,8 @@ fixes and backwards-compatible additions moves the patch number.
 Not itemized. `0.2.1` was set on 2026-04-08 and the releases before it were
 not tagged, so their history lives in `git log` alone.
 
-[Unreleased]: https://github.com/srak-uf/iMolCRAFT/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/srak-uf/iMolCRAFT/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/srak-uf/iMolCRAFT/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/srak-uf/iMolCRAFT/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/srak-uf/iMolCRAFT/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/srak-uf/iMolCRAFT/compare/v0.3.1...v0.3.2
