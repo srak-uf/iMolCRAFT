@@ -173,22 +173,28 @@ def test_burn_in_drops_the_front_by_the_smoothed_loss():
 
 
 @pytest.mark.parametrize("index", [10, 60])
-def test_a_single_loss_dip_does_not_move_the_burn_in(index):
+def test_a_single_loss_dip_leaves_the_gate_where_it_was(index):
     """
-    The gate is set from a running *median*, so one point cannot move it.
+    A dip of a factor 1e6 at one point moves neither the gate nor the choice.
 
-    A dip of a factor 1e6 at a single point is what a mean would trip over:
-    smoothing the loss with a mean of five points would drag the smallest
-    smoothed loss down by a factor five, tighten the gate and push the burn-in
-    past its true end (index 22 instead of 20 here). The median ignores the
-    outlier altogether, whether it falls inside the burn-in (index 10) or in
-    the converged part (index 60).
+    The gate is ``loss_tol`` times the smallest smoothed loss, so a single
+    very small point could in principle tighten it and lengthen the burn-in.
+    The comparison is against the *same run without the dip*, so what is
+    asserted here is only the effect of the dip -- inside the burn-in
+    (index 10) or in the converged part (index 60) -- and not the position of
+    the burn-in itself, which
+    ``test_burn_in_drops_the_front_by_the_smoothed_loss`` pins. That a short
+    smoothing would react to an outlier where the median does not is pinned by
+    ``test_a_loss_spike_next_to_the_burn_in_moves_it_by_at_most_one_point``.
     """
+    control = select_epoch(_synthetic(), diagnostics=False)
     loss = _flat_loss()
     loss[index] = 1e-9
     sel = select_epoch(_synthetic(loss=loss), diagnostics=False)
-    assert sel.burn_in_points == SYN_BURN
-    assert sel.epoch == SYN_EPOCH
+    assert sel.burn_in_points == control.burn_in_points
+    assert sel.used_lo == control.used_lo
+    assert sel.epoch == control.epoch
+    assert sel.notes == control.notes
 
 
 def test_a_loss_spike_next_to_the_burn_in_moves_it_by_at_most_one_point():
@@ -335,7 +341,13 @@ def test_too_few_points_and_bad_arguments_are_rejected():
         select_epoch(_synthetic(), window=SYN_POINTS - SYN_BURN + 1)
     with pytest.raises(ValueError, match="loss_tol"):
         select_epoch(_synthetic(), loss_tol=0.9)
-    assert select_epoch(_synthetic(), window=9, diagnostics=False).window == 9
+    by_hand = select_epoch(_synthetic(), window=9, diagnostics=False)
+    assert (by_hand.window, by_hand.window_request) == (9, 9)
+    # asking for exactly the window the rule would have chosen still counts
+    auto = select_epoch(_synthetic(), diagnostics=False)
+    same = select_epoch(_synthetic(), window=auto.window, diagnostics=False)
+    assert auto.window_request is None
+    assert same.window_request == auto.window and same.epoch == auto.epoch
 
 
 def test_a_short_run_is_noted_when_the_window_hits_its_limit():
@@ -432,12 +444,37 @@ def test_regression_with_a_hand_set_burn_in(real_history):
     assert sel.epoch == 635
     assert (sel.window_lo, sel.window_hi) == (557, 776)
     assert sel.burn_in_request == 300
+    assert sel.window_request is None
     assert sel.burn_in_points == 46 and sel.used_lo > 300
     # the remark about the loss is made whoever set the burn-in
-    assert any("climbs back" in n for n in sel.notes)
+    assert [n for n in sel.notes if "climbs back" in n] == \
+        [f"the smoothed loss climbs back above 1.5 x its smallest value at epoch "
+         f"{sel.used_lo}; those points are kept all the same, so that the range "
+         f"used stays contiguous"]
+    assert not any("keeps" in n for n in sel.notes)
     np.testing.assert_allclose(sel.score, -0.153765, atol=1e-6)
     np.testing.assert_allclose(sel.sigma, 0.121295, atol=1e-6)
     np.testing.assert_allclose(sel.score_se, 0.024259, atol=1e-6)
+
+
+@pytest.mark.parametrize("burn_in, kept_before", [(-1, 35), (100, 18), (150, 8)])
+def test_a_burn_in_in_front_of_the_gate_is_reported_as_such(
+        real_history, burn_in, kept_before):
+    """
+    A hand-set burn-in before the gate keeps points the loss would have
+    dropped. That must be said, and the points before the gate must not be
+    passed off as a loss that rose again after converging: on this run the
+    smoothed loss first falls to 1.5 x its smallest value at epoch 191 and
+    climbs back at epoch 257, whatever the burn-in was set to.
+    """
+    sel = select_epoch(real_history, burn_in=burn_in, diagnostics=False)
+    assert sel.used_lo < 191                      # before the gate is passed
+    kept = [n for n in sel.notes if "keeps" in n]
+    assert len(kept) == 1
+    assert f"burn_in={burn_in} keeps {kept_before} point(s)" in kept[0]
+    assert "epoch 191" in kept[0]
+    back = [n for n in sel.notes if "climbs back" in n]
+    assert len(back) == 1 and "at epoch 257" in back[0]
 
 
 def test_regression_fallbacks_agree_on_the_real_run(real_history):
@@ -655,6 +692,12 @@ def test_cli_prints_the_selection(tmp_path, capsys, real_history):
     out = capsys.readouterr().out
     assert "window = 11 points (set by hand)" in out
     assert "round(n / 5)" not in out
+
+    # 27 is what the rule would have chosen anyway, and it is still by hand
+    assert main([str(pkl), "--window", "27", "--no-diagnostics"]) == 0
+    out = capsys.readouterr().out
+    assert "window = 27 points (set by hand)" in out
+    assert "adopted epoch = 618" in out
 
     assert main([str(pkl), "--loss-tol", "3.0", "--no-diagnostics"]) == 0
     out = capsys.readouterr().out

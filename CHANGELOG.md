@@ -32,7 +32,8 @@ fixes and backwards-compatible additions moves the patch number.
 - `EpochSelection` reports the window instead of the bands: `window`,
   `n_windows`, `window_lo`, `window_hi`, `n_used`, `used_lo`, `used_hi`,
   `burn_in_points`, `burn_in_lo`, `burn_in_epoch`, `burn_in_request`,
-  `loss_tol`, `sigma`, `optimism`, `dev_at_epoch`, `window_loss_mean`,
+  `window_request`, `loss_tol`, `sigma`, `optimism`, `dev_at_epoch`,
+  `window_loss_mean`,
   `loss_median` and `loss_ratio`. The `abs_score` property is gone with
   `select_run`, the only thing that ranked by it. `n_points` now counts every finite validation
   point of the run, before the burn-in. `score` is the window mean and comes

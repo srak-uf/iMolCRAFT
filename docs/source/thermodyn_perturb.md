@@ -425,6 +425,9 @@ never used, and the adopted epoch is the same whatever seed it is given.
   at the force field before shipping it.
 - *the smoothed loss climbs back above ...*: the loss rose again after the
   burn-in. Those points are kept anyway so that the range stays contiguous.
+- *`burn_in=N` keeps ... point(s) from before ...*: the burn-in you asked for
+  is in front of the one the loss would have set, so part of the range used
+  comes from a run that had not converged yet.
 - *... is few* / *... is many*: the window hit its lower (5) or upper (35)
   limit, so the score is noisier, or the smoothing relatively weaker, than the
   rule intends.

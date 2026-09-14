@@ -583,6 +583,7 @@ class EpochSelection:
     used_lo: int                 #: first epoch used, the one that passed the burn-in
     used_hi: int                 #: last epoch used, the last of the run
     window: int                  #: averaging window, in points
+    window_request: int | None   #: the ``window`` asked for (None: the rule set it)
     n_windows: int               #: ``n_used - window + 1`` full windows
     epoch: int                   #: adopted epoch: centre point of the best window
     ffxml: str | None            #: force-field file of that epoch, from validation_history
@@ -724,12 +725,23 @@ def select_epoch(
     loss_median = float(np.median(loss_u))
     loss_ratio = window_loss_mean / loss_median if loss_median else float("nan")
 
-    above = np.where(smoothed_loss[start:] > gate)[0]
+    # "Climbing back" only means something once the loss has been below the
+    # gate, so the search starts at the later of the two boundaries: a
+    # hand-set burn-in in front of the gate would otherwise report the tail of
+    # the burn-in itself as a loss that rose again.
+    off = max(start, gate_start)
+    above = np.where(smoothed_loss[off:] > gate)[0]
     if above.size:
         notes.append(
             f"the smoothed loss climbs back above {loss_tol:g} x its smallest "
-            f"value at epoch {int(ep_u[above[0]])}; those points are kept all "
+            f"value at epoch {int(ep[off + above[0]])}; those points are kept all "
             f"the same, so that the range used stays contiguous")
+    if start < gate_start:
+        notes.append(
+            f"burn_in={burn_in} keeps {gate_start - start} point(s) from before the "
+            f"smoothed loss first falls to {loss_tol:g} x its smallest value (epoch "
+            f"{int(ep[gate_start])}), so the run had not converged over part of the "
+            f"range used")
     if window is None and n_used < 5 * WINDOW_MIN:
         notes.append(
             f"{n_used} point(s) is few: the window is clipped at its lower limit "
@@ -770,7 +782,8 @@ def select_epoch(
         burn_in_lo=int(ep[0]) if start > 0 else None,
         burn_in_epoch=int(ep[start - 1]) if start > 0 else None,
         n_used=n_used, used_lo=int(ep_u[0]), used_hi=int(ep_u[-1]),
-        window=w, n_windows=n_windows,
+        window=w, window_request=None if window is None else int(window),
+        n_windows=n_windows,
         epoch=epoch, ffxml=_ffxml_at(state, epoch),
         window_lo=int(ep_u[k]), window_hi=int(ep_u[k + w - 1]),
         score=score, score_se=score_se, sigma=sigma, optimism=2.0 * score_se,
@@ -814,7 +827,7 @@ def format_epoch_selection(sel: EpochSelection) -> str:
                    f"{sel.burn_in_lo}-{sel.burn_in_epoch} ({why_dropped})")
     else:
         out.append(f"  burn-in: no point dropped ({why_kept})")
-    how = ("set by hand" if sel.window != _window_size(sel.n_used) else
+    how = ("set by hand" if sel.window_request is not None else
            f"round(n / 5), clipped to [{WINDOW_MIN}, {WINDOW_MAX}]")
     out.append(f"  used {sel.n_used} point(s), epochs {sel.used_lo}-{sel.used_hi}   "
                f"window = {sel.window} points ({how}), "
