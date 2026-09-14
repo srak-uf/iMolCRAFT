@@ -30,7 +30,6 @@ import imolcraft.trainer
 from imolcraft.trainer import selection
 from imolcraft.trainer.selection import (
     EpochSelection,
-    PermutationDiagnostics,
     extract_history,
     format_epoch_selection,
     load_history,
@@ -161,7 +160,7 @@ def test_median_smooth_shrinks_the_window_at_the_ends():
 
 # ---------------------------------------------------------------------- S3
 def test_burn_in_drops_the_front_by_the_smoothed_loss():
-    sel = select_epoch(_synthetic(), diagnostics=False)
+    sel = select_epoch(_synthetic())
     assert sel.n_points == SYN_POINTS
     assert sel.burn_in_points == SYN_BURN
     assert sel.burn_in_lo == 0
@@ -187,10 +186,10 @@ def test_a_single_loss_dip_leaves_the_gate_where_it_was(index):
     smoothing would react to an outlier where the median does not is pinned by
     ``test_a_loss_spike_next_to_the_burn_in_moves_it_by_at_most_one_point``.
     """
-    control = select_epoch(_synthetic(), diagnostics=False)
+    control = select_epoch(_synthetic())
     loss = _flat_loss()
     loss[index] = 1e-9
-    sel = select_epoch(_synthetic(loss=loss), diagnostics=False)
+    sel = select_epoch(_synthetic(loss=loss))
     assert sel.burn_in_points == control.burn_in_points
     assert sel.used_lo == control.used_lo
     assert sel.epoch == control.epoch
@@ -201,14 +200,13 @@ def test_a_loss_spike_next_to_the_burn_in_moves_it_by_at_most_one_point():
     """An upward outlier at the boundary is not smeared over the window."""
     loss = _flat_loss()
     loss[21] = 1.0                       # a thousand times the plateau
-    sel = select_epoch(_synthetic(loss=loss), diagnostics=False)
+    sel = select_epoch(_synthetic(loss=loss))
     assert SYN_BURN <= sel.burn_in_points <= SYN_BURN + 1
     assert sel.epoch == SYN_EPOCH
 
 
 def test_a_flat_loss_drops_nothing():
-    sel = select_epoch(_synthetic(loss=np.full(SYN_POINTS, 1e-3)),
-                       diagnostics=False)
+    sel = select_epoch(_synthetic(loss=np.full(SYN_POINTS, 1e-3)))
     assert sel.burn_in_points == 0
     assert sel.burn_in_lo is None
     assert sel.burn_in_epoch is None
@@ -220,7 +218,7 @@ def test_the_burn_in_shrinks_as_loss_tol_grows():
     # the loss decays over the first 40 points and is flat afterwards
     loss = np.concatenate([np.geomspace(1e-1, 1e-3, 40), np.full(60, 1e-3)])
     state = _synthetic(loss=loss)
-    dropped = [select_epoch(state, loss_tol=t, diagnostics=False).burn_in_points
+    dropped = [select_epoch(state, loss_tol=t).burn_in_points
                for t in (1.0, 1.5, 2.0, 5.0, 50.0)]
     assert dropped == sorted(dropped, reverse=True)
     assert dropped[0] > dropped[-1]
@@ -231,7 +229,7 @@ def test_the_window_closest_to_zero_is_adopted_and_the_loss_dip_is_ignored():
     loss = _flat_loss()
     loss[25] = 1e-9                      # a deep dip far from the zero crossing
     loss[95] = 1e-9
-    sel = select_epoch(_synthetic(loss=loss), diagnostics=False)
+    sel = select_epoch(_synthetic(loss=loss))
     assert isinstance(sel, EpochSelection)
     assert sel.window == SYN_WINDOW
     assert sel.n_windows == sel.n_used - sel.window + 1 == 65
@@ -246,7 +244,7 @@ def test_the_window_closest_to_zero_is_adopted_and_the_loss_dip_is_ignored():
 
 
 def test_the_adopted_epoch_is_the_centre_point_of_the_window():
-    sel = select_epoch(_synthetic(), diagnostics=False)
+    sel = select_epoch(_synthetic())
     ep, dev, _, _, _ = extract_history(_synthetic())
     used = ep[sel.burn_in_points:]
     k = int(np.where(used == sel.window_lo)[0][0])
@@ -261,7 +259,7 @@ def test_the_adopted_epoch_is_the_centre_point_of_the_window():
 # ---------------------------------------------------------------------- S5
 def test_the_loss_never_chooses_the_epoch():
     """Any loss with the same burn-in gives the same window."""
-    ref = select_epoch(_synthetic(), diagnostics=False)
+    ref = select_epoch(_synthetic())
     rng = np.random.default_rng(5)
     others = []
     for factor in (np.ones(SYN_POINTS),
@@ -269,7 +267,7 @@ def test_the_loss_never_chooses_the_epoch():
                    1.0 + 0.3 * (np.arange(SYN_POINTS) % 7)):
         loss = _flat_loss() * factor
         loss[SYN_BURN:] = np.minimum(loss[SYN_BURN:], 1.4e-3)   # keep the gate
-        others.append(select_epoch(_synthetic(loss=loss), diagnostics=False))
+        others.append(select_epoch(_synthetic(loss=loss)))
     for sel in others:
         assert sel.burn_in_points == ref.burn_in_points
         assert (sel.epoch, sel.window_lo, sel.window_hi) == \
@@ -283,7 +281,7 @@ def test_the_ends_of_the_run_cannot_be_adopted_and_are_noted():
     dev[SYN_BURN:SYN_BURN + 2] = 0.0      # the points closest to zero sit
     dev[-2:] = 0.0                        # at the very ends of the used range
     state = _history([4 * k for k in range(SYN_POINTS)], dev, _flat_loss())
-    sel = select_epoch(state, diagnostics=False)
+    sel = select_epoch(state)
     assert sel.epoch not in (4 * SYN_BURN, 4 * (SYN_BURN + 1),
                              4 * (SYN_POINTS - 2), 4 * (SYN_POINTS - 1))
     assert sel.window_lo == 4 * SYN_BURN          # the first full window
@@ -295,8 +293,7 @@ def test_the_ends_of_the_run_cannot_be_adopted_and_are_noted():
 def test_sigma_is_the_adjacent_difference_estimate_and_the_se_follows_it():
     m = 40
     dev = np.tile([0.0, 1.0], m // 2)
-    sel = select_epoch(_history([4 * k for k in range(m)], dev, np.full(m, 1e-3)),
-                       diagnostics=False)
+    sel = select_epoch(_history([4 * k for k in range(m)], dev, np.full(m, 1e-3)))
     assert sel.n_used == m and sel.window == 8
     np.testing.assert_allclose(sel.sigma, np.sqrt(np.mean(np.diff(dev) ** 2) / 2),
                                atol=1e-12)
@@ -308,12 +305,12 @@ def test_sigma_is_the_adjacent_difference_estimate_and_the_se_follows_it():
 
 # ---------------------------------------------------------------------- S8
 def test_a_costly_window_is_warned_about_but_the_epoch_does_not_move():
-    ref = select_epoch(_synthetic(), diagnostics=False)
+    ref = select_epoch(_synthetic())
     costly, cheap = _flat_loss(), _flat_loss(base=1.2e-3)
     costly[70:90] = 1.2e-3                # the adopted window is 73-88
     cheap[70:90] = 1.0e-3
-    hot = select_epoch(_synthetic(loss=costly), diagnostics=False)
-    cold = select_epoch(_synthetic(loss=cheap), diagnostics=False)
+    hot = select_epoch(_synthetic(loss=costly))
+    cold = select_epoch(_synthetic(loss=cheap))
     assert hot.epoch == cold.epoch == ref.epoch
     assert hot.loss_ratio > 1.0 and cold.loss_ratio < 1.0
     assert len([n for n in hot.notes if "higher-loss" in n]) == 1
@@ -341,54 +338,39 @@ def test_too_few_points_and_bad_arguments_are_rejected():
         select_epoch(_synthetic(), window=SYN_POINTS - SYN_BURN + 1)
     with pytest.raises(ValueError, match="loss_tol"):
         select_epoch(_synthetic(), loss_tol=0.9)
-    by_hand = select_epoch(_synthetic(), window=9, diagnostics=False)
+    by_hand = select_epoch(_synthetic(), window=9)
     assert (by_hand.window, by_hand.window_request) == (9, 9)
     # asking for exactly the window the rule would have chosen still counts
-    auto = select_epoch(_synthetic(), diagnostics=False)
-    same = select_epoch(_synthetic(), window=auto.window, diagnostics=False)
+    auto = select_epoch(_synthetic())
+    same = select_epoch(_synthetic(), window=auto.window)
     assert auto.window_request is None
     assert same.window_request == auto.window and same.epoch == auto.epoch
 
 
 def test_a_short_run_is_noted_when_the_window_hits_its_limit():
-    sel = select_epoch(_synthetic(m=40, zero_at=30.5), diagnostics=False)
+    sel = select_epoch(_synthetic(m=40, zero_at=30.5))
     assert sel.n_used == 20 and sel.window == selection.WINDOW_MIN
     assert len([n for n in sel.notes if "lower limit" in n]) == 1
 
 
 # --------------------------------------------------------------------- S10
-def test_the_permutation_test_is_reproducible_and_never_decides(monkeypatch):
+def test_the_module_cannot_draw_a_random_number():
+    """
+    The rule is deterministic because nothing in it is random.
+
+    There is no seed and no switch to turn the randomness off: nothing in the
+    module reaches ``numpy.random``, so the same checkpoint cannot give two
+    different epochs.
+    """
+    with open(selection.__file__, encoding="utf-8") as f:
+        source = f.read()
+    assert "np.random" not in source and "numpy.random" not in source
+    assert "seed" not in source
+    names = inspect.signature(select_epoch).parameters
+    for gone in ("diagnostics", "n_perm", "seed"):
+        assert gone not in names
     state = _synthetic()
-    a = select_epoch(state)
-    b = select_epoch(state)
-    assert isinstance(a.diagnostics, PermutationDiagnostics)
-    assert a.diagnostics == b.diagnostics
-    assert a.diagnostics.n_perm == selection.DEFAULT_PERMUTATION
-    assert a.diagnostics.seed == 0
-    assert 0.0 < a.diagnostics.p_value <= 1.0
-
-    c = select_epoch(state, n_perm=137, seed=3)
-    assert c.diagnostics.n_perm == 137 and c.diagnostics.seed == 3
-    assert (c.epoch, c.score, c.window_lo) == (a.epoch, a.score, a.window_lo)
-
-    off = select_epoch(state, diagnostics=False)
-    assert off.diagnostics is None
-    assert off.epoch == a.epoch
-    none = select_epoch(state, n_perm=0)
-    assert none.diagnostics is None
-    assert any("permutation" in n for n in none.notes)
-
-    def boom(*args, **kwargs):            # the decision draws no random number
-        raise AssertionError("default_rng must not be called")
-
-    monkeypatch.setattr(np.random, "default_rng", boom)
-    assert select_epoch(state, diagnostics=False).epoch == a.epoch
-
-
-def test_the_permutation_p_value_sees_a_trend():
-    state = _synthetic()
-    with_trend = select_epoch(state, n_perm=200)
-    assert with_trend.diagnostics.p_value < 0.5
+    assert select_epoch(state) == select_epoch(state)
 
 
 # --------------------------------------------------------------------- S11
@@ -419,26 +401,28 @@ def test_regression_on_the_real_run(real_history):
     np.testing.assert_allclose(sel.loss_median, 3.844891e-04, rtol=1e-6)
     np.testing.assert_allclose(sel.loss_ratio, 1.0986, atol=1e-3)
     assert len([n for n in sel.notes if "higher-loss" in n]) == 1
-    assert sel.diagnostics.p_value <= 0.02
-    assert (sel.diagnostics.n_perm, sel.diagnostics.seed) == (2000, 0)
+    np.testing.assert_allclose(sel.used_mean, -0.236269, atol=1e-6)
+    # what the window claims to have gained, to be read against the optimism
+    assert abs(sel.used_mean) - abs(sel.score) == pytest.approx(0.081583, abs=1e-6)
+    assert sel.optimism == pytest.approx(0.048904, abs=1e-6)
 
 
 def test_the_real_run_keeps_its_epoch_whatever_the_loss_says(real_history):
     """With the burn-in pinned, the loss cannot move the window."""
-    ref = select_epoch(real_history, burn_in=187, diagnostics=False)
+    ref = select_epoch(real_history, burn_in=187)
     assert ref.epoch == 618 and ref.n_used == 136
     scrambled = json.loads(json.dumps(real_history))
     for rec in scrambled["target_history"]:
         if "loss" in rec:
             rec["loss"] = float(rec["loss"]) * (1.0 + 0.3 * (rec["epoch"] % 7))
-    sel = select_epoch(scrambled, burn_in=187, diagnostics=False)
+    sel = select_epoch(scrambled, burn_in=187)
     assert (sel.epoch, sel.window_lo, sel.window_hi) == (618, 543, 759)
     assert sel.score == ref.score
 
 
 # --------------------------------------------------------------------- S12
 def test_regression_with_a_hand_set_burn_in(real_history):
-    sel = select_epoch(real_history, burn_in=300, diagnostics=False)
+    sel = select_epoch(real_history, burn_in=300)
     assert sel.n_used == 125
     assert sel.window == 25
     assert sel.epoch == 635
@@ -455,6 +439,7 @@ def test_regression_with_a_hand_set_burn_in(real_history):
     np.testing.assert_allclose(sel.score, -0.153765, atol=1e-6)
     np.testing.assert_allclose(sel.sigma, 0.121295, atol=1e-6)
     np.testing.assert_allclose(sel.score_se, 0.024259, atol=1e-6)
+    np.testing.assert_allclose(sel.used_mean, -0.243155, atol=1e-6)
 
 
 @pytest.mark.parametrize("burn_in, kept_before", [(-1, 35), (100, 18), (150, 8)])
@@ -467,7 +452,7 @@ def test_a_burn_in_in_front_of_the_gate_is_reported_as_such(
     smoothed loss first falls to 1.5 x its smallest value at epoch 191 and
     climbs back at epoch 257, whatever the burn-in was set to.
     """
-    sel = select_epoch(real_history, burn_in=burn_in, diagnostics=False)
+    sel = select_epoch(real_history, burn_in=burn_in)
     assert sel.used_lo < 191                      # before the gate is passed
     kept = [n for n in sel.notes if "keeps" in n]
     assert len(kept) == 1
@@ -478,14 +463,14 @@ def test_a_burn_in_in_front_of_the_gate_is_reported_as_such(
 
 
 def test_regression_fallbacks_agree_on_the_real_run(real_history):
-    ref = select_epoch(real_history, diagnostics=False)
+    ref = select_epoch(real_history)
     no_target = {k: v for k, v in real_history.items() if k != "target_history"}
-    sel = select_epoch(no_target, diagnostics=False)
+    sel = select_epoch(no_target)
     assert sel.epoch == 618
     np.testing.assert_allclose(sel.score, ref.score, atol=1e-12)
     no_gt = json.loads(json.dumps(real_history))
     del no_gt["validation_params"][0]["dself_S"]["gt"]
-    sel = select_epoch(no_gt, diagnostics=False)
+    sel = select_epoch(no_gt)
     assert sel.epoch == 618
     np.testing.assert_allclose(sel.score, ref.score, atol=1e-12)
     assert any("validation_dev_history" in n for n in sel.notes)
@@ -494,7 +479,7 @@ def test_regression_fallbacks_agree_on_the_real_run(real_history):
 # ---------------------------------------- kept from the previous rule (T3)
 def test_monitor_is_found_when_unique_and_required_otherwise():
     state = _synthetic()
-    assert select_epoch(state, diagnostics=False).monitor == "sample_0/dself_S"
+    assert select_epoch(state).monitor == "sample_0/dself_S"
 
     two = _synthetic()
     for key in ("validation_history", "validation_dev_history"):
@@ -504,16 +489,16 @@ def test_monitor_is_found_when_unique_and_required_otherwise():
     with pytest.raises(ValueError) as err:
         select_epoch(two)
     assert "sample_0/dself_S" in str(err.value) and "sample_0/rho" in str(err.value)
-    sel = select_epoch(two, monitor="sample_0/rho", diagnostics=False)
+    sel = select_epoch(two, monitor="sample_0/rho")
     assert sel.monitor == "sample_0/rho"
 
 
 # ------------------------------------------------------------------- (T4)
 def test_without_gt_the_recorded_deviation_is_used_and_noted():
     state = _synthetic()
-    ref = select_epoch(state, diagnostics=False)
+    ref = select_epoch(state)
     del state["validation_params"][0]["dself_S"]["gt"]
-    sel = select_epoch(state, diagnostics=False)
+    sel = select_epoch(state)
     fallback = [n for n in sel.notes if "validation_dev_history" in n]
     assert len(fallback) == 1 and "metric" in fallback[0]
     # validation_dev_history holds relerr here, so the numbers do not change
@@ -539,7 +524,7 @@ def test_nan_points_are_dropped_and_counted():
     for k in (3, 41, 77):
         state["validation_history"][k]["sample_0/dself_S"] = float("nan")
     state["validation_history"][41]["sample_0/dself_S"] = float("inf")
-    sel = select_epoch(state, diagnostics=False)
+    sel = select_epoch(state)
     assert sel.n_points == SYN_POINTS - 3
     assert any("3" in n and "NaN" in n for n in sel.notes)
 
@@ -547,7 +532,7 @@ def test_nan_points_are_dropped_and_counted():
 # ------------------------------------------------------------------- (T7)
 def test_every_input_form_gives_the_same_result(tmp_path):
     state = _synthetic()
-    ref = select_epoch(state, diagnostics=False)
+    ref = select_epoch(state)
 
     trainer_like = types.SimpleNamespace(**state)
     pkl = tmp_path / "train_state_t.pkl"
@@ -555,11 +540,11 @@ def test_every_input_form_gives_the_same_result(tmp_path):
         pickle.dump(state, f)
 
     for source in (trainer_like, pkl, str(pkl), tmp_path):
-        sel = select_epoch(source, label="t", diagnostics=False)
+        sel = select_epoch(source, label="t")
         assert sel == ref
-    assert select_epoch(pkl, diagnostics=False).label == "train_state_t.pkl"
-    assert select_epoch(tmp_path, diagnostics=False).label == tmp_path.name
-    assert select_epoch(pkl, label="lr=1e-4", diagnostics=False).label == "lr=1e-4"
+    assert select_epoch(pkl).label == "train_state_t.pkl"
+    assert select_epoch(tmp_path).label == tmp_path.name
+    assert select_epoch(pkl, label="lr=1e-4").label == "lr=1e-4"
 
     empty = tmp_path / "empty"
     empty.mkdir()
@@ -589,8 +574,8 @@ def test_load_history_keeps_only_the_history_keys_as_floats(real_history):
     assert all(type(r["loss"]) is float for r in h["target_history"])
     assert all(set(r) == {"epoch", "loss", "sample_0/resampled"} for r in h["target_history"])
     assert all(type(r["sample_0/resampled"]) is bool for r in h["target_history"])
-    assert select_epoch(h, diagnostics=False).epoch == \
-        select_epoch(state, diagnostics=False).epoch
+    assert select_epoch(h).epoch == \
+        select_epoch(state).epoch
     # idempotent, and the fixture is such a reduced dict
     assert load_history(h) == h
     assert set(load_history(real_history)) <= set(selection.HISTORY_KEYS)
@@ -599,10 +584,10 @@ def test_load_history_keeps_only_the_history_keys_as_floats(real_history):
 # ------------------------------------------------------------------- (T8)
 def test_loss_lookup_falls_back_to_epochs_and_losses_and_uses_the_nearest_epoch():
     state = _synthetic()
-    ref = select_epoch(state, diagnostics=False)
+    ref = select_epoch(state)
     without = _synthetic()
     del without["target_history"]
-    sel = select_epoch(without, diagnostics=False)
+    sel = select_epoch(without)
     assert sel.epoch == ref.epoch
     assert sel.loss_at_epoch == ref.loss_at_epoch
     assert sel.window_loss_mean == ref.window_loss_mean
@@ -620,7 +605,7 @@ def test_points_that_are_not_resampled_epochs_are_noted():
     for rec in state["target_history"]:
         if rec["epoch"] == SYN_EPOCH:
             rec["sample_0/resampled"] = False
-    sel = select_epoch(state, diagnostics=False)
+    sel = select_epoch(state)
     assert any("resampled" in n for n in sel.notes)
     assert sel.epoch == SYN_EPOCH              # the note does not change the choice
 
@@ -645,7 +630,6 @@ def test_public_names_are_exported_from_the_trainer_package():
         assert name not in selection.__all__
     assert "main" not in selection.__all__
     assert selection.DEFAULT_LOSS_TOL == 1.5
-    assert selection.DEFAULT_PERMUTATION == 2000
     assert selection.LOSS_MEDIAN_WINDOW == 5
     assert (selection.WINDOW_MIN, selection.WINDOW_MAX) == (5, 35)
     assert selection.MIN_POINTS == 10
@@ -655,7 +639,8 @@ def test_public_names_are_exported_from_the_trainer_package():
 def test_the_retired_rule_is_gone():
     for name in ("Band", "SelectionDiagnostics", "RunSelection", "select_run",
                  "format_run_selection", "DEFAULT_BAND_COUNT", "DEFAULT_Z",
-                 "DEFAULT_BOOTSTRAP"):
+                 "DEFAULT_BOOTSTRAP", "PermutationDiagnostics",
+                 "DEFAULT_PERMUTATION", "_permutation_p", "_PERM_CHUNK"):
         assert not hasattr(selection, name), name
     with open(selection.__file__, encoding="utf-8") as f:
         source = f.read()
@@ -674,52 +659,57 @@ def test_cli_prints_the_selection(tmp_path, capsys, real_history):
     assert "543-759" in out
     assert "monitor=sample_0/dself_S" in out
     assert "+/-" in out and "optimism" in out
-    assert "permutation test, 2000 shuffles" in out
+    assert "adopted window mean = -0.155 +/- 0.024" in out
+    assert "all 136 points used = -0.236" in out
+    assert "permutation" not in out and "seed" not in out
     # the burn-in line says what was dropped and where the gate was passed
     assert "burn-in: 35 point(s) dropped, epochs 0-187" in out
     assert "1.5 x its smallest value at epoch 191" in out
     assert "used 136 point(s), epochs 191-1984" in out
     assert "window = 27 points (round(n / 5), clipped to [5, 35])" in out
 
-    assert main([str(pkl), "--burn-in", "300", "--no-diagnostics"]) == 0
+    assert main([str(pkl), "--burn-in", "300"]) == 0
     out = capsys.readouterr().out
     assert "adopted epoch = 635" in out
-    assert "permutation" not in out
+    assert "all 125 points used = -0.243" in out
     assert "requested by burn_in=300, not by the loss" in out
     assert "running median of the loss first falls" not in out
 
-    assert main([str(pkl), "--window", "11", "--no-diagnostics"]) == 0
+    assert main([str(pkl), "--window", "11"]) == 0
     out = capsys.readouterr().out
     assert "window = 11 points (set by hand)" in out
     assert "round(n / 5)" not in out
 
     # 27 is what the rule would have chosen anyway, and it is still by hand
-    assert main([str(pkl), "--window", "27", "--no-diagnostics"]) == 0
+    assert main([str(pkl), "--window", "27"]) == 0
     out = capsys.readouterr().out
     assert "window = 27 points (set by hand)" in out
     assert "adopted epoch = 618" in out
 
-    assert main([str(pkl), "--loss-tol", "3.0", "--no-diagnostics"]) == 0
+    assert main([str(pkl), "--loss-tol", "3.0"]) == 0
     out = capsys.readouterr().out
     assert "adopted epoch = 621" in out
     assert "3 x its smallest value at epoch" in out
 
     assert main([str(pkl), "--window", "27", "--loss-tol", "1.5",
-                 "--permutations", "100", "--monitor", "sample_0/dself_S"]) == 0
+                 "--monitor", "sample_0/dself_S"]) == 0
     out = capsys.readouterr().out
     assert "adopted epoch = 618" in out
-    assert "permutation test, 100 shuffles" in out
 
-    for gone in ("--band-count", "--z", "--bootstrap", "--sensitivity"):
+    for gone in ("--band-count", "--z", "--bootstrap", "--sensitivity",
+                 "--permutations", "--no-diagnostics"):
         with pytest.raises(SystemExit):
             main([str(pkl), gone, "5"])
 
 
 def test_the_report_always_states_the_optimism_and_the_error(real_history):
-    text = format_epoch_selection(select_epoch(real_history, diagnostics=False))
+    text = format_epoch_selection(select_epoch(real_history))
     assert "[optimism]" in text
     assert "flatters" in text and "worse" in text
     assert "-0.155 +/- 0.024" in text
+    # the gain of the window and the optimism are both there to be compared
+    assert "+0.082" in text and "0.049" in text
+    assert "all 136 points used = -0.236" in text
     assert "sigma of one point 0.127" in text
     assert "[reference only] dev at epoch 618 alone" in text
     assert text.isascii()

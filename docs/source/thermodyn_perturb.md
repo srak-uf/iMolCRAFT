@@ -411,11 +411,21 @@ its own, and do not promise that the adopted force field reproduces it: on the
 run shipped with the tests the report is `-0.155 +/- 0.024` while the
 deviation of that epoch measured on points the rule never saw is `-0.186`.
 
+The report prints the window mean next to `used_mean`, the mean deviation of
+**every** point the selection kept, which is what taking no decision at all
+would give. The difference between the two is what the window claims to have
+gained, and `optimism` is how much a minimum out of `n_windows` windows gains
+for nothing. Read one against the other: on the run shipped with the tests the
+window is 0.082 closer to zero than the -0.236 of all 136 points used, against
+an optimism of 0.049, so about half of what the window shows is the choice
+flattering itself. A gain no larger than the optimism means the validation
+does not really single out that part of the run.
+
 `dev_at_epoch`, the single point at the adopted epoch, is reference only and
-scatters by `sigma` (0.127 on that run), not by the standard error. A
-permutation test (`diagnostics`, `n_perm`, `seed`) asks whether the validation
-depends on the epoch at all; like the loss of the window it is reported and
-never used, and the adopted epoch is the same whatever seed it is given.
+scatters by `sigma` (0.127 on that run), not by the standard error.
+
+Nothing in the module is random: there is no seed and no sampling anywhere, so
+the same checkpoint always gives the same epoch.
 
 ###### What `notes` may say
 

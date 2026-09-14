@@ -33,16 +33,17 @@ fixes and backwards-compatible additions moves the patch number.
   `n_windows`, `window_lo`, `window_hi`, `n_used`, `used_lo`, `used_hi`,
   `burn_in_points`, `burn_in_lo`, `burn_in_epoch`, `burn_in_request`,
   `window_request`, `loss_tol`, `sigma`, `optimism`, `dev_at_epoch`,
-  `window_loss_mean`,
-  `loss_median` and `loss_ratio`. The `abs_score` property is gone with
-  `select_run`, the only thing that ranked by it. `n_points` now counts every finite validation
-  point of the run, before the burn-in. `score` is the window mean and comes
-  with `score_se`; it is the smallest of many windows, so it flatters the epoch
-  by about `2 * score_se` even with no signal, and the report says so. A
-  permutation test of the epoch dependence replaces the F statistic and the
-  bootstrap bias, and like them it never enters the decision. `select_epoch`
-  also takes `burn_in` (an epoch threshold) and `window` (a window in points)
-  to override the two automatic steps, and `n_perm` in place of `n_boot`.
+  `used_mean`, `window_loss_mean`, `loss_median` and `loss_ratio`. The
+  `abs_score` property is gone with `select_run`, the only thing that ranked
+  by it. `n_points` now counts every finite validation point of the run,
+  before the burn-in. `score` is the window mean and comes with `score_se`; it
+  is the smallest of many windows, so it flatters the epoch by about
+  `2 * score_se` even with no signal, and the report says so. It is printed
+  next to `used_mean`, the mean deviation of every point kept, which is what
+  taking no decision at all would give, so that what the window claims to have
+  gained can be read against that optimism. `select_epoch` also takes
+  `burn_in` (an epoch threshold) and `window` (a window in points) to override
+  the two automatic steps. Nothing in the module draws a random number.
 
 ### Removed
 
@@ -53,6 +54,13 @@ fixes and backwards-compatible additions moves the patch number.
   and the `--band-count`, `--z`, `--bootstrap` and `--sensitivity` options of
   `python -m imolcraft.trainer.selection`. Comparing several runs is no longer
   part of the module.
+- The permutation test that had been reported alongside the choice, and with
+  it `PermutationDiagnostics`, `DEFAULT_PERMUTATION`, the `diagnostics` field
+  of `EpochSelection`, the `diagnostics` / `n_perm` / `seed` arguments of
+  `select_epoch` and the `--permutations` / `--no-diagnostics` options of the
+  command line. It answered a question (is there any epoch dependence at all)
+  that is easier to read off `score` against `used_mean` and `optimism`, which
+  the report now prints. No part of the module uses `numpy.random` any more.
 
 ## [0.4.1] — 2026-09-08
 

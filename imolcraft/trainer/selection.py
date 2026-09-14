@@ -40,9 +40,10 @@ Rule
    window: the points of a window are equivalent as far as the validation
    can tell.
 
-Everything else -- the noise, the standard error, the loss of the window, the
-permutation test -- is reported and never enters the decision, which is
-completely deterministic.
+Everything else -- the noise, the standard error, the mean over all the
+points used, the loss of the window -- is reported and never enters the
+decision, which is completely deterministic: the module draws no random
+number anywhere.
 
 How to read the score
 ---------------------
@@ -50,9 +51,11 @@ How to read the score
 is the smallest ``|mean|`` out of many windows, so even with no epoch
 dependence at all a minimum comes out about ``2 * score_se`` below the
 typical window. Quote it as ``score +/- score_se`` and expect the true
-deviation of the adopted force field to be worse. ``dev_at_epoch``, the
-single point of the adopted epoch, scatters by ``sigma`` -- not by
-``score_se`` -- and is reference only.
+deviation of the adopted force field to be worse. Read it next to
+``used_mean``, the mean over every point the selection kept: the window is
+only worth something if it beats ``used_mean`` by more than ``optimism``.
+``dev_at_epoch``, the single point of the adopted epoch, scatters by
+``sigma`` -- not by ``score_se`` -- and is reference only.
 
 Units
 -----
@@ -88,18 +91,16 @@ from typing import Any, Callable, Sequence
 import numpy as np
 
 __all__ = [
-    "EpochSelection", "PermutationDiagnostics",
+    "EpochSelection",
     "load_history", "extract_history", "select_epoch", "format_epoch_selection",
     "HISTORY_KEYS",
-    "DEFAULT_LOSS_TOL", "DEFAULT_PERMUTATION",
+    "DEFAULT_LOSS_TOL",
     "LOSS_MEDIAN_WINDOW", "WINDOW_MIN", "WINDOW_MAX", "MIN_POINTS",
     "LOSS_WARN_RATIO",
 ]
 
 #: Burn-in gate: the smoothed loss must fall to this times its smallest value.
 DEFAULT_LOSS_TOL = 1.5
-#: Shuffles of the permutation test, which is reported and never used.
-DEFAULT_PERMUTATION = 2000
 #: Points of the centred running median the burn-in gate is applied to.
 LOSS_MEDIAN_WINDOW = 5
 #: Smallest averaging window, in points.
@@ -110,8 +111,6 @@ WINDOW_MAX = 35
 MIN_POINTS = 10
 #: Warn when the mean loss of the adopted window exceeds this times the median.
 LOSS_WARN_RATIO = 1.0
-#: Rows of the permutation test computed at a time (memory of the shuffles).
-_PERM_CHUNK = 500
 
 #: Keys of a checkpoint (or attributes of a trainer) the selection reads.
 HISTORY_KEYS = ("label", "validation_params", "validation_history",
@@ -499,60 +498,9 @@ def _noise_sigma(x: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.diff(x) ** 2) / 2.0))
 
 
-def _permutation_p(dev: np.ndarray, w: int, observed: float,
-                   n_perm: int, seed: int) -> float:
-    """
-    Fraction of shuffles whose smallest ``|window mean|`` beats the observed one.
-
-    The null hypothesis is that the validation does not depend on the epoch at
-    all: shuffling the points keeps their values (and their overall mean) and
-    destroys only their order. It is **not** a test that the adopted window is
-    good, and it never enters the decision.
-
-    Parameters
-    ----------
-    dev : ndarray of float, shape (n,)
-        The points the selection used.
-    w : int
-        Averaging window in points.
-    observed : float
-        ``min |window mean|`` of the unshuffled series, in the unit of ``dev``.
-    n_perm : int
-        Number of shuffles (> 0).
-    seed : int
-        Seed of :func:`numpy.random.default_rng`; the result is reproducible.
-
-    Returns
-    -------
-    float
-        ``(hits + 1) / (n_perm + 1)``, always in ``(0, 1]``.
-    """
-    rng = np.random.default_rng(seed)
-    hits = 0
-    for start in range(0, int(n_perm), _PERM_CHUNK):
-        rows = min(_PERM_CHUNK, int(n_perm) - start)
-        sim = rng.permuted(np.broadcast_to(dev, (rows, dev.size)), axis=1)
-        best = np.abs(_moving_average(sim, w)).min(axis=1)
-        hits += int((best <= observed).sum())
-    return (hits + 1) / (int(n_perm) + 1)
-
-
 # --------------------------------------------------------------------------
 # Results
 # --------------------------------------------------------------------------
-@dataclass
-class PermutationDiagnostics:
-    """
-    A test of the epoch dependence of the validation, **reported only**.
-
-    It never enters the decision: the adopted epoch is the same whatever
-    ``n_perm`` and ``seed`` are.
-    """
-    p_value: float     #: fraction of shuffles whose min |window mean| <= the observed one
-    n_perm: int        #: number of shuffles
-    seed: int          #: seed of numpy.random.default_rng
-
-
 @dataclass
 class EpochSelection:
     """
@@ -563,11 +511,14 @@ class EpochSelection:
     is therefore optimistic by about ``optimism`` even when the validation
     does not depend on the epoch at all, so it is only meaningful together
     with ``score_se``: the true deviation of the adopted force field is worse
-    than ``score``. ``dev_at_epoch`` is a single point and scatters by
-    ``sigma``, not by ``score_se``.
+    than ``score``. ``used_mean``, the mean over every point kept, is what no
+    decision at all would give, so ``|used_mean| - |score|`` is what the
+    window claims to have gained and is worth reading against ``optimism``.
+    ``dev_at_epoch`` is a single point and scatters by ``sigma``, not by
+    ``score_se``.
 
-    ``score``, ``score_se``, ``sigma``, ``optimism`` and ``dev_at_epoch`` are
-    in the unit of ``dev``: a dimensionless relative deviation when the entry
+    ``score``, ``score_se``, ``used_mean``, ``sigma``, ``optimism`` and
+    ``dev_at_epoch`` are in the unit of ``dev``: a dimensionless relative deviation when the entry
     has a ``gt``, otherwise whatever ``metric`` the YAML asked for (see
     :func:`extract_history` and the ``notes``). The losses are dimensionless.
     """
@@ -591,6 +542,7 @@ class EpochSelection:
     window_hi: int               #: last epoch of the adopted window
     score: float                 #: mean dev over the adopted window, signed
     score_se: float              #: ``sigma / sqrt(window)``
+    used_mean: float             #: mean dev over every point used, the no-choice baseline
     sigma: float                 #: noise of one point, from adjacent differences
     optimism: float              #: ``2 * score_se``, how much a minimum flatters with no signal
     dev_at_epoch: float          #: reference only: the single point at the adopted epoch
@@ -599,7 +551,6 @@ class EpochSelection:
     loss_median: float           #: median loss of the points used
     loss_ratio: float            #: ``window_loss_mean / loss_median``
     notes: list[str] = field(default_factory=list)
-    diagnostics: PermutationDiagnostics | None = None
 
 
 # --------------------------------------------------------------------------
@@ -619,9 +570,6 @@ def select_epoch(
     loss_tol: float = DEFAULT_LOSS_TOL,
     burn_in: int | None = None,
     window: int | None = None,
-    diagnostics: bool = True,
-    n_perm: int = DEFAULT_PERMUTATION,
-    seed: int = 0,
 ) -> EpochSelection:
     """
     Choose the epoch of one run from its validation history.
@@ -655,11 +603,6 @@ def select_epoch(
         Escape hatch: averaging window in points, overriding
         ``clip(round(n / 5), WINDOW_MIN, WINDOW_MAX)``. Must be at least 3 and
         at most the number of points kept.
-    diagnostics : bool
-        Run the permutation test. It is reported only, and with
-        ``diagnostics=False`` no random number is drawn at all.
-    n_perm, seed : int
-        Shuffles and seed of that test. Neither can change the adopted epoch.
 
     Returns
     -------
@@ -720,6 +663,7 @@ def select_epoch(
     n_windows = int(smoothed_dev.size)
     sigma = _noise_sigma(dev_u)
     score = float(smoothed_dev[k])
+    used_mean = float(dev_u.mean())
     score_se = sigma / float(np.sqrt(w))
     window_loss_mean = float(loss_u[k:k + w].mean())
     loss_median = float(np.median(loss_u))
@@ -763,17 +707,6 @@ def select_epoch(
             f"what this rule optimises, but look at the force field before "
             f"shipping it")
 
-    diag = None
-    if diagnostics:
-        if n_perm > 0:
-            diag = PermutationDiagnostics(
-                p_value=_permutation_p(dev_u, w, abs(score), n_perm, seed),
-                n_perm=int(n_perm), seed=int(seed))
-        else:
-            notes.append(
-                f"no permutation test was run (n_perm={n_perm}); it is a "
-                f"diagnostic only and the adopted epoch is unaffected")
-
     return EpochSelection(
         label=label or _default_label(source, state), monitor=monitor,
         n_points=n_points, loss_tol=float(loss_tol),
@@ -786,10 +719,11 @@ def select_epoch(
         n_windows=n_windows,
         epoch=epoch, ffxml=_ffxml_at(state, epoch),
         window_lo=int(ep_u[k]), window_hi=int(ep_u[k + w - 1]),
-        score=score, score_se=score_se, sigma=sigma, optimism=2.0 * score_se,
+        score=score, score_se=score_se, used_mean=used_mean,
+        sigma=sigma, optimism=2.0 * score_se,
         dev_at_epoch=float(dev_u[centre]), loss_at_epoch=float(loss_u[centre]),
         window_loss_mean=window_loss_mean, loss_median=loss_median,
-        loss_ratio=loss_ratio, notes=notes, diagnostics=diag)
+        loss_ratio=loss_ratio, notes=notes)
 
 
 # --------------------------------------------------------------------------
@@ -835,22 +769,23 @@ def format_epoch_selection(sel: EpochSelection) -> str:
     out.append(f"  adopted epoch = {sel.epoch}   window epochs {sel.window_lo}-{sel.window_hi} "
                f"({sel.window} points; the adopted epoch is the centre point)   "
                f"ffxml {sel.ffxml}")
-    out.append(f"  validation score = {sel.score:+.3f} +/- {sel.score_se:.3f}   "
+    out.append(f"  adopted window mean = {sel.score:+.3f} +/- {sel.score_se:.3f}   "
                f"(sigma of one point {sel.sigma:.3f}, SE = sigma / sqrt({sel.window}))")
-    out.append(f"  [optimism] this is the smallest |window mean| out of {sel.n_windows} "
-               f"windows, so it flatters the epoch: even with no epoch dependence at all "
-               f"a minimum runs about 2 x SE = {sel.optimism:.3f} low. The true deviation "
-               f"of this epoch is worse than the number above; quote it with its SE")
+    gain = abs(sel.used_mean) - abs(sel.score)
+    out.append(f"  all {sel.n_used} points used = {sel.used_mean:+.3f}   "
+               f"(what taking no decision at all would give; the adopted window is "
+               f"{gain:+.3f} closer to zero than that)")
+    out.append(f"  [optimism] the window mean is the smallest |window mean| out of "
+               f"{sel.n_windows} windows, so it flatters the epoch: even with no epoch "
+               f"dependence at all a minimum runs about 2 x SE = {sel.optimism:.3f} low. "
+               f"Read the {gain:+.3f} above against that {sel.optimism:.3f}. The true "
+               f"deviation of this epoch is worse than the window mean; quote it with "
+               f"its SE")
     out.append(f"  [reference only] dev at epoch {sel.epoch} alone = {sel.dev_at_epoch:+.3f} "
                f"(one point scatters by sigma = {sel.sigma:.3f}, not by the SE)")
     out.append(f"  [reference only] loss at epoch {sel.epoch} = {sel.loss_at_epoch:.3e}; "
                f"mean loss over the window {sel.window_loss_mean:.3e}; median loss of the "
                f"points used {sel.loss_median:.3e} (ratio {sel.loss_ratio:.2f})")
-    if sel.diagnostics is not None:
-        d = sel.diagnostics
-        out.append(f"  [diagnostics, not used] permutation test, {d.n_perm} shuffles, "
-                   f"seed {d.seed}: p = {d.p_value:.3f} (is there any epoch dependence "
-                   f"of the validation at all)")
     out.append("  [note] the loss never chooses the epoch here: it only marks the end of "
                "the burn-in. A validation-only property does not enter the loss, so a "
                "dip of the loss says nothing about it")
@@ -865,8 +800,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     ``PATH`` is a ``train_state_*.pkl`` or a directory holding one; each is
     read, reported and dropped in turn. Options: ``--monitor``,
-    ``--loss-tol``, ``--burn-in``, ``--window``, ``--permutations`` and
-    ``--no-diagnostics``.
+    ``--loss-tol``, ``--burn-in`` and ``--window``.
 
     Parameters
     ----------
@@ -893,20 +827,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                    help="use only the points after EPOCH instead of the automatic burn-in")
     p.add_argument("--window", type=int, default=None, metavar="N",
                    help="override the averaging window, in points")
-    p.add_argument("--permutations", type=int, default=DEFAULT_PERMUTATION, metavar="N",
-                   help="shuffles of the permutation test, which is reported only "
-                        "(default 2000)")
-    p.add_argument("--no-diagnostics", action="store_true",
-                   help="skip the permutation test (it never enters the decision)")
     a = p.parse_args(argv)
 
     # Runs are read one at a time and dropped: a checkpoint with
     # target_log "all" is tens of MB.
     for path in a.paths:
         sel = select_epoch(path, monitor=a.monitor, loss_tol=a.loss_tol,
-                           burn_in=a.burn_in, window=a.window,
-                           n_perm=a.permutations,
-                           diagnostics=not a.no_diagnostics)
+                           burn_in=a.burn_in, window=a.window)
         print(format_epoch_selection(sel), end="\n\n", flush=True)
     return 0
 
