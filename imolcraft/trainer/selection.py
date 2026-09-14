@@ -10,39 +10,49 @@ they say something else; this module turns them into a choice of epoch.
 Statistical model
 -----------------
 At every resampled epoch the signed relative deviation of the monitored
-property, ``dev = (pred - gt) / gt``, is a smooth trend plus white noise of
-standard deviation ``sigma``. At a resampled epoch the MBAR weights are
-uniform, so both the loss and the validation are out of sample. The scatter
-between neighbouring points is measurement noise, and the mean over a band
-(a block of consecutive evaluation points) is the best estimate of the trend.
+property, ``dev = (pred - gt) / gt``, is a smooth trend plus noise of
+standard deviation ``sigma`` (about 0.13 for a self-diffusion coefficient
+out of a few nanoseconds). One point therefore says almost nothing: the
+mean over a window of neighbouring points is the best estimate of the trend
+there, and its error is ``sigma / sqrt(window)``.
+
+The loss does **not** say where the validation is good. A property listed in
+``imolcraft.trainer.properties.VALIDATION_ONLY_PROPERTIES`` (``dself_cm2s``
+and the like) never enters the loss, and on a real run the two are
+uncorrelated, so a single-epoch dip of the loss carries no information about
+the validated property. The loss is used here for one thing only: to mark
+the end of the burn-in.
 
 Rule
 ----
 1. The evaluation points are the records of ``validation_history`` (the
    resampled epochs). NaN/inf values are dropped and noted.
-2. The points are split, in time order, into ``band_count`` bands of equal
-   size (``numpy.array_split``); a fixed number of bands keeps the number
-   of trials equal between runs.
-3. Every band gets ``mean(dev) +/- SE`` and ``mean(loss)``, with
-   ``SE = sigma / sqrt(n)`` and ``sigma`` the within-band standard
-   deviation pooled over the admissible bands only.
-4. The admissible bands are those with
-   ``mean(loss) <= loss_tol * min(mean(loss))``: the burn-in falls out by
-   itself, and admissibility is decided by the loss alone, never by ``dev``.
-5. Among the admissible bands, the one of smallest ``|mean(dev)|`` is the
-   best band; its band mean and SE are the validation score of the run.
-6. Inside the best band the epochs are equivalent as far as the validation
-   can tell, so the epoch of smallest loss in it is adopted.
-7. Between runs (a learning-rate sweep, say), the runs whose ``|score|`` is
-   within ``z * sqrt(SE_a^2 + SE_b^2)`` of the best one are tied, and the
-   tie is broken by the mean loss of the best band.
+2. Burn-in: the loss is smoothed with a centred running median of
+   ``LOSS_MEDIAN_WINDOW`` points and the points before it first falls to
+   ``loss_tol`` times its smallest value are dropped. This is the only step
+   that looks at the loss.
+3. The averaging window is ``w = clip(round(n / 5), WINDOW_MIN, WINDOW_MAX)``
+   points, with ``n`` the number of points left.
+4. ``dev`` is averaged over every full window of ``w`` consecutive points and
+   the window of smallest ``|mean|`` is taken.
+5. The adopted epoch is the centre point of that window (the lower of the two
+   middle points when ``w`` is even). No loss, no tie-break inside the
+   window: the points of a window are equivalent as far as the validation
+   can tell.
 
-Diagnostics that never enter the decision but are always reported: the
-lag-1 autocorrelation of the within-band residuals (the white-noise
-assumption; above ``AUTOCORR_WARN`` the SE is not to be trusted), a one-way F
-statistic between the admissible bands (is there an epoch dependence at
-all), and a parametric-bootstrap estimate of the selection bias of taking
-the smallest ``|mean(dev)|`` of ``band_count`` bands.
+Everything else -- the noise, the standard error, the loss of the window, the
+permutation test -- is reported and never enters the decision, which is
+completely deterministic.
+
+How to read the score
+---------------------
+``score`` is the mean ``dev`` of the adopted window and is **optimistic**: it
+is the smallest ``|mean|`` out of many windows, so even with no epoch
+dependence at all a minimum comes out about ``2 * score_se`` below the
+typical window. Quote it as ``score +/- score_se`` and expect the true
+deviation of the adopted force field to be worse. ``dev_at_epoch``, the
+single point of the adopted epoch, scatters by ``sigma`` -- not by
+``score_se`` -- and is reference only.
 
 Units
 -----
@@ -52,18 +62,19 @@ for. Only when there is no ``gt`` does the module fall back to
 ``validation_dev_history``, whose values depend on that ``metric``:
 ``diff`` is in the unit of the property (cm^2/s for ``dself_cm2s``, g/cm^3
 for ``density_gcm3``), so scores of different runs are then comparable only
-if they used the same metric. No unit conversion is performed anywhere.
+if they used the same metric. ``score``, ``score_se``, ``sigma``,
+``optimism`` and ``dev_at_epoch`` are all in the unit of ``dev``. The loss is
+dimensionless. No unit conversion is performed anywhere.
 
 Usage
 -----
 ::
 
-    from imolcraft.trainer.selection import select_epoch, select_run
+    from imolcraft.trainer.selection import select_epoch
     sel = select_epoch("train_state_s_opt.pkl")     # or a directory, a dict, the trainer
     print(sel.epoch, sel.ffxml, f"{sel.score:+.3f} +/- {sel.score_se:.3f}")
-    best = select_run([select_epoch(p, label=p) for p in ("lr_1e-4", "lr_2e-4")])
 
-    python -m imolcraft.trainer.selection lr_1e-4 lr_2e-4 --sensitivity 3 5 8
+    python -m imolcraft.trainer.selection lr_1e-4 lr_2e-4
 """
 from __future__ import annotations
 
@@ -77,20 +88,30 @@ from typing import Any, Callable, Sequence
 import numpy as np
 
 __all__ = [
-    "Band", "EpochSelection", "RunSelection", "SelectionDiagnostics",
-    "load_history", "extract_history", "select_epoch", "select_run",
-    "format_epoch_selection", "format_run_selection",
-    "DEFAULT_BAND_COUNT", "DEFAULT_LOSS_TOL", "DEFAULT_Z", "DEFAULT_BOOTSTRAP",
+    "EpochSelection", "PermutationDiagnostics",
+    "load_history", "extract_history", "select_epoch", "format_epoch_selection",
     "HISTORY_KEYS",
+    "DEFAULT_LOSS_TOL", "DEFAULT_PERMUTATION",
+    "LOSS_MEDIAN_WINDOW", "WINDOW_MIN", "WINDOW_MAX", "MIN_POINTS",
+    "LOSS_WARN_RATIO",
 ]
 
-DEFAULT_BAND_COUNT = 5
+#: Burn-in gate: the smoothed loss must fall to this times its smallest value.
 DEFAULT_LOSS_TOL = 1.5
-DEFAULT_Z = 2.5
-DEFAULT_BOOTSTRAP = 2000
-#: |lag-1 autocorrelation| of the within-band residuals above which the
-#: white-noise assumption behind the SE is questionable.
-AUTOCORR_WARN = 0.30
+#: Shuffles of the permutation test, which is reported and never used.
+DEFAULT_PERMUTATION = 2000
+#: Points of the centred running median the burn-in gate is applied to.
+LOSS_MEDIAN_WINDOW = 5
+#: Smallest averaging window, in points.
+WINDOW_MIN = 5
+#: Largest averaging window, in points.
+WINDOW_MAX = 35
+#: Fewest points that may be left after the burn-in.
+MIN_POINTS = 10
+#: Warn when the mean loss of the adopted window exceeds this times the median.
+LOSS_WARN_RATIO = 1.0
+#: Rows of the permutation test computed at a time (memory of the shuffles).
+_PERM_CHUNK = 500
 
 #: Keys of a checkpoint (or attributes of a trainer) the selection reads.
 HISTORY_KEYS = ("label", "validation_params", "validation_history",
@@ -349,120 +370,237 @@ def _ffxml_at(state: Any, epoch: int) -> str | None:
 
 
 # --------------------------------------------------------------------------
+# Pieces of the rule
+# --------------------------------------------------------------------------
+def _median_smooth(x: np.ndarray, width: int) -> np.ndarray:
+    """
+    Centred running median of ``x``, with the window shrunk at the ends.
+
+    ``out[i] = median(x[i - width // 2 : i + width // 2 + 1])`` clipped to the
+    array, so every index is defined (``width // 2`` points at each end use a
+    shorter window, and an even count takes the mean of the two middle
+    values, as :func:`numpy.median` does). This is the convention of
+    ``pandas.Series.rolling(width, center=True, min_periods=1).median()``.
+    Leaving the ends undefined instead would push the start of the usable
+    range to ``width // 2`` even for a run without any burn-in.
+
+    Parameters
+    ----------
+    x : ndarray of float, shape (n,)
+    width : int
+        Window in points.
+
+    Returns
+    -------
+    ndarray of float, shape (n,)
+        Same unit as ``x``.
+    """
+    half = int(width) // 2
+    n = int(x.size)
+    return np.array([float(np.median(x[max(0, i - half):min(n, i + half + 1)]))
+                     for i in range(n)], dtype=float)
+
+
+def _burn_in_start(loss: np.ndarray, loss_tol: float) -> tuple[int, np.ndarray]:
+    """
+    First index at which the run counts as converged, and the smoothed loss.
+
+    The loss is smoothed with a centred running median of
+    :data:`LOSS_MEDIAN_WINDOW` points and compared with ``loss_tol`` times the
+    smallest value of that smoothed series **over the whole run**. Taking the
+    minimum over the whole run rather than over the kept part keeps the
+    definition from being circular; the burn-in is above the minimum anyway.
+    Points after the returned index are never dropped, so the kept range stays
+    contiguous.
+
+    Parameters
+    ----------
+    loss : ndarray of float, shape (n,)
+        Loss at every validation point, in time order (dimensionless).
+    loss_tol : float
+        Multiple of the smallest smoothed loss the gate sits at (>= 1).
+
+    Returns
+    -------
+    start : int
+        Index of the first point that passes the gate (0 when nothing is
+        dropped).
+    smoothed : ndarray of float, shape (n,)
+        The running median the gate was applied to.
+    """
+    smoothed = _median_smooth(loss, LOSS_MEDIAN_WINDOW)
+    gate = float(loss_tol) * float(smoothed.min())
+    return int(np.argmax(smoothed <= gate)), smoothed
+
+
+def _window_size(n: int) -> int:
+    """
+    Averaging window in points: ``round(n / 5)`` clipped to the limits.
+
+    Computed as ``(2 * n + 5) // 10`` in integer arithmetic (half up), which
+    equals ``round(n / 5)`` exactly -- ``n / 5`` is never a half-integer -- and
+    so depends neither on the banker's rounding of :func:`round` nor on
+    floating point.
+
+    Parameters
+    ----------
+    n : int
+        Number of points the window is taken over.
+
+    Returns
+    -------
+    int
+        Window in points, in ``[WINDOW_MIN, WINDOW_MAX]``.
+    """
+    return min(WINDOW_MAX, max(WINDOW_MIN, (2 * int(n) + 5) // 10))
+
+
+def _moving_average(x: np.ndarray, w: int) -> np.ndarray:
+    """
+    Mean over every full window of ``w`` points, along the last axis.
+
+    Parameters
+    ----------
+    x : ndarray of float, shape (..., n)
+    w : int
+        Window in points, ``w <= n``.
+
+    Returns
+    -------
+    ndarray of float, shape (..., n - w + 1)
+        ``out[..., k] = mean(x[..., k:k + w])``, same unit as ``x``. Partial
+        windows at the ends are not produced (``mode="valid"``).
+    """
+    kernel = np.full(int(w), 1.0 / float(w))
+    return np.apply_along_axis(np.convolve, -1, x, kernel, "valid")
+
+
+def _noise_sigma(x: np.ndarray) -> float:
+    """
+    Noise of a single point from adjacent differences.
+
+    ``sqrt(mean(diff(x) ** 2) / 2)``: for a smooth trend plus white noise the
+    differences cancel the trend, so this is insensitive to the drift the
+    window means are meant to follow.
+
+    Parameters
+    ----------
+    x : ndarray of float, shape (n,)
+        Points in time order, ``n >= 2``.
+
+    Returns
+    -------
+    float
+        Standard deviation of one point, in the unit of ``x``.
+    """
+    return float(np.sqrt(np.mean(np.diff(x) ** 2) / 2.0))
+
+
+def _permutation_p(dev: np.ndarray, w: int, observed: float,
+                   n_perm: int, seed: int) -> float:
+    """
+    Fraction of shuffles whose smallest ``|window mean|`` beats the observed one.
+
+    The null hypothesis is that the validation does not depend on the epoch at
+    all: shuffling the points keeps their values (and their overall mean) and
+    destroys only their order. It is **not** a test that the adopted window is
+    good, and it never enters the decision.
+
+    Parameters
+    ----------
+    dev : ndarray of float, shape (n,)
+        The points the selection used.
+    w : int
+        Averaging window in points.
+    observed : float
+        ``min |window mean|`` of the unshuffled series, in the unit of ``dev``.
+    n_perm : int
+        Number of shuffles (> 0).
+    seed : int
+        Seed of :func:`numpy.random.default_rng`; the result is reproducible.
+
+    Returns
+    -------
+    float
+        ``(hits + 1) / (n_perm + 1)``, always in ``(0, 1]``.
+    """
+    rng = np.random.default_rng(seed)
+    hits = 0
+    for start in range(0, int(n_perm), _PERM_CHUNK):
+        rows = min(_PERM_CHUNK, int(n_perm) - start)
+        sim = rng.permuted(np.broadcast_to(dev, (rows, dev.size)), axis=1)
+        best = np.abs(_moving_average(sim, w)).min(axis=1)
+        hits += int((best <= observed).sum())
+    return (hits + 1) / (int(n_perm) + 1)
+
+
+# --------------------------------------------------------------------------
 # Results
 # --------------------------------------------------------------------------
 @dataclass
-class Band:
-    """One block of consecutive validation points."""
-    index: int          #: 1-based position in time order
-    epoch_lo: int       #: first epoch of the band
-    epoch_hi: int       #: last epoch of the band
-    n: int              #: number of validation points
-    dev_mean: float     #: band mean of the deviation
-    dev_se: float       #: sigma / sqrt(n)
-    loss_mean: float    #: band mean of the loss
-    admissible: bool    #: loss_mean <= loss_tol * min over bands
-
-
-@dataclass
-class SelectionDiagnostics:
+class PermutationDiagnostics:
     """
-    Reported quantities that **never enter the decision**.
+    A test of the epoch dependence of the validation, **reported only**.
 
-    They are kept apart so that a reader can tell which numbers the choice
-    rests on: those are ``score`` / ``score_se`` / ``best.loss_mean`` of
-    :class:`EpochSelection`, and ``autocorr1`` as a check of the assumption.
-
-    ``f_stat`` / ``f_df``
-        One-way F between the admissible bands: is there any epoch
-        dependence at all. It was once used to branch the rule ("take the
-        last band when not significant") and was dropped: a band mean +/- SE
-        is valid whether or not the bands differ, and if the true mean is
-        constant the best estimate is the mean over all admissible bands,
-        not the last band.
-    ``selection_bias``
-        How much choosing the smallest ``|dev|`` of ``band_count`` bands
-        pulls the score down, measured by a parametric bootstrap that takes
-        the estimated band means as truth. The textbook correction
-        ``c_B * SE`` (expected maximum of ``B`` standard normals) assumes
-        equal true means and overcorrects by a factor 2-15 on real runs, so
-        it is not applied. Below the SE the bias is inside the error bar.
+    It never enters the decision: the adopted epoch is the same whatever
+    ``n_perm`` and ``seed`` are.
     """
-    f_stat: float
-    f_df: tuple[int, int]
-    selection_bias: float
-    n_boot: int
+    p_value: float     #: fraction of shuffles whose min |window mean| <= the observed one
+    n_perm: int        #: number of shuffles
+    seed: int          #: seed of numpy.random.default_rng
 
 
 @dataclass
 class EpochSelection:
-    """The epoch chosen for one run, with everything it was chosen from."""
+    """
+    The epoch chosen for one run, with everything it was chosen from.
+
+    The decision rests on ``epoch`` alone; the rest is there to be read with
+    it. ``score`` is the smallest ``|mean|`` out of ``n_windows`` windows and
+    is therefore optimistic by about ``optimism`` even when the validation
+    does not depend on the epoch at all, so it is only meaningful together
+    with ``score_se``: the true deviation of the adopted force field is worse
+    than ``score``. ``dev_at_epoch`` is a single point and scatters by
+    ``sigma``, not by ``score_se``.
+
+    ``score``, ``score_se``, ``sigma``, ``optimism`` and ``dev_at_epoch`` are
+    in the unit of ``dev``: a dimensionless relative deviation when the entry
+    has a ``gt``, otherwise whatever ``metric`` the YAML asked for (see
+    :func:`extract_history` and the ``notes``). The losses are dimensionless.
+    """
     label: str
     monitor: str                 #: history key followed, e.g. ``sample_0/dself_S``
-    n_points: int                #: validation points used (finite ones)
-    band_count: int
-    sigma: float                 #: pooled within-band sd of dev, the noise of one point
-    bands: list[Band]
-    best: Band                   #: admissible band of smallest ``|dev_mean|``
-    epoch: int                   #: epoch to adopt: smallest loss inside ``best``
+    n_points: int                #: finite validation points in the run, before the burn-in
+    burn_in_points: int          #: points dropped at the front
+    burn_in_epoch: int | None    #: last dropped epoch (None when nothing was dropped)
+    n_used: int                  #: ``n_points - burn_in_points``
+    window: int                  #: averaging window, in points
+    n_windows: int               #: ``n_used - window + 1`` full windows
+    epoch: int                   #: adopted epoch: centre point of the best window
     ffxml: str | None            #: force-field file of that epoch, from validation_history
-    loss_at_epoch: float
-    score: float                 #: ``best.dev_mean``; signed, dimensionless when from gt
-    score_se: float              #: ``best.dev_se``
-    autocorr1: float             #: lag-1 autocorrelation of the within-band residuals
+    window_lo: int               #: first epoch of the adopted window
+    window_hi: int               #: last epoch of the adopted window
+    score: float                 #: mean dev over the adopted window, signed
+    score_se: float              #: ``sigma / sqrt(window)``
+    sigma: float                 #: noise of one point, from adjacent differences
+    optimism: float              #: ``2 * score_se``, how much a minimum flatters with no signal
+    dev_at_epoch: float          #: reference only: the single point at the adopted epoch
+    loss_at_epoch: float         #: reference only
+    window_loss_mean: float      #: reference only: mean loss over the adopted window
+    loss_median: float           #: median loss of the points used
+    loss_ratio: float            #: ``window_loss_mean / loss_median``
     notes: list[str] = field(default_factory=list)
-    diagnostics: SelectionDiagnostics | None = None
+    diagnostics: PermutationDiagnostics | None = None
 
     @property
     def abs_score(self) -> float:
-        """``|score|``, what the runs are ranked by."""
+        """``|score|``, how far the adopted window sits from the reference."""
         return abs(self.score)
-
-
-@dataclass
-class RunSelection:
-    """The run chosen among several :class:`EpochSelection`."""
-    ranked: list[EpochSelection]   #: by ``|score|`` ascending
-    tied: list[EpochSelection]     #: not distinguishable from ``ranked[0]`` at ``z``
-    winner: EpochSelection         #: smallest ``best.loss_mean`` among ``tied``
-    z: float
-
-    @property
-    def epoch(self) -> int:
-        """The epoch of the winning run."""
-        return self.winner.epoch
 
 
 # --------------------------------------------------------------------------
 # Selection of the epoch
 # --------------------------------------------------------------------------
-def _bootstrap_bias(mu: np.ndarray, se: np.ndarray, n_boot: int, seed: int) -> float:
-    """Selection bias of ``argmin |mu|`` by parametric bootstrap around ``mu``."""
-    if n_boot <= 0 or mu.size < 2:
-        return 0.0
-    rng = np.random.default_rng(seed)
-    sim = mu + rng.normal(0.0, se, size=(n_boot, mu.size))
-    k = np.argmin(np.abs(sim), axis=1)
-    rep = np.abs(sim[np.arange(n_boot), k])
-    tru = np.abs(mu[k])
-    return float((tru - rep).mean())
-
-
-def _diagnose(mu: np.ndarray, se: np.ndarray, n: np.ndarray, cand: np.ndarray,
-              ss: float, dof: int, n_boot: int, seed: int) -> SelectionDiagnostics:
-    """The reported-only quantities, from the same band decomposition."""
-    nc = n[cand].astype(float)
-    if len(cand) > 1 and dof > 0:
-        gm = float((nc * mu[cand]).sum() / nc.sum())
-        f_stat = float((nc * (mu[cand] - gm) ** 2).sum() / (len(cand) - 1) / (ss / dof))
-    else:
-        f_stat = float("nan")
-    return SelectionDiagnostics(
-        f_stat=f_stat, f_df=(len(cand) - 1, dof),
-        selection_bias=_bootstrap_bias(mu[cand], se[cand], n_boot, seed),
-        n_boot=n_boot)
-
-
 def _default_label(source: Any, state: dict) -> str:
     if isinstance(source, (str, os.PathLike)):
         return os.path.basename(os.path.normpath(os.fspath(source)))
@@ -474,14 +612,22 @@ def select_epoch(
     *,
     label: str | None = None,
     monitor: str | None = None,
-    band_count: int = DEFAULT_BAND_COUNT,
     loss_tol: float = DEFAULT_LOSS_TOL,
+    burn_in: int | None = None,
+    window: int | None = None,
     diagnostics: bool = True,
-    n_boot: int = DEFAULT_BOOTSTRAP,
+    n_perm: int = DEFAULT_PERMUTATION,
     seed: int = 0,
 ) -> EpochSelection:
     """
     Choose the epoch of one run from its validation history.
+
+    The burn-in is dropped by the loss, the signed relative deviation of the
+    monitored property is averaged over every window of ``w`` consecutive
+    validation points, and the centre point of the window whose mean is
+    closest to zero is adopted. The loss takes no part in that last step: a
+    validation-only property does not enter the loss and need not follow it,
+    so a single-epoch dip of the loss says nothing about the validation.
 
     Parameters
     ----------
@@ -494,276 +640,246 @@ def select_epoch(
     monitor : str, optional
         History key to follow, ``sample_{i}/{entry}``. May be omitted when
         the run validates a single entry.
-    band_count : int
-        Number of bands of equal size the points are split into (>= 2).
-        Together with ``loss_tol`` the only parameter of the decision.
     loss_tol : float
-        A band is admissible when its mean loss is at most ``loss_tol`` times
-        the smallest band mean loss.
+        Burn-in gate (>= 1): the points before the running median of the loss
+        first falls to ``loss_tol`` times its smallest value are dropped.
+        This is the only use the decision makes of the loss.
+    burn_in : int, optional
+        Escape hatch: keep only the points of epoch **greater** than this,
+        instead of the automatic burn-in. The default (None) changes nothing.
+    window : int, optional
+        Escape hatch: averaging window in points, overriding
+        ``clip(round(n / 5), WINDOW_MIN, WINDOW_MAX)``. Must be at least 3 and
+        at most the number of points kept.
     diagnostics : bool
-        Compute the F statistic and the bootstrap selection bias (they do
-        not affect the result). The autocorrelation check is always done.
-    n_boot, seed : int
-        Size and seed (``numpy.random.default_rng``) of the bootstrap; the
-        result is deterministic for a given seed.
+        Run the permutation test. It is reported only, and with
+        ``diagnostics=False`` no random number is drawn at all.
+    n_perm, seed : int
+        Shuffles and seed of that test. Neither can change the adopted epoch.
 
     Returns
     -------
     EpochSelection
-        ``score`` is the band mean of ``dev`` in the best band, a
-        dimensionless signed relative deviation unless the run has no ``gt``
-        (then see :func:`extract_history` and the ``notes``).
+        ``score`` is the mean deviation of the adopted window, in the unit of
+        ``dev`` (dimensionless unless the run has no ``gt``; see
+        :func:`extract_history`). It is the smallest of ``n_windows`` window
+        means, so it flatters the epoch by about ``optimism``: report it as
+        ``score +/- score_se``.
 
     Raises
     ------
     ValueError
-        ``band_count < 2``, fewer than ``2 * band_count`` finite validation
-        points, no or ambiguous ``monitor``, no loss series.
+        ``loss_tol < 1``, fewer than :data:`MIN_POINTS` points left after the
+        burn-in, ``window`` outside ``[3, n_used]``, no or ambiguous
+        ``monitor``, no validation history, no loss series.
     """
+    if loss_tol < 1.0:
+        raise ValueError(
+            f"loss_tol must be at least 1 (it is a multiple of the smallest "
+            f"smoothed loss), got {loss_tol}")
     state = load_history(source)
     ep, dev, loss, monitor, notes = extract_history(state, monitor)
-    m, B = len(dev), int(band_count)
-    if B < 2:
-        raise ValueError("band_count must be at least 2")
-    if m < 2 * B:
-        raise ValueError(
-            f"only {m} validation points for band_count={B}; "
-            f"at least 2*B={2 * B} are needed")
-    if m < 3 * B:
-        notes.append(
-            f"{m} validation points is few for band_count={B} ({m // B} per "
-            f"band): the SE is large and the choice weak")
+    n_points = int(ep.size)
 
-    idx = np.array_split(np.arange(m), B)
-    n = np.array([len(b) for b in idx])
-    mu = np.array([dev[b].mean() for b in idx])
-    ml = np.array([loss[b].mean() for b in idx])
-
-    # Admissible bands (converged loss). Decided by the loss alone, not dev.
-    adm = ml <= loss_tol * float(ml.min())
-    cand = np.where(adm)[0]
-    if cand.size == 0:                       # numerical safety; cannot happen
-        cand = np.array([int(np.argmin(ml))])
-
-    # The noise of one point is pooled over the admissible bands only: a
-    # burn-in band moves steeply within itself and would inflate sigma.
-    # Since admissibility does not look at dev, this pooling is unbiased.
-    ss = float(sum(((dev[idx[i]] - mu[i]) ** 2).sum() for i in cand))
-    dof = int(sum(len(idx[i]) for i in cand) - len(cand))
-    sigma = float(np.sqrt(ss / dof)) if dof > 0 else float("nan")
-    se = sigma / np.sqrt(n)
-
-    # Lag-1 autocorrelation of the within-band residuals: a check of the
-    # white-noise assumption the SE (hence the decision) rests on. Measured
-    # on the residuals the model actually uses, without pairs across bands,
-    # because detrending the whole history with a line leaves the curvature
-    # of the burn-in in and inflates the autocorrelation.
-    pairs = [(dev[idx[i]] - mu[i]) for i in cand if len(idx[i]) > 2]
-    if pairs:
-        x = np.concatenate([p[:-1] for p in pairs])
-        y = np.concatenate([p[1:] for p in pairs])
-        ac1 = float(np.corrcoef(x, y)[0, 1]) if x.size > 2 else 0.0
+    # ---- the decision ----------------------------------------------------
+    # 1. Burn-in. The only step that looks at the loss.
+    if burn_in is None:
+        start, smoothed_loss = _burn_in_start(loss, loss_tol)
     else:
-        ac1 = 0.0
-    if abs(ac1) > AUTOCORR_WARN:
+        start = int(np.searchsorted(ep, int(burn_in), side="right"))
+        smoothed_loss = None
+    ep_u, dev_u, loss_u = ep[start:], dev[start:], loss[start:]
+    n_used = int(ep_u.size)
+    if n_used < MIN_POINTS:
+        raise ValueError(
+            f"only {n_used} validation point(s) left after dropping {start} "
+            f"burn-in point(s) out of {n_points}, at least {MIN_POINTS} are "
+            f"needed: validate more often, or raise loss_tol (now {loss_tol}) "
+            f"if the run converged slowly")
+
+    # 2. Window, in points.
+    w = _window_size(n_used) if window is None else int(window)
+    if w < 3 or w > n_used:
+        raise ValueError(
+            f"window must be between 3 and the {n_used} point(s) kept, got {w}")
+
+    # 3. The window of smallest |mean dev|, and its centre point. No loss and
+    #    no tie-break here: inside a window the epochs are equivalent as far
+    #    as the validation can tell.
+    smoothed_dev = _moving_average(dev_u, w)
+    k = int(np.argmin(np.abs(smoothed_dev)))
+    centre = k + (w - 1) // 2
+    epoch = int(ep_u[centre])
+
+    # The decision ends here. Everything below is reported only and cannot
+    # move the adopted epoch.
+    n_windows = int(smoothed_dev.size)
+    sigma = _noise_sigma(dev_u)
+    score = float(smoothed_dev[k])
+    score_se = sigma / float(np.sqrt(w))
+    window_loss_mean = float(loss_u[k:k + w].mean())
+    loss_median = float(np.median(loss_u))
+    loss_ratio = window_loss_mean / loss_median if loss_median else float("nan")
+
+    if smoothed_loss is not None and start > 0:
+        gate = loss_tol * float(smoothed_loss.min())
+        above = np.where(smoothed_loss[start:] > gate)[0]
+        if above.size:
+            notes.append(
+                f"the smoothed loss climbs back above {loss_tol:g} x its smallest "
+                f"value at epoch {int(ep_u[above[0]])}; those points are kept all "
+                f"the same, so that the range used stays contiguous")
+    if window is None and n_used < 5 * WINDOW_MIN:
         notes.append(
-            f"lag-1 autocorrelation of the within-band residuals is {ac1:+.2f}, "
-            f"the white-noise assumption is doubtful; correct the SE with the "
-            f"effective sample size n*(1-r)/(1+r)")
+            f"{n_used} point(s) is few: the window is clipped at its lower limit "
+            f"of {WINDOW_MIN} points, so the score is noisier than usual")
+    if window is None and n_used > 5 * WINDOW_MAX:
+        notes.append(
+            f"{n_used} point(s) is many: the window is clipped at its upper limit "
+            f"of {WINDOW_MAX} points, so the smoothing is relatively weaker")
+    if k == 0 or k == n_windows - 1:
+        notes.append(
+            "the best window is the first or the last full window of the run: "
+            "the deviation may still be moving there, and the epochs within "
+            f"{(w - 1) // 2} point(s) of the ends can never be adopted")
+    if loss_ratio > LOSS_WARN_RATIO:
+        notes.append(
+            f"the adopted window sits in a higher-loss part of the run: its mean "
+            f"loss is {loss_ratio:.2f} x the median loss of the points used "
+            f"({loss_median:.3e}); the epoch is not moved, because the loss is not "
+            f"what this rule optimises, but look at the force field before "
+            f"shipping it")
 
-    j = int(cand[np.argmin(np.abs(mu[cand]))])
-
-    bands = [Band(i + 1, int(ep[b][0]), int(ep[b][-1]), len(b),
-                  float(mu[i]), float(se[i]), float(ml[i]), bool(adm[i]))
-             for i, b in enumerate(idx)]
-
-    # Inside the best band the points are equivalent in dev (that is what the
-    # band resolution means), so the epoch of smallest loss is adopted, not
-    # the one of smallest |dev|.
-    inb = idx[j]
-    pick = int(inb[int(np.argmin(loss[inb]))])
-
-    # The decision ends here. What follows is reported only.
     diag = None
     if diagnostics:
-        diag = _diagnose(mu, se, n, cand, ss, dof, n_boot, seed)
-        if diag.selection_bias > se[j]:
+        if n_perm > 0:
+            diag = PermutationDiagnostics(
+                p_value=_permutation_p(dev_u, w, abs(score), n_perm, seed),
+                n_perm=int(n_perm), seed=int(seed))
+        else:
             notes.append(
-                f"the measured selection bias {diag.selection_bias:.3f} exceeds "
-                f"the SE {se[j]:.3f}: the score is flattered by that much, say so "
-                f"when reporting it")
+                f"no permutation test was run (n_perm={n_perm}); it is a "
+                f"diagnostic only and the adopted epoch is unaffected")
 
-    epoch = int(ep[pick])
     return EpochSelection(
         label=label or _default_label(source, state), monitor=monitor,
-        n_points=m, band_count=B, sigma=sigma, bands=bands, best=bands[j],
+        n_points=n_points, burn_in_points=start,
+        burn_in_epoch=int(ep[start - 1]) if start > 0 else None,
+        n_used=n_used, window=w, n_windows=n_windows,
         epoch=epoch, ffxml=_ffxml_at(state, epoch),
-        loss_at_epoch=float(loss[pick]),
-        score=float(mu[j]), score_se=float(se[j]),
-        autocorr1=ac1, notes=notes, diagnostics=diag)
+        window_lo=int(ep_u[k]), window_hi=int(ep_u[k + w - 1]),
+        score=score, score_se=score_se, sigma=sigma, optimism=2.0 * score_se,
+        dev_at_epoch=float(dev_u[centre]), loss_at_epoch=float(loss_u[centre]),
+        window_loss_mean=window_loss_mean, loss_median=loss_median,
+        loss_ratio=loss_ratio, notes=notes, diagnostics=diag)
 
 
 # --------------------------------------------------------------------------
-# Selection between runs
+# Report (used by the CLI; a library caller need not call it)
 # --------------------------------------------------------------------------
-def select_run(selections: Sequence[EpochSelection], z: float = DEFAULT_Z) -> RunSelection:
+def format_epoch_selection(sel: EpochSelection) -> str:
     """
-    Choose one run among several, e.g. the runs of a learning-rate sweep.
-
-    The runs are ranked by ``|score|``; those within
-    ``z * sqrt(SE_a^2 + SE_b^2)`` of the first are tied with it, and the tie
-    is broken by the mean loss of the best band. The smallest single-epoch
-    loss is deliberately not used for the tie-break: taking the minimum over
-    many epochs would bring the selection bias back.
+    The choice of one run and how to read it, as printed by the CLI.
 
     Parameters
     ----------
-    selections : sequence of EpochSelection
-        One per run, from :func:`select_epoch`. Their scores must be
-        comparable (same ``monitor`` and, when falling back to
-        ``validation_dev_history``, the same ``metric``).
-    z : float
-        Width of the tie in units of the combined SE.
+    sel : EpochSelection
+        A result of :func:`select_epoch`.
 
-    Raises
-    ------
-    ValueError
-        ``selections`` is empty.
+    Returns
+    -------
+    str
+        Several lines, without a trailing newline. The score is always
+        printed with its standard error and with the warning that it is the
+        smallest of many windows and therefore optimistic.
     """
-    if not selections:
-        raise ValueError("no selections to compare")
-    ranked = sorted(selections, key=lambda r: r.abs_score)
-    top = ranked[0]
-    tied = [top]
-    for r in ranked[1:]:
-        d = r.abs_score - top.abs_score
-        sed = float(np.hypot(r.score_se, top.score_se))
-        if d <= z * sed:
-            tied.append(r)
-    winner = min(tied, key=lambda r: r.best.loss_mean)
-    return RunSelection(ranked=ranked, tied=tied, winner=winner, z=z)
-
-
-# --------------------------------------------------------------------------
-# Reports (used by the CLI; a library caller need not call them)
-# --------------------------------------------------------------------------
-def format_epoch_selection(sel: EpochSelection) -> str:
-    """A table of the bands and the choice of one run, as printed by the CLI."""
-    out = [f"# {sel.label}   monitor={sel.monitor}   points={sel.n_points}  "
-           f"B={sel.band_count}  within-band sd={sel.sigma:.3f}"]
-    out.append(f'  {"band":>4}{"epochs":>14}{"n":>5}{"dev":>9}{"+/-SE":>7}'
-               f'{"loss(mean)":>13}{"adm.":>6}')
-    for b in sel.bands:
-        star = " <<" if b is sel.best else ""
-        out.append(f'  {b.index:>4}{f"{b.epoch_lo}-{b.epoch_hi}":>14}{b.n:>5}'
-                   f'{b.dev_mean:>9.3f}{b.dev_se:>7.3f}{b.loss_mean:>13.3e}'
-                   f'{("o" if b.admissible else "x"):>6}{star}')
-    out.append(f"  adopted epoch = {sel.epoch}  (band {sel.best.epoch_lo}-{sel.best.epoch_hi}, "
-               f"loss at that epoch {sel.loss_at_epoch:.3e}, ffxml {sel.ffxml})")
-    out.append(f"  validation score = {sel.score:+.3f} +/- {sel.score_se:.3f}")
-    out.append(f"  [assumption] lag-1 autocorrelation of the within-band residuals = "
-               f"{sel.autocorr1:+.2f} (SE invalid if |r| > {AUTOCORR_WARN})")
+    out = [f"# {sel.label}   monitor={sel.monitor}   points={sel.n_points}"]
+    if sel.burn_in_points:
+        out.append(f"  burn-in: {sel.burn_in_points} point(s) dropped, through epoch "
+                   f"{sel.burn_in_epoch} (there the running median of the loss first "
+                   f"falls to the accepted multiple of its smallest value)")
+    else:
+        out.append("  burn-in: no point dropped (the loss is already down at the "
+                   "first validation point)")
+    out.append(f"  used {sel.n_used} point(s)   window = {sel.window} points "
+               f"(round(n / 5), clipped to [{WINDOW_MIN}, {WINDOW_MAX}]), "
+               f"{sel.n_windows} full windows")
+    out.append(f"  adopted epoch = {sel.epoch}   window epochs {sel.window_lo}-{sel.window_hi} "
+               f"({sel.window} points; the adopted epoch is the centre point)   "
+               f"ffxml {sel.ffxml}")
+    out.append(f"  validation score = {sel.score:+.3f} +/- {sel.score_se:.3f}   "
+               f"(sigma of one point {sel.sigma:.3f}, SE = sigma / sqrt({sel.window}))")
+    out.append(f"  [optimism] this is the smallest |window mean| out of {sel.n_windows} "
+               f"windows, so it flatters the epoch: even with no epoch dependence at all "
+               f"a minimum runs about 2 x SE = {sel.optimism:.3f} low. The true deviation "
+               f"of this epoch is worse than the number above; quote it with its SE")
+    out.append(f"  [reference only] dev at epoch {sel.epoch} alone = {sel.dev_at_epoch:+.3f} "
+               f"(one point scatters by sigma = {sel.sigma:.3f}, not by the SE)")
+    out.append(f"  [reference only] loss at epoch {sel.epoch} = {sel.loss_at_epoch:.3e}; "
+               f"mean loss over the window {sel.window_loss_mean:.3e}; median loss of the "
+               f"points used {sel.loss_median:.3e} (ratio {sel.loss_ratio:.2f})")
     if sel.diagnostics is not None:
         d = sel.diagnostics
-        out.append(f"  [diagnostics, not used] F({d.f_df[0]},{d.f_df[1]}) = {d.f_stat:.2f} "
-                   f"(epoch dependence)  selection bias = {d.selection_bias:.3f} "
-                   f"(no correction needed if <= SE {sel.score_se:.3f})")
+        out.append(f"  [diagnostics, not used] permutation test, {d.n_perm} shuffles, "
+                   f"seed {d.seed}: p = {d.p_value:.3f} (is there any epoch dependence "
+                   f"of the validation at all)")
+    out.append("  [note] the loss never chooses the epoch here: it only marks the end of "
+               "the burn-in. A validation-only property does not enter the loss, so a "
+               "dip of the loss says nothing about it")
     for note in sel.notes:
         out.append(f"  [note] {note}")
     return "\n".join(out)
-
-
-def format_run_selection(sel: RunSelection) -> str:
-    """The ranking of the runs and the winner, as printed by the CLI."""
-    top = sel.ranked[0]
-    out = [f'{"run":<22}{"score":>9}{"+/-SE":>7}{"loss(mean)":>12}'
-           f'{"epoch":>8}{"z vs 1st":>10}{"verdict":>12}']
-    for r in sel.ranked:
-        if r is top:
-            zs, verdict = "-", "1st"
-        else:
-            sed = float(np.hypot(r.score_se, top.score_se))
-            zs = f"{(r.abs_score - top.abs_score) / sed:.2f}"
-            verdict = "tied" if r in sel.tied else "worse"
-        out.append(f'{r.label:<22}{r.score:>9.3f}{r.score_se:>7.3f}'
-                   f'{r.best.loss_mean:>12.3e}{r.epoch:>8}{zs:>10}{verdict:>12}')
-    out.append(f"\n  tied set ({len(sel.tied)}/{len(sel.ranked)}): "
-               f"{[r.label for r in sel.tied]}")
-    out.append(f"  smallest best-band mean loss in the tied set -> {sel.winner.label}")
-    out.append(f"  adopted: {sel.winner.label} / epoch {sel.winner.epoch}  "
-               f"score {sel.winner.score:+.3f} +/- {sel.winner.score_se:.3f}")
-    if len(sel.tied) > 1:
-        out.append("  note: the validation does not separate the tied runs; "
-                   "the choice among them is the loss tie-break")
-    return "\n".join(out)
-
-
-def _format_sensitivity(label: str, state: dict, band_counts: Sequence[int],
-                        **kw: Any) -> list[str]:
-    """One row per ``band_count`` for the sensitivity table of the CLI."""
-    rows = []
-    for i, B in enumerate(band_counts):
-        head = label if i == 0 else ""
-        try:
-            s = select_epoch(state, label=label, band_count=B, diagnostics=False, **kw)
-        except ValueError as exc:
-            rows.append(f"{head:<22}{B:>3}  {exc}")
-            continue
-        rows.append(f'{head:<22}{B:>3}{s.score:>9.3f}{s.score_se:>7.3f}'
-                    f'{f"{s.best.epoch_lo}-{s.best.epoch_hi}":>14}'
-                    f'{s.epoch:>8}{s.best.loss_mean:>12.3e}')
-    return rows
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """
     Command line: ``python -m imolcraft.trainer.selection PATH [PATH ...]``.
 
-    ``PATH`` is a ``train_state_*.pkl`` or a directory holding one. Options:
-    ``--band-count``, ``--loss-tol``, ``--z``, ``--monitor``, ``--bootstrap``,
-    ``--no-diagnostics`` and ``--sensitivity B [B ...]`` (repeat the analysis
-    with other band counts). With several paths the runs are compared.
+    ``PATH`` is a ``train_state_*.pkl`` or a directory holding one; each is
+    read, reported and dropped in turn. Options: ``--monitor``,
+    ``--loss-tol``, ``--burn-in``, ``--window``, ``--permutations`` and
+    ``--no-diagnostics``.
+
+    Parameters
+    ----------
+    argv : sequence of str, optional
+        Arguments; ``sys.argv[1:]`` when omitted.
+
+    Returns
+    -------
+    int
+        0.
     """
     p = argparse.ArgumentParser(
         prog="python -m imolcraft.trainer.selection",
         description="Choose the epoch of a run from its validation history.")
     p.add_argument("paths", nargs="+", help="run directory or train_state_*.pkl")
-    p.add_argument("--band-count", type=int, default=DEFAULT_BAND_COUNT)
-    p.add_argument("--loss-tol", type=float, default=DEFAULT_LOSS_TOL)
-    p.add_argument("--z", type=float, default=DEFAULT_Z)
-    p.add_argument("--monitor", default=None, help="e.g. sample_0/dself_S")
-    p.add_argument("--bootstrap", type=int, default=DEFAULT_BOOTSTRAP)
+    p.add_argument("--monitor", default=None,
+                   help="history key to follow, e.g. sample_0/dself_S "
+                        "(only needed when the run validates several entries)")
+    p.add_argument("--loss-tol", type=float, default=DEFAULT_LOSS_TOL,
+                   help="burn-in gate on the running median of the loss "
+                        "(default 1.5): the points before it first falls to this "
+                        "multiple of its smallest value are dropped")
+    p.add_argument("--burn-in", type=int, default=None, metavar="EPOCH",
+                   help="use only the points after EPOCH instead of the automatic burn-in")
+    p.add_argument("--window", type=int, default=None, metavar="N",
+                   help="override the averaging window, in points")
+    p.add_argument("--permutations", type=int, default=DEFAULT_PERMUTATION, metavar="N",
+                   help="shuffles of the permutation test, which is reported only "
+                        "(default 2000)")
     p.add_argument("--no-diagnostics", action="store_true",
-                   help="skip the F statistic and the selection bias (not used for the decision)")
-    p.add_argument("--sensitivity", type=int, nargs="*", default=None, metavar="B",
-                   help="also analyse with these band counts (e.g. 3 5 8)")
+                   help="skip the permutation test (it never enters the decision)")
     a = p.parse_args(argv)
 
     # Runs are read one at a time and dropped: a checkpoint with
     # target_log "all" is tens of MB.
-    runs = []
     for path in a.paths:
-        sel = select_epoch(path, monitor=a.monitor, band_count=a.band_count,
-                           loss_tol=a.loss_tol, n_boot=a.bootstrap,
+        sel = select_epoch(path, monitor=a.monitor, loss_tol=a.loss_tol,
+                           burn_in=a.burn_in, window=a.window,
+                           n_perm=a.permutations,
                            diagnostics=not a.no_diagnostics)
-        runs.append(sel)
         print(format_epoch_selection(sel), end="\n\n", flush=True)
-
-    if len(runs) > 1:
-        print("=== comparison of the runs ===")
-        print(format_run_selection(select_run(runs, z=a.z)))
-
-    if a.sensitivity:
-        print(f"\n=== sensitivity to band_count {a.sensitivity} ===")
-        print(f'{"run":<22}{"B":>3}{"score":>9}{"+/-SE":>7}{"best band":>14}'
-              f'{"epoch":>8}{"loss(mean)":>12}')
-        for path in a.paths:
-            state = load_history(path)
-            label = os.path.basename(os.path.normpath(path))
-            for row in _format_sensitivity(label, state, a.sensitivity,
-                                           monitor=a.monitor, loss_tol=a.loss_tol):
-                print(row)
-            del state
     return 0
 
 
