@@ -602,6 +602,23 @@ def _thermo_stub(neff, states=(), resample=(), n_replicas=None):
     )
 
 
+def test_run_md_trajectory_carries_the_label():
+    """Two trainers with the same replica name write different trajectories"""
+    import types
+
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    seen = []
+    calc = types.SimpleNamespace(
+        run=lambda ffxml, trajectory: seen.append(trajectory) or trajectory
+    )
+    for label in ("lbs_cry", "lbs_liq"):
+        stub = types.SimpleNamespace(label=label, ffxml="ff.xml", md_calculators=[calc])
+        ThermodynamicTrainer._run_md(stub, 0, "sample_0")
+
+    assert seen == ["lbs_cry_sample_0.xtc", "lbs_liq_sample_0.xtc"]
+
+
 def test_needs_resample_matches_by_name_not_position():
     """Look at the own replica's contribution even if the state order changes"""
     from imolcraft.trainer import ThermodynamicTrainer
@@ -790,6 +807,56 @@ def test_sub_optimizer_state_is_not_advanced(sum_trainer_env):
     assert _opt_counts(trainer.opt_state) == [c + 3 for c in before]
     assert _opt_counts(t1.opt_state) == before
     assert _opt_counts(t2.opt_state) == before
+
+
+def test_sub_after_step_sees_its_own_loss(sum_trainer_env):
+    """The sub after_step can read .loss (ThermodynamicTrainer._record_targets)"""
+    from imolcraft.trainer.base import SumTrainer
+
+    make = sum_trainer_env
+    t1, t2 = make("t1"), make("t2")
+    trainer = SumTrainer(
+        t1, t2, opt_fftypes=["NonbondedForce/charge"], weight=[1.0, 1.0],
+        lr=0.01, clip=0.1,
+    )
+    seen = []
+    t1.after_step = lambda: seen.append(("t1", float(t1.loss)))
+    t2.after_step = lambda: seen.append(("t2", float(t2.loss)))
+    trainer.setup()
+    trainer.fit(steps=2, checkpoint_frequency=1000)
+
+    assert seen == [("t1", 1.0), ("t2", 1.0)] * 2
+
+
+def test_sub_checkpoints_follow_the_joint_frequency(sum_trainer_env):
+    """With checkpoint_frequency > 1 the subs write at the same epochs as the parent"""
+    from imolcraft.trainer.base import SumTrainer
+
+    make = sum_trainer_env
+    t1, t2 = make("t1"), make("t2")
+    trainer = SumTrainer(
+        t1, t2, opt_fftypes=["NonbondedForce/charge"], weight=[1.0, 1.0],
+        lr=0.01, clip=0.1,
+    )
+    written = {"t1": [], "t2": []}
+    stepped = {"t1": [], "t2": []}
+
+    def spy(sub):
+        # the same epoch test as ThermodynamicTrainer.write_checkpoint
+        def write_checkpoint(checkpoint_frequency):
+            if sub._epoch % checkpoint_frequency == 0:
+                written[sub.label].append(sub._epoch)
+        sub.write_checkpoint = write_checkpoint
+        sub.after_step = lambda: stepped[sub.label].append(sub._epoch)
+
+    spy(t1)
+    spy(t2)
+    trainer.setup()
+    trainer.fit(steps=7, checkpoint_frequency=3)
+
+    assert written == {"t1": [0, 3, 6], "t2": [0, 3, 6]}
+    assert stepped == {"t1": list(range(7)), "t2": list(range(7))}
+    assert trainer.epochs == t1.epochs == t2.epochs == list(range(7))
 
 
 def test_sub_after_grad_hook_still_applies(sum_trainer_env):

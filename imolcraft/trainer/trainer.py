@@ -908,7 +908,9 @@ class ThermodynamicTrainer(BaseTrainer):
 
     def _run_md(self, idx: int, state_name: str) -> str:
         """Run the MD of one replica with the current force field."""
-        return self.md_calculators[idx].run(self.ffxml, f"{state_name}.xtc")
+        return self.md_calculators[idx].run(
+            self.ffxml, f"{self.label}_{state_name}.xtc"
+        )
 
     def _add_sample(self, idx: int, state_name: str, xtcfile: str) -> None:
         """

@@ -9,7 +9,19 @@ name, a default that changes results, a new shape for a saved pickle, a
 feature switched off — moves the minor number. A release of nothing but bug
 fixes and backwards-compatible additions moves the patch number.
 
-## [Unreleased]
+## [0.4.3] — 2026-09-24
+
+### Changed
+
+- `ThermodynamicTrainer` writes its sampling trajectories as
+  `xtcfiles/{label}_sample_{i}.xtc` instead of `xtcfiles/sample_{i}.xtc`. 
+
+### Fixed
+
+- `SumTrainer` now sets the `.loss` of its sub-trainers. Their own `after_step`
+  reads it (the target history and the NaN recovery), so with `target_log`
+  other than `"none"` a `ThermodynamicTrainer` inside a `SumTrainer` stopped
+  with an `AttributeError` at the end of the first epoch.
 
 ## [0.4.2] — 2026-09-14
 
