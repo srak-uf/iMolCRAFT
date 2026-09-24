@@ -602,6 +602,23 @@ def _thermo_stub(neff, states=(), resample=(), n_replicas=None):
     )
 
 
+def test_run_md_trajectory_carries_the_label():
+    """Two trainers with the same replica name write different trajectories"""
+    import types
+
+    from imolcraft.trainer import ThermodynamicTrainer
+
+    seen = []
+    calc = types.SimpleNamespace(
+        run=lambda ffxml, trajectory: seen.append(trajectory) or trajectory
+    )
+    for label in ("lbs_cry", "lbs_liq"):
+        stub = types.SimpleNamespace(label=label, ffxml="ff.xml", md_calculators=[calc])
+        ThermodynamicTrainer._run_md(stub, 0, "sample_0")
+
+    assert seen == ["lbs_cry_sample_0.xtc", "lbs_liq_sample_0.xtc"]
+
+
 def test_needs_resample_matches_by_name_not_position():
     """Look at the own replica's contribution even if the state order changes"""
     from imolcraft.trainer import ThermodynamicTrainer
