@@ -671,9 +671,8 @@ class SumTrainer(BaseTrainer):
         """
         loss, grads = trainer.get_loss_gradients()
         print(f"{name}: {loss}")
-        # the recovery belongs to the sub-trainer, which is the one holding
-        # the data the NaN came out of, and only its own half is recomputed
         loss, grads = trainer._retry_invalid_loss(loss, grads)
+        trainer.loss = loss
         grads = _guard_gradients(loss, grads, trainer.ffparams)
         return loss, trainer._do_modify("after_grad", grads)
 
@@ -691,6 +690,8 @@ class SumTrainer(BaseTrainer):
         return loss, grad
     
     def before_step(self):
+        self.trainer1._epoch = self._epoch
+        self.trainer2._epoch = self._epoch
         self.trainer1.before_step()
         self.trainer2.before_step()
 
@@ -729,8 +730,6 @@ class SumTrainer(BaseTrainer):
         self.trainer2.epochs.append(self._epoch)
         self.trainer1.losses.append(self.loss1)
         self.trainer2.losses.append(self.loss2)
-        self.trainer1._epoch += 1
-        self.trainer2._epoch += 1
 
     def _scatter_to_subtrainers(self) -> None:
         """Split the joined parameter vector back into the two sub-trainers."""
