@@ -2,10 +2,10 @@ import os
 
 import numpy
 import pytest
+from openmm import XmlSerializer, app, unit
 
-from imolcraft.io import exporter_lmp as exporter_lmp_module
 from imolcraft.io._exporter import exporter
-from imolcraft.io.exporter_lmp import to_lammps_non_rectangular
+from imolcraft.io.exporter_lmp import write_lammps
 
 DATA = os.path.join(os.path.dirname(__file__), "..", "data")
 PDB = os.path.join(DATA, "supercell_bonds.pdb")
@@ -19,7 +19,6 @@ def test_exporter_rejects_unknown_format(tmp_path):
 
 def test_exporter_accepts_fmt_as_keyword(tmp_path, monkeypatch):
     """The public API keyword is named fmt (the notebooks call it by this name)"""
-    pytest.importorskip("openff.interchange")
     monkeypatch.chdir(tmp_path)
     exporter(pdb=PDB, system=SYSTEM, filename="kw", fmt="lmp")
     assert (tmp_path / "kw.data").exists()
@@ -29,7 +28,6 @@ def test_exporter_accepts_fmt_as_keyword(tmp_path, monkeypatch):
     "fmt, suffixes", [("gmx", [".top", ".gro"]), ("lmp", [".data"])]
 )
 def test_exporter_writes_files(fmt, suffixes, tmp_path, monkeypatch):
-    pytest.importorskip("openff.interchange")
     monkeypatch.chdir(tmp_path)
     exporter(PDB, SYSTEM, "out", fmt)
     for suffix in suffixes:
@@ -39,33 +37,24 @@ def test_exporter_writes_files(fmt, suffixes, tmp_path, monkeypatch):
 
 def test_exporter_lmp_header(tmp_path, monkeypatch):
     """The LAMMPS data file headers are written in the expected order"""
-    pytest.importorskip("openff.interchange")
     monkeypatch.chdir(tmp_path)
     exporter(PDB, SYSTEM, "out", "lmp")
     lines = (tmp_path / "out.data").read_text().splitlines()
-    assert lines[0] == "Title"
+    assert lines[0].startswith("LAMMPS data file")
     counts = lines[2:7]
     assert [line.split()[1] for line in counts] == [
         "atoms", "bonds", "angles", "dihedrals", "impropers"
     ]
-    assert any(line.endswith("xy xz yz") for line in lines)
+    assert any(line.endswith("zlo zhi") for line in lines)
 
 
 @pytest.fixture
-def interchange(tmp_path, monkeypatch):
-    """Intercept and grab the Interchange that exporter_lmp assembled"""
-    pytest.importorskip("openff.interchange")
-    captured = {}
-    real = exporter_lmp_module.to_lammps_non_rectangular
-
-    def capture(interchange, file_path):
-        captured["interchange"] = interchange
-        return real(interchange, file_path)
-
-    monkeypatch.setattr(exporter_lmp_module, "to_lammps_non_rectangular", capture)
-    monkeypatch.chdir(tmp_path)
-    exporter_lmp_module.exporter_lmp(PDB, SYSTEM, "captured")
-    return captured["interchange"]
+def inputs():
+    """Topology, system and positions of the test molecule"""
+    pdb = app.PDBFile(PDB)
+    with open(SYSTEM) as f:
+        system = XmlSerializer.deserialize(f.read())
+    return pdb.topology, system, pdb.positions
 
 
 def _box_lines(path):
@@ -75,41 +64,35 @@ def _box_lines(path):
     ]
 
 
-def test_to_lammps_non_rectangular_without_box(interchange, tmp_path):
-    """Without a box a 100 A cubic cell is written (zero tilt)"""
-    interchange.box = None
-    out = tmp_path / "nobox.data"
-    to_lammps_non_rectangular(interchange, str(out))
-    lines = _box_lines(out)
-    assert lines[-1] == "0.0 0.0 0.0 xy xz yz"
+def test_write_lammps_without_box(inputs, tmp_path):
+    """Without a box the default box of the system (40 A) is written"""
+    topology, system, positions = inputs
+    topology.setPeriodicBoxVectors(None)
+    lines = _box_lines(write_lammps(topology, system, positions, tmp_path / "nobox"))
+    assert not lines[-1].endswith("xy xz yz")
     lo, hi = (float(v) for v in lines[0].split()[:2])
-    assert numpy.isclose(hi - lo, 100.0)
+    assert numpy.isclose(hi - lo, 40.0)
 
 
-def test_to_lammps_non_rectangular_orthogonal(interchange, tmp_path):
-    from openff.toolkit.topology.molecule import unit
-
-    interchange.box = numpy.diag([20.0, 30.0, 40.0]) * unit.angstrom
-    out = tmp_path / "ortho.data"
-    to_lammps_non_rectangular(interchange, str(out))
-    lines = _box_lines(out)
-    assert lines[-1] == "0.0 0.0 0.0 xy xz yz"
+def test_write_lammps_orthogonal(inputs, tmp_path):
+    topology, system, positions = inputs
+    topology.setPeriodicBoxVectors(numpy.diag([2.0, 3.0, 4.0]) * unit.nanometer)
+    lines = _box_lines(write_lammps(topology, system, positions, tmp_path / "ortho"))
+    assert not lines[-1].endswith("xy xz yz")
     edges = [
         float(line.split()[1]) - float(line.split()[0]) for line in lines[:3]
     ]
     assert numpy.allclose(edges, [20.0, 30.0, 40.0])
 
 
-def test_to_lammps_non_rectangular_triclinic(interchange, tmp_path):
+def test_write_lammps_triclinic(inputs, tmp_path):
     """A triclinic cell is converted into the LAMMPS tilt factors xy / xz / yz"""
-    from openff.toolkit.topology.molecule import unit
-
-    interchange.box = numpy.array(
-        [[20.0, 0.0, 0.0], [6.0, 19.0, 0.0], [4.0, 3.0, 18.0]]
-    ) * unit.angstrom
-    out = tmp_path / "triclinic.data"
-    to_lammps_non_rectangular(interchange, str(out))
-    lines = _box_lines(out)
+    topology, system, positions = inputs
+    topology.setPeriodicBoxVectors(
+        numpy.array([[2.0, 0.0, 0.0], [0.6, 1.9, 0.0], [0.4, 0.3, 1.8]])
+        * unit.nanometer
+    )
+    lines = _box_lines(write_lammps(topology, system, positions, tmp_path / "triclinic"))
     assert lines[-1] == "6 4 3 xy xz yz"
     edges = [
         float(line.split()[1]) - float(line.split()[0]) for line in lines[:3]
