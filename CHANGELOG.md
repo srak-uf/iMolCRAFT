@@ -11,6 +11,24 @@ fixes and backwards-compatible additions moves the patch number.
 
 ## [Unreleased]
 
+### Added
+
+- **Virtual sites under GROMACS.** The GROMACS exporter
+  (`imolcraft.io.exporter(..., "gmx")`, and through it `GMXCalculator` and
+  `software: gromacs`) now writes the virtual sites of the OpenMM System:
+  `TwoParticleAverageSite` (`average2`) as `[ virtual_sites2 ]` funct 1,
+  `ThreeParticleAverageSite` (`average3`) as `[ virtual_sites3 ]` funct 1
+  and `OutOfPlaneSite` (`outOfPlane`) as `[ virtual_sites3 ]` funct 4. The
+  sites are massless particles of their molecule (atom types `VS1`,
+  `VS2`, ...), tied to their first particle by a `funct 5` connection, and
+  every exception of the System that involves a site is listed in
+  `[ exclusions ]` (the 1-4 ones also in `[ pairs ]`), because GROMACS does
+  not derive exclusions for virtual sites as OpenMM does. Averaging weights
+  must sum to one, as the trainer's weight update keeps them.
+  `LocalCoordinatesSite` (`localCoords`) is refused with a `ValueError`.
+  A single-point energy test with charged sites (`gmx` marker) checks the
+  result against OpenMM.
+
 ### Changed
 
 - The user manual (`docs/source`) is brought up to date with 0.4.3: the
@@ -45,6 +63,9 @@ fixes and backwards-compatible additions moves the patch number.
 ### Removed
 
 - The stray `docs/docs/` apidoc output and the committed Psi4 `docs/timer.dat`.
+- The `ValueError` that refused a force field with virtual sites in
+  `GMXCalculator.run` and, at construction, in a `ThermodynamicTrainer`
+  replica with `software: gromacs`.
 
 ## [0.4.3] — 2026-09-24
 
