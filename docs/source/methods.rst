@@ -21,7 +21,7 @@ iMolCRAFT uses classical force fields to perform molecular dynamics simulations 
 
 
 * Point charges
-    The structure is optimized at the DFT level (default: ωB97X-D/6-311+G(2d,p)). After that, the point charges are calculated by the RESP (Restrained ElectroStatic Potential) method.
+    The structure is optimized at the DFT level (default: ωB97X-D/6-311+G(2d,p)). After that, the point charges are calculated by the RESP (Restrained ElectroStatic Potential) method from the HF/6-31G* electrostatic potential (default).
     The charge of ionic species is usually scaled, e.g., by a factor of 0.8 for +/- 1.0 ions, to account for polarization effects in condensed phases.
 
 * Dihedral parameters
@@ -43,9 +43,9 @@ iMolCRAFT uses classical force fields to perform molecular dynamics simulations 
 
 Automatic differentiation
 -------------------------
-iMolCRAFT is a wrapper of DMFF or JAX-MD software to perform force field calculations including automatic-differentiation functions.
+iMolCRAFT uses DMFF (built on JAX) as its backend to evaluate force-field energies with automatic differentiation.
 This allows users to easily implement new force field functional forms and the parameter optimization.
-One of the examples is the dihedral parameter fitting. The sample jupyter notebook is provided in the examples folder.
+One example is the dihedral parameter fitting described in :doc:`dihedral`; the notebook is in ``examples/calculator/dihedral``.
 
 Thermodynamic gradient
 -----------------------

@@ -36,6 +36,30 @@ imolcraft.calculator.energy module
    :show-inheritance:
    :undoc-members:
 
+imolcraft.calculator.gmx module
+-------------------------------
+
+.. automodule:: imolcraft.calculator.gmx
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+imolcraft.calculator.md module
+------------------------------
+
+.. automodule:: imolcraft.calculator.md
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+imolcraft.calculator.omm module
+-------------------------------
+
+.. automodule:: imolcraft.calculator.omm
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 imolcraft.calculator.psi4geoopt module
 --------------------------------------
 

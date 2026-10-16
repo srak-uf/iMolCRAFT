@@ -40,6 +40,7 @@ source_suffix = {
     '.rst': 'restructuredtext',
     '.ipynb': 'myst-nb',
     '.myst': 'myst-nb',
+    '.md': 'myst-nb',
 }
 
 
@@ -58,7 +59,6 @@ html_css_files = [
     'custom.css',
 ]
 
-autodoc_default_flags = [
- 'members',
- 'private-members'
-]
+autodoc_default_options = {
+    'members': True,
+}
