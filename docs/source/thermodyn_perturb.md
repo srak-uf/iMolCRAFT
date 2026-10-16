@@ -55,7 +55,7 @@ Through custom gradient and parameter modification functions, iMolCRAFT can dete
 1. **Initialization**: User specifies force field XML files (OpenMM format), PDB structure, thermodynamic states (temperature, pressure, ensemble), and target properties
 
 2. **MD Sampling**: For each thermodynamic state:
-   - Generate reference MD trajectories using DMFF-powered force field evaluation through OpenMM
+   - Generate reference MD trajectories with OpenMM or GROMACS (`MDCalculator`); DMFF is used only to re-evaluate their energies
    - Apply annealing and equilibration protocols
    - Store configurations and energies
 
@@ -72,7 +72,7 @@ Through custom gradient and parameter modification functions, iMolCRAFT can dete
    - Backpropagate through DMFF's JAX-based computational graph to obtain parameter gradients
 
 5. **Parameter Update**:
-   - Update force field parameters using optimizer (Adam, SGD, etc.)
+   - Update force field parameters with an optax optimizer (`optimizer_algo`, default `"adam"`) and gradient clipping (`clip`, default `0.1`)
    - Monitor effective sample sizes
    - Trigger resampling if convergence degrades
 
@@ -179,17 +179,19 @@ File format for RDF/ADF data (space or tab-separated, 2 columns):
 
 #### Ensemble Support
 
-The trainer supports multiple MD ensembles:
-- **NVT** (Canonical): Fixed volume and temperature
-- **NPT** (Isothermal-Isobaric): Fixed pressure and temperature
-- **Anisotropic NPT**: Separate pressure control for each axis (for crystal systems)
+The `ensemble` key of a sampling block takes one of:
+- `nve`: fixed energy and volume
+- `nvt` (canonical): fixed volume and temperature
+- `isonpt`: isotropic barostat
+- `anisonpt`: each axis scaled independently (for crystal systems)
+- `trinpt`: fully flexible (triclinic) cell
 
 #### Resampling Strategy
 
 Adaptive resampling is triggered when:
 - Loss becomes NaN (see below)
 - Effective sample size drops below user-specified threshold
-- Predefined resampling frequency is reached
+- `resample_freq` epochs (default `50`) have passed since the last sampling
 
 This ensures the method remains stable across the optimization landscape.
 
@@ -475,7 +477,7 @@ state["target_gt"]   # the references, one dict per replica
 history = state["target_history"]
 epochs = [record["epoch"] for record in history]
 rho = [record["sample_0/density_gcm3"] for record in history]
-rdf_last = history[-1]["sample_0/rdf/Li_O"]   # the reweighted curve
+rdf_last = history[-1]["sample_0/rdf/Li-O"]   # the reweighted curve
 ```
 
 A record carries `epoch` and `ffxml`, the force field whose parameters the
@@ -519,8 +521,8 @@ lossfn = partial(loss_thermodynamicperturbation,
 
 # Initialize trainer
 trainer = ThermodynamicTrainer(
-    ffxml_list=["Li.xml", "BF4.xml", "SL.xml"],
-    nums_ffxml=[1],
+    ffxml_list=["BF4_bond.xml", "SL.xml", "Li.xml"],
+    nums_ffxml=[1, 1, 1],
     pdbfile="supercell_bonds.pdb",
     loss_fn=lossfn,
     sampling_params=[{
@@ -528,6 +530,7 @@ trainer = ThermodynamicTrainer(
         "temperature_K": 300.0,
         "pressure_bar": 1.0,
         "rcut_nm": 0.8,
+        "nonbondedmethod": "PME",
         "dt_fs": 1.0,
         "ensemble": "anisonpt",
         "relax_steps": 20000,
@@ -591,7 +594,7 @@ trainer.add_modifyfn("after_update", ffparams_modify)
 
 # Setup and train
 trainer.setup()
-trainer.fit(num_epochs=100, checkpoint_freq=10)
+trainer.fit(steps=100, checkpoint_frequency=10)
 ```
 
 #### Sampling Parameters
@@ -617,6 +620,7 @@ Everything else may be left out:
 | `pressure_bar` | Required for the NPT ensembles: it is the set point of the barostat and the pressure of the PV term of the reweighting. A fixed-volume replica may leave it out and gets no PV term. |
 | `dispcorr` | No dispersion correction. |
 | `dt_fs`, `nstxout`, `relax_steps`, `prod_steps` | `MDCalculator` uses its own defaults. |
+| `useHbondConstraint`, `rigidWater` | Bonds to hydrogen are constrained (`True`); water is flexible (`False`). |
 | `anneal_T`, `anneal_steps`, `anneal_interval` | No annealing. |
 
 Each block becomes one `imolcraft.calculator.MDCalculator`, which hands the
@@ -625,6 +629,15 @@ calculator names its settings exactly as the keys above are named, so a
 sampling block needs no translation and the defaults of the second half live
 in `MDCalculator.SETTINGS` rather than being restated here. `neff` is not a
 setting of the MD and stays with the trainer.
+
+```{note}
+`parser_dmffyaml` (the YAML route used by the examples) applies defaults of its
+own before the trainer sees the blocks: it requires `init_structure`,
+`relax_steps` and `prod_steps`, and fills in `dt_fs: 1.0`, `ensemble: nvt`,
+`temperature_K: 300`, `nstxout: 100`, `rcut_nm: 1.2`, `nonbondedmethod: PME`
+and `dispcorr: false`. It also writes the parsed file next to the input as
+`<name>_parsed.yaml`.
+```
 
 #### Choosing the MD Software
 
@@ -645,6 +658,8 @@ sampling:
     rcut_nm: 1.2
     nonbondedmethod: PME
     neff: 100
+    relax_steps: 20000      # required by parser_dmffyaml
+    prod_steps: 100000
     ntomp: 8
 ```
 
@@ -726,7 +741,7 @@ one destination, chosen with the `md_log` argument of `ThermodynamicTrainer`:
 | `md_log` | Destination |
 | --- | --- |
 | `"stdout"` | The terminal (default). |
-| `"file"` | `md_logfile`, or `mdlogs/<state name>.log` when that is left out, giving one file per replica. |
+| `"file"` | `md_logfile`, or `mdlogs/{label}_sample_{i}.log` (named after the trajectory) when that is left out, giving one file per replica. |
 | `"none"` | Nothing is written and no reporter is attached at all. |
 
 ```python
@@ -759,7 +774,7 @@ This function is called after parameter updates to enforce chemical constraints:
 - **Input**: Dictionary of force field parameters
 - **Operation**: Uses `neutralize()` utility to restore net charge constraints
   - `target_lists`: List of atom indices for each constraint group (e.g., all BF₄ atoms)
-  - `target_charges`: Target net charge for each group (e.g., -1.0 for BF₄⁻)
+  - `target_charges`: Target net charge for each group (e.g., `0.0` for the neutral solvent above, or `-0.8` for a scaled BF₄⁻ as in `examples/trainer/LiSLBF4/ff_fit.py`)
 - **Purpose**: Ensures that any numerical drift from charge updates is corrected, maintaining chemical validity
 
 **Lower bounds on the parameters**
@@ -812,47 +827,83 @@ This method registers custom modification functions at specific points in the op
   trainer.add_modifyfn("after_update", ffparams_modify)
   ```
 
-- **Multiple modifications**: You can register multiple functions for the same hook point; they will be called in order of registration
+- **One function per hook point**: registering a second function for the same hook point replaces the first, so combine several modifications into one function
 
 This approach enables sophisticated parameter optimization strategies while maintaining chemical validity throughout training.
 
 ### 2. Results and restarts
-The optimization results are stored in the `train_state_....pkl` file.  
-For example, you can plot the training curve by the following script.
-```
+
+Every `checkpoint_frequency` epochs the trainer writes `train_state_{label}.pkl`
+(the complete state) and `chkpoint_{label}.xml` (the current force field).
+Other outputs of a run:
+
+| File | Content |
+| --- | --- |
+| `{label}.xml` | The input force fields merged into one file |
+| `xmlfiles/epoch_{label}-{N}.xml` | Force field after epoch `N` |
+| `{label}_best.xml` | Force field of the smallest finite loss (`best_epoch`, `best_params`, `best_loss`) |
+| `xtcfiles/{label}_sample_{i}.xtc` | Trajectory of replica `i` (GROMACS files go under `gmxfiles/`) |
+| `{label}_learning_curve.png` | Learning curve (also `logy_` and `logylogx_` variants) |
+| `sample_{label}_{i}.png` | Predicted against reference properties of replica `i` |
+
+For example, the training curve can be plotted from the checkpoint:
+
+```python
 import pickle
 import matplotlib.pyplot as plt
 
 with open("train_state_2rdf_1adf.pkl", mode="rb") as f:
-    l = pickle.load(f)
+    state = pickle.load(f)
 
-plt.plot(l["epochs"], l["losses"])
+plt.plot(state["epochs"], state["losses"])
 plt.xlabel("Epochs")
 plt.ylabel("Loss")
 ```
 
-You can restart the calculation by using the `train_state_....pkl` and `chkpoint....xml` files.  
-```
-params = parser_dmffyaml("dmff_prod.yml")
-lossfn = partial(loss_thermodynamicperturbation, losstype_distribfn="wrightfactor")
+To continue a run, only the checkpoint and the hooks are needed (see
+*Restarting from a Checkpoint* above). `from_checkpoint` already runs
+`setup()`, so do not call it again:
 
-trainer = ThermodynamicTrainer.from_checkpoint(trainer_checkpoint="train_state.pkl",
-                                     ffxml_list=["BF4_bond.xml", "SL.xml", "Li.xml"],
-                                     nums_ffxml=[1,1,1],
-                                     pdbfile="supercell_bonds.pdb",
-                                     initial_ffxml="chkpoint.xml",
-                                     loss_fn=lossfn,
-                                     sampling_params=params["sampling"],
-                                     target_params=params["targets"],
-                                     validation_params=params["validation"],
-                                     lr=lr_prod,
+```python
+from functools import partial
+from imolcraft.trainer import ThermodynamicTrainer
+from imolcraft.trainer.loss import loss_thermodynamicperturbation
+
+trainer = ThermodynamicTrainer.from_checkpoint(
+    "train_state_lbs_opt.pkl",
+    lr=5e-5,                     # optional overrides
+    setup=False,                 # register the hooks before sampling
 )
-
 trainer.add_modifyfn("after_grad", grad_modify)
 trainer.add_modifyfn("after_update", ffparams_modify)
 trainer.setup()
 trainer.fit(100, 2)
 ```
+
+### 3. Combining trainers with `SumTrainer`
+
+`imolcraft.trainer.base.SumTrainer` optimizes one parameter vector against the
+weighted sum of two trainers' losses, for example a `ThermodynamicTrainer` and
+a `DihedralTrainer`, or two thermodynamic fits of different systems:
+
+```python
+from imolcraft.trainer.base import SumTrainer
+
+joint = SumTrainer(
+    trainer_liquid, trainer_crystal,
+    opt_fftypes=["NonbondedForce/charge", "NonbondedForce/sigma"],
+    weight=[1.0, 0.5],
+    lr=1e-4,
+)
+joint.setup()
+joint.fit(100, 10)        # writes train_state_{label1}_{label2}.pkl
+```
+
+It takes the same `optimizer_algo`, `lr`, `clip`, `param_floors` and
+`restart_xml` arguments as the trainers it combines, and
+`SumTrainer.from_checkpoint(path, trainer1, trainer2)` restores it. Its
+`setup()` sets up both sub-trainers, so call it once on the `SumTrainer` (also
+after `from_checkpoint`) and not on the sub-trainers.
 
 ## Advantages
 
