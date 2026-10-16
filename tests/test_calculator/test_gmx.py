@@ -678,8 +678,11 @@ def test_export_inputs_writes_virtual_sites(tmp_path):
 
     # x = (1 - a) x_i + a x_j with the fixture's weights (1.2, -0.2)
     sites = _top_section(text, "virtual_sites2")
-    assert [r[:4] for r in sites] == [["11", "1", "2", "1"], ["12", "6", "3", "1"]]
+    assert [r[:4] for r in sites] == [["11", "1", "2", "1"], ["12", "6", "5", "1"]]
     assert all(float(r[4]) == pytest.approx(-0.2) for r in sites)
+    # each site extends a bond: N and its own nitrile carbon, at both ends
+    bonded = {tuple(sorted(map(int, r[:2]))) for r in _top_section(text, "bonds")}
+    assert all(tuple(sorted((int(r[1]), int(r[2])))) in bonded for r in sites)
 
     # a site inherits the exceptions of its first particle: the particle
     # itself, its 1-2 and 1-3 partners (excluded) and 1-4 partners (pairs)

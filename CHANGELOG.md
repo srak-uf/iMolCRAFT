@@ -59,6 +59,15 @@ fixes and backwards-compatible additions moves the patch number.
   counts are noted in the cells). `examples/crafter/crystal` and
   `examples/exporter/system.xml` are regenerated; the old files described a
   4x4x4 supercell that matched neither the YAML nor the PDB next to them.
+- The second virtual site of succinonitrile (`M2`) in
+  `examples/trainer/2rdf_1adf_density_vsite/SN.xml`,
+  `examples/trainer/distance_vsite/SN.xml` and `tests/data/vsite_average2.xml`
+  was built from `N2` and `C2`, the CH2 carbon at the other end of the
+  molecule, rather than from `N2` and its own nitrile carbon `C4`. The site
+  therefore sat off the C≡N axis (0.68 Å from N at 23° with weight 1.1975)
+  while `M1` sat on it (0.23 Å, 0°). `M2` now uses `atomName2="C4"`, so both
+  sites extend their C≡N bond. Force fields optimized from these files
+  carry the asymmetric `M2` and should be re-optimized.
 
 ### Removed
 

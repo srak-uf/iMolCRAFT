@@ -52,7 +52,7 @@
     <Atom name="M1" type="NV" charge="0.0"/>
     <Atom name="M2" type="NV" charge="0.0"/>
     <VirtualSite type="average2" siteName="M1" atomName1="N1" atomName2="C1" weight1="1.1" weight2="-0.1"/>
-    <VirtualSite type="average2" siteName="M2" atomName1="N2" atomName2="C2" weight1="1.1" weight2="-0.1"/>
+    <VirtualSite type="average2" siteName="M2" atomName1="N2" atomName2="C4" weight1="1.1" weight2="-0.1"/>
     <Bond atomName1="C1" atomName2="N1"/>
     <Bond atomName1="C2" atomName2="C1"/>
     <Bond atomName1="C3" atomName2="C2"/>
