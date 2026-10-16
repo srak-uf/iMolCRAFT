@@ -31,6 +31,16 @@ fixes and backwards-compatible additions moves the patch number.
   PDB file) and `examples/trainer/distance_vsite` (`VirtualSite/weight`
   instead of `VirtualSite/vsite_w2_type_2`). The example YAML files drop
   `charge.basis` / `charge.method`, which the Crafter ignores.
+- `examples/trainer/2rdf_1adf_density/loss_jsdivergence` fitted with the
+  Wright factor; it now uses `losstype_distribfn="jsdivergence"`.
+- `examples/trainer/2rdf_1adf_density_vsite/dmff.yml` sampled a 4320-atom box
+  (`merged_supercell_bonds.pdb`) while the trainer read the 960-atom
+  `supercell_bonds.pdb`, which stopped the run at the first trajectory load.
+- The examples were re-run against 0.4.3 and are committed with their outputs.
+  The thermodynamic trainers are shortened to about 50 epochs (the original
+  counts are noted in the cells). `examples/crafter/crystal` and
+  `examples/exporter/system.xml` are regenerated; the old files described a
+  4x4x4 supercell that matched neither the YAML nor the PDB next to them.
 
 ### Removed
 
