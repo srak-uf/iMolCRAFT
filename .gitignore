@@ -78,6 +78,22 @@ examples/trainer/distance/testtest.pdb
 examples/trainer/distance/vs_testtest.pdb
 examples/trainer/distance_vsite/hoge.pdb
 examples/trainer/distance_vsite/wovsite.pdb
+# Written by running the notebooks. The inputs these names could clash with
+# (supercell_bonds.pdb, gaffxml_*.xml, system.xml in other example folders)
+# are already tracked, and tracked files are not affected by these patterns.
+examples/**/dmff_parsed.yaml
+examples/**/vs_*.pdb
+examples/**/*.gro
+examples/**/*.top
+examples/**/*.data
+examples/crafter/crystal/system.xml
+examples/crafter/liquid/crafter.pkl
+examples/crafter/liquid/gaffxml_*.xml
+examples/crafter/liquid/supercell*.pdb
+examples/crafter/liquid/system.xml
+examples/crafter/pf6/gaffxml_*.xml
+examples/crafter/pf6/supercell*.pdb
+examples/crafter/pf6/system.xml
 
 ### Run artefacts, by the name the code gives them ###
 # BaseTrainer.write_checkpoint / _render_loop_xml and friends name these after
