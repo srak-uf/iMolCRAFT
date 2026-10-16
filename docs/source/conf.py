@@ -62,3 +62,6 @@ html_css_files = [
 autodoc_default_options = {
     'members': True,
 }
+
+# Let [text](#heading-slug) links reach headings down to ####.
+myst_heading_anchors = 4

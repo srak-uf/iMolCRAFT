@@ -9,6 +9,33 @@ name, a default that changes results, a new shape for a saved pickle, a
 feature switched off — moves the minor number. A release of nothing but bug
 fixes and backwards-compatible additions moves the patch number.
 
+## [Unreleased]
+
+### Changed
+
+- The user manual (`docs/source`) is brought up to date with 0.4.3: the
+  exporter is called with `fmt=`, the Crafter pages document `charge.params`,
+  the valid `fixed_property` values and the files each step writes, the
+  installation page names the `imc_cpu` / `imc_cuda` environments and the
+  `docs` / `test` extras, the dihedral and thermodynamic trainer pages use the
+  current signatures (`fit(steps, checkpoint_frequency)`, the restart through
+  `from_checkpoint`, `SumTrainer`), and the API reference gains
+  `imolcraft.calculator.gmx` / `md` / `omm` and `imolcraft.provenance`. The
+  overview figure is replaced.
+
+### Fixed
+
+- Examples that no longer ran or silently optimized nothing:
+  `examples/crafter/pf6` (import typo, no density for the default packing
+  mode), `examples/trainer/distance` (`NonbondedForce/charges` and a missing
+  PDB file) and `examples/trainer/distance_vsite` (`VirtualSite/weight`
+  instead of `VirtualSite/vsite_w2_type_2`). The example YAML files drop
+  `charge.basis` / `charge.method`, which the Crafter ignores.
+
+### Removed
+
+- The stray `docs/docs/` apidoc output and the committed Psi4 `docs/timer.dat`.
+
 ## [0.4.3] — 2026-09-24
 
 ### Changed
