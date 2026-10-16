@@ -19,7 +19,7 @@ fixes and backwards-compatible additions moves the patch number.
   installation page names the `imc_cpu` / `imc_cuda` environments and the
   `docs` / `test` extras, the dihedral and thermodynamic trainer pages use the
   current signatures (`fit(steps, checkpoint_frequency)`, the restart through
-  `from_checkpoint`, `SumTrainer`), and the API reference gains
+  `from_checkpoint`), and the API reference gains
   `imolcraft.calculator.gmx` / `md` / `omm` and `imolcraft.provenance`. The
   overview figure is replaced.
 

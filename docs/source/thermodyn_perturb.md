@@ -880,6 +880,8 @@ trainer.setup()
 trainer.fit(100, 2)
 ```
 
+<!-- SumTrainer is not documented yet (niche tool). Uncomment to publish.
+
 ### 3. Combining trainers with `SumTrainer`
 
 `imolcraft.trainer.base.SumTrainer` optimizes one parameter vector against the
@@ -904,6 +906,7 @@ It takes the same `optimizer_algo`, `lr`, `clip`, `param_floors` and
 `SumTrainer.from_checkpoint(path, trainer1, trainer2)` restores it. Its
 `setup()` sets up both sub-trainers, so call it once on the `SumTrainer` (also
 after `from_checkpoint`) and not on the sub-trainers.
+-->
 
 ## Advantages
 
