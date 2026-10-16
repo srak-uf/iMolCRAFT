@@ -1,6 +1,6 @@
 <ForceField>
   <Info>
-    <DateGenerated>2025-04-29</DateGenerated>
+    <DateGenerated>2026-10-16</DateGenerated>
   </Info>
   <AtomTypes>
     <Type element="N" name="n1" class="n1" mass="14.01"/>
@@ -35,4 +35,4 @@
     <Atom class="c3" sigma="0.3397709531243626" epsilon="0.4510352"/>
     <Atom class="hc" sigma="0.2600176998764394" epsilon="0.0870272"/>
   </NonbondedForce>
-<Residues><Residue name="[H][C]([H])([C]#[N])[C]([H])([H])[C]#[N]"><Atom name="N1" type="n1" charge="-0.4452500316695135"/><Atom name="C1" type="c1" charge="0.29526543793839394"/><Atom name="C2" type="c3" charge="-0.044687373402136306"/><Atom name="C3" type="c3" charge="-0.044687373402136306"/><Atom name="C4" type="c1" charge="0.29526543793839394"/><Atom name="N2" type="n1" charge="-0.4452500316695135"/><Atom name="H1" type="hc" charge="0.09733598356662783"/><Atom name="H2" type="hc" charge="0.09733598356662783"/><Atom name="H3" type="hc" charge="0.09733598356662783"/><Atom name="H4" type="hc" charge="0.09733598356662783"/><Bond atomName1="C1" atomName2="N1"/><Bond atomName1="C2" atomName2="C1"/><Bond atomName1="C3" atomName2="C2"/><Bond atomName1="C4" atomName2="C3"/><Bond atomName1="N2" atomName2="C4"/><Bond atomName1="H1" atomName2="C3"/><Bond atomName1="H2" atomName2="C3"/><Bond atomName1="H3" atomName2="C2"/><Bond atomName1="H4" atomName2="C2"/></Residue></Residues></ForceField>
+<Residues><Residue name="[H][C]([H])([C]#[N])[C]([H])([H])[C]#[N]"><Atom name="N1" type="n1" charge="-0.4462834812581946"/><Atom name="N2" type="n1" charge="-0.4462834812581946"/><Atom name="C1" type="c1" charge="0.29643967953713757"/><Atom name="C2" type="c1" charge="0.29643967953713757"/><Atom name="C3" type="c3" charge="-0.04307651363200643"/><Atom name="C4" type="c3" charge="-0.04307651363200643"/><Atom name="H1" type="hc" charge="0.0964601576765317"/><Atom name="H2" type="hc" charge="0.0964601576765317"/><Atom name="H3" type="hc" charge="0.0964601576765317"/><Atom name="H4" type="hc" charge="0.0964601576765317"/><Bond atomName1="C1" atomName2="N1"/><Bond atomName1="C2" atomName2="N2"/><Bond atomName1="C3" atomName2="C1"/><Bond atomName1="C4" atomName2="C3"/><Bond atomName1="C4" atomName2="C2"/><Bond atomName1="H1" atomName2="C3"/><Bond atomName1="H2" atomName2="C4"/><Bond atomName1="H3" atomName2="C3"/><Bond atomName1="H4" atomName2="C4"/></Residue></Residues></ForceField>

@@ -14,6 +14,17 @@ Subpackages
    imolcraft.io
    imolcraft.trainer
 
+Submodules
+----------
+
+imolcraft.provenance module
+---------------------------
+
+.. automodule:: imolcraft.provenance
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 Module contents
 ---------------
 

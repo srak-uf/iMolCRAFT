@@ -10,14 +10,13 @@ iMolCRAFT documentation
 --------
 Overview
 --------
-**iMolCRAFT** (**I**\ onic **Mol**\ ecular **CR**\ ystal **A**\ utomatic **F**\ orcefield **T**\ ool) is a Python package for classical molecular dynamics of organic molecules.
+**iMolCRAFT** (**I**\ onic **Mol**\ ecular **CR**\ ystal **A**\ utomatic **F**\ orce-field **T**\ ool) is a Python package for automated force-field development, specialized in liquid electrolytes and molecular crystal electrolytes. It is built on `DMFF <https://github.com/deepmodeling/DMFF>`_ and JAX, OpenMM, GROMACS and Psi4.
 
-* Extracting molecule structures from crystal structures
-* Assignment of force field parameters
-* Point charge calculation
-* Creating supercells and liquid configurations
-* Optimization of force field parameters by static calculation and thermodynamic properties (RDF, density, etc.)
-* Compatability with GROMACS and OpenMM (LAMMPS export is experimental)
+* **Crafter**: extracts molecules from crystal structures or packs liquid boxes from PDB files, computes RESP charges and assigns GAFF parameters
+* **Exporter**: writes GROMACS (and, experimentally, LAMMPS) input files
+* **Calculator**: runs QM scans (Psi4 / Gaussian 16) and MD with OpenMM or GROMACS through one interface (``MDCalculator``)
+* **Trainer**: optimizes force-field parameters by automatic differentiation against QM energy profiles (dihedral, distance) and against thermodynamic properties (density, cell parameters, RDF, ADF, ...) through MBAR reweighting, with post-hoc epoch selection from the validation history
+* **Analyzer**: computes RDF, ADF, density, cell parameters and diffusion coefficients from MD trajectories
 
 .. image:: _static/overview.png
 

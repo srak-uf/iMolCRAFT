@@ -49,6 +49,9 @@ targets:
             gt: rdf_Li_Li.txt
 
 validation:
+    # The dself gt values below are placeholders; replace them with measured
+    # self-diffusion coefficients (cm^2/s) before reading the deviations or
+    # running imolcraft.trainer.selection on this run.
     dself_Li:
         property: dself_cm2s
         select: element Li

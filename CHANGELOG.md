@@ -9,6 +9,43 @@ name, a default that changes results, a new shape for a saved pickle, a
 feature switched off — moves the minor number. A release of nothing but bug
 fixes and backwards-compatible additions moves the patch number.
 
+## [Unreleased]
+
+### Changed
+
+- The user manual (`docs/source`) is brought up to date with 0.4.3: the
+  exporter is called with `fmt=`, the Crafter pages document `charge.params`,
+  the valid `fixed_property` values and the files each step writes, the
+  installation page names the `imc_cpu` / `imc_cuda` environments and the
+  `docs` / `test` extras, the dihedral and thermodynamic trainer pages use the
+  current signatures (`fit(steps, checkpoint_frequency)`, the restart through
+  `from_checkpoint`), and the API reference gains
+  `imolcraft.calculator.gmx` / `md` / `omm` and `imolcraft.provenance`. The
+  overview figure is replaced.
+
+### Fixed
+
+- Examples that no longer ran or silently optimized nothing:
+  `examples/crafter/pf6` (import typo, no density for the default packing
+  mode), `examples/trainer/distance` (`NonbondedForce/charges` and a missing
+  PDB file) and `examples/trainer/distance_vsite` (`VirtualSite/weight`
+  instead of `VirtualSite/vsite_w2_type_2`). The example YAML files drop
+  `charge.basis` / `charge.method`, which the Crafter ignores.
+- `examples/trainer/2rdf_1adf_density/loss_jsdivergence` fitted with the
+  Wright factor; it now uses `losstype_distribfn="jsdivergence"`.
+- `examples/trainer/2rdf_1adf_density_vsite/dmff.yml` sampled a 4320-atom box
+  (`merged_supercell_bonds.pdb`) while the trainer read the 960-atom
+  `supercell_bonds.pdb`, which stopped the run at the first trajectory load.
+- The examples were re-run against 0.4.3 and are committed with their outputs.
+  The thermodynamic trainers are shortened to about 50 epochs (the original
+  counts are noted in the cells). `examples/crafter/crystal` and
+  `examples/exporter/system.xml` are regenerated; the old files described a
+  4x4x4 supercell that matched neither the YAML nor the PDB next to them.
+
+### Removed
+
+- The stray `docs/docs/` apidoc output and the committed Psi4 `docs/timer.dat`.
+
 ## [0.4.3] — 2026-09-24
 
 ### Changed

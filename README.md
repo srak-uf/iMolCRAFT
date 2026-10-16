@@ -28,12 +28,13 @@ conda activate imc_cpu
 pip install .
 
 # make document (Optional)
-conda install -c conda-forge sphinx myst-parser sphinx_rtd_theme myst-nb
+pip install '.[docs]'
 cd docs
 make html
 
 # test
-conda install -c conda-forge pytest
+pip install '.[test]'
+pytest tests/test_io -m "not g16"
 ```
 You can optimize force field parameters by using [DMFF](https://github.com/srak-uf/DMFF). This DMFF repository is the modified version.    
-The sample codes for the optimization are located in [the example/opt](https://github.com/srak-uf/imolcryff/tree/main/examples/opt) directory.
+Sample notebooks are located in [the examples](https://github.com/srak-uf/iMolCRAFT/tree/main/examples) directory.

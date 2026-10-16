@@ -1,11 +1,11 @@
 charge:
-  basis: 6-31g(d)
-  method: hf
-  software: psi4
   type: resp
+  software: psi4
+  # params:          # optional RESP level of theory (default hf / 6-31G*)
+  #   method: hf
+  #   basis: 6-31g(d)
 forcefield:
   charge_scale_ion: 0.8
-  charge_scale_neutral: 1.0
   fftype: gaff-2.11
   iontype: amber/ions/ionsff99_tip3p.xml
 geoopt:
