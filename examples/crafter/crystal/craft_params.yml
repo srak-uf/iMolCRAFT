@@ -4,14 +4,14 @@ geoopt:
   software: psi4
 charge:
   type: resp
-  basis: 6-31g(d)
-  method: hf
   software: psi4
+  # params:          # optional RESP level of theory (default hf / 6-31G*)
+  #   method: hf
+  #   basis: 6-31g(d)
 forcefield:
   fftype: gaff-2.11
   iontype: amber/ions/ionsff99_tip3p.xml
   charge_scale_ion: 0.8
-  charge_scale_neutral: 1.0
 structure:
   type: crystal
   cif: ordered_Li(FSA)(C2)2_233K.cif
