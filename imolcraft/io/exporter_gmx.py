@@ -10,19 +10,6 @@ from parmed.openmm import load_topology
 #: GROMACS constructions (virtual_sites2/3, funct 1) assume.
 _WEIGHT_SUM_TOL = 1e-6
 
-#: Columns holding atom indices in each section of a [ moleculetype ] that
-#: parmed writes (None: every column of the line is an index).
-_INDEX_COLUMNS = {
-    "atoms": 1,
-    "bonds": 2,
-    "pairs": 2,
-    "angles": 3,
-    "dihedrals": 4,
-    "cmap": 5,
-    "settles": 1,
-    "exclusions": None,
-}
-
 
 def exporter_gmx(pdb, system, filename):
     """
