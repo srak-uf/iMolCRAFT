@@ -736,6 +736,73 @@ def test_export_of_several_molecules_shares_one_moleculetype(tmp_path):
     assert int(open(f"{stem}.gro").read().splitlines()[1]) == 36
 
 
+def _mixed_build_system(calc):
+    """
+    ``calc._build_system`` for SN (charged average2 sites) and TIP5P water
+    (outOfPlane sites) interleaved as SN, water, SN, water, with the
+    settings of ``calc``: two molecule types whose copies alternate.
+    """
+    import numpy as np
+    import openmm
+    from openmm import app, unit
+
+    def build(ffxml):
+        forcefield = app.ForceField(VSITE_CHARGED["average2"], "tip5p.xml")
+        sn = app.PDBFile(PDB)
+        xyz = np.array(sn.getPositions().value_in_unit(unit.nanometer))
+        water = app.Topology()
+        residue = water.addResidue("HOH", water.addChain())
+        oxygen = water.addAtom("O", app.element.oxygen, residue)
+        for name in ("H1", "H2"):
+            water.addBond(oxygen, water.addAtom(name, app.element.hydrogen, residue))
+        wxyz = np.array([[0.0, 0.0, 0.0], [0.09572, 0.0, 0.0], [-0.02399, 0.09267, 0.0]])
+        modeller = app.Modeller(sn.topology, sn.getPositions())
+        modeller.add(water, (wxyz + [2.0, 2.0, 2.0]) * unit.nanometer)
+        modeller.add(sn.topology, (xyz + [1.5, 0.3, 0.2]) * unit.nanometer)
+        modeller.add(water, (wxyz + [3.0, 1.0, 2.5]) * unit.nanometer)
+        modeller.topology.setPeriodicBoxVectors(sn.topology.getPeriodicBoxVectors())
+        modeller.addExtraParticles(forcefield)
+        system = forcefield.createSystem(
+            modeller.topology,
+            nonbondedMethod=_mdcommon.resolve_nonbondedmethod(calc.nonbondedmethod),
+            nonbondedCutoff=calc.rcut_nm * unit.nanometer,
+            rigidWater=False,
+        )
+        for force in system.getForces():
+            if isinstance(force, openmm.NonbondedForce):
+                force.setUseDispersionCorrection(calc.dispcorr)
+        return modeller.topology, modeller.getPositions(), system
+
+    return build
+
+
+def test_export_of_interleaved_molecule_types_with_out_of_plane_sites(tmp_path, monkeypatch):
+    """SN and TIP5P water alternate: each type keeps its own sites, outOfPlane is funct 4"""
+    calc = GMXCalculator(PDB)
+    monkeypatch.setattr(calc, "_build_system", _mixed_build_system(calc))
+    top, gro = calc._export_inputs(VSITE_CHARGED["average2"], str(tmp_path))
+    # 2 x (10 atoms + 2 sites) + 2 x (3 atoms + 2 sites)
+    assert int(open(gro).read().splitlines()[1]) == 34
+    text = open(top).read()
+
+    assert [r[0] for r in _top_section(text, "molecules")] == ["M0", "HOH", "M0", "HOH"]
+    assert text.count("[ moleculetype ]") == 2
+    sites2 = _top_section(text, "virtual_sites2")
+    assert [r[:4] for r in sites2] == [["11", "1", "2", "1"], ["12", "6", "5", "1"]]
+    # x = x_O + a r_OH1 + b r_OH2 + c (r_OH1 x r_OH2), the weights of tip5p.xml
+    sites3 = _top_section(text, "virtual_sites3")
+    assert [r[:5] for r in sites3] == [["4", "1", "2", "3", "4"], ["5", "1", "2", "3", "4"]]
+    assert [float(x) for x in sites3[0][5:]] == pytest.approx([-0.34490826, -0.34490826, -6.4437903])
+    assert [float(x) for x in sites3[1][5:]] == pytest.approx([-0.34490826, -0.34490826, 6.4437903])
+
+    # the water sites exclude the whole molecule, each other included
+    exclusions = [[int(x) for x in r] for r in _top_section(text, "exclusions")]
+    assert [4, 1, 2, 3, 5] in exclusions and [5, 1, 2, 3, 4] in exclusions
+    # the SN sites are VS1, the water sites a type of their own
+    atoms = _top_section(text, "atoms")
+    assert {r[1] for r in atoms if r[4].startswith("M")} == {"VS1", "VS2"}
+
+
 def test_export_refuses_local_coordinates_sites(tmp_path):
     import openmm
     from openmm import app
@@ -990,6 +1057,31 @@ def test_single_point_energy_with_virtual_sites_matches_openmm(kind, tmp_path):
         PDB, nonbondedmethod="PME", dispcorr=False, useHbondConstraint=False,
         rcut_nm=1.2, md_log="none",
     )
+    gmx_terms, gro = _gromacs_energies(calc, ffxml, str(tmp_path))
+    omm = _openmm_energies(calc, ffxml, gro)
+    omm_lj = _openmm_energies(calc, ffxml, gro, zero_charges=True)
+
+    gmx_lj = gmx_terms["LJ-14"] + gmx_terms["LJ (SR)"]
+    assert gmx_lj == pytest.approx(omm_lj["NonbondedForce"] + omm_lj["recip"], abs=2e-3)
+    gmx_coulomb = gmx_terms["Coulomb-14"] + gmx_terms["Coulomb (SR)"] + gmx_terms["Coul. recip."]
+    assert gmx_coulomb == pytest.approx(omm["total"] - omm_lj["total"], rel=1e-3)
+    assert gmx_terms["Potential"] == pytest.approx(omm["total"], abs=1e-2)
+
+
+@pytest.mark.gmx
+@pytest.mark.skipif(shutil.which("gmx") is None, reason="gmx binary not on PATH")
+def test_single_point_energy_of_interleaved_molecule_types_matches_openmm(tmp_path, monkeypatch):
+    """
+    SN (average2) and TIP5P water (outOfPlane) alternating in one box: a
+    wrong sign or unit of the funct 4 cross term, or a molecule offset that
+    puts a site in the wrong copy, changes the energy.
+    """
+    calc = GMXCalculator(
+        PDB, nonbondedmethod="PME", dispcorr=False, useHbondConstraint=False,
+        rcut_nm=1.2, md_log="none",
+    )
+    monkeypatch.setattr(calc, "_build_system", _mixed_build_system(calc))
+    ffxml = VSITE_CHARGED["average2"]
     gmx_terms, gro = _gromacs_energies(calc, ffxml, str(tmp_path))
     omm = _openmm_energies(calc, ffxml, gro)
     omm_lj = _openmm_energies(calc, ffxml, gro, zero_charges=True)

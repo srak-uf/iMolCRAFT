@@ -26,8 +26,9 @@ fixes and backwards-compatible additions moves the patch number.
   not derive exclusions for virtual sites as OpenMM does. Averaging weights
   must sum to one, as the trainer's weight update keeps them.
   `LocalCoordinatesSite` (`localCoords`) is refused with a `ValueError`.
-  A single-point energy test with charged sites (`gmx` marker) checks the
-  result against OpenMM.
+  Single-point energy tests with charged sites (`gmx` marker) check the
+  result against OpenMM, including SN (`average2`) and TIP5P water
+  (`outOfPlane`) interleaved in one box.
 
 ### Changed
 
@@ -64,8 +65,8 @@ fixes and backwards-compatible additions moves the patch number.
   `examples/trainer/distance_vsite/SN.xml` and `tests/data/vsite_average2.xml`
   was built from `N2` and `C2`, the CH2 carbon at the other end of the
   molecule, rather than from `N2` and its own nitrile carbon `C4`. The site
-  therefore sat off the C≡N axis (0.68 Å from N at 23° with weight 1.1975)
-  while `M1` sat on it (0.23 Å, 0°). `M2` now uses `atomName2="C4"`, so both
+  therefore sat off the C≡N axis (0.70 Å from N at 23° with weight 1.2 in
+  `tests/data/vsite_average2.xml`) while `M1` sat on it (0.23 Å, 0°). `M2` now uses `atomName2="C4"`, so both
   sites extend their C≡N bond. Force fields optimized from these files
   carry the asymmetric `M2` and should be re-optimized.
 
