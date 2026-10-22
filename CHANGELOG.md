@@ -11,6 +11,36 @@ fixes and backwards-compatible additions moves the patch number.
 
 ## [Unreleased]
 
+This release breaks compatibility: an import is removed and the LAMMPS data
+file changes, so it moves the minor number.
+
+### Changed
+
+- The LAMMPS exporter (`exporter(..., fmt="lmp")`) writes the data file
+  straight from the OpenMM System instead of going through OpenFF Interchange.
+  Terms with equal parameters now share one atom / bond / angle / dihedral /
+  improper type, where every term used to get a type of its own, and atom
+  types are also split by molecular species. Molecule IDs are bonded
+  fragments. The title line names iMolCRAFT and its version, a rectangular box
+  has no `xy xz yz` line, and without a CRYST1 record the default box of the
+  system is written instead of a 100 Å cube. The input script is expected to
+  use `units real`, `atom_style full`, `bond_style harmonic`,
+  `angle_style harmonic`, `dihedral_style fourier` and `improper_style cvff`.
+- The LAMMPS exporter refuses systems the data file cannot represent with a
+  `NotImplementedError`: forces other than NonbondedForce, HarmonicBondForce,
+  HarmonicAngleForce, PeriodicTorsionForce and CMMotionRemover, parameter
+  offsets, virtual sites, constraints without a bond term, and nonbonded
+  exceptions between atoms more than three bonds apart.
+- The user manual (`docs/source`) is brought up to date with 0.4.3: the
+  exporter is called with `fmt=`, the Crafter pages document `charge.params`,
+  the valid `fixed_property` values and the files each step writes, the
+  installation page names the `imc_cpu` / `imc_cuda` environments and the
+  `docs` / `test` extras, the dihedral and thermodynamic trainer pages use the
+  current signatures (`fit(steps, checkpoint_frequency)`, the restart through
+  `from_checkpoint`), and the API reference gains
+  `imolcraft.calculator.gmx` / `md` / `omm` and `imolcraft.provenance`. The
+  overview figure is replaced.
+
 ### Added
 
 - **Virtual sites under GROMACS.** The GROMACS exporter
@@ -29,18 +59,8 @@ fixes and backwards-compatible additions moves the patch number.
   Single-point energy tests with charged sites (`gmx` marker) check the
   result against OpenMM, including SN (`average2`) and TIP5P water
   (`outOfPlane`) interleaved in one box.
-
-### Changed
-
-- The user manual (`docs/source`) is brought up to date with 0.4.3: the
-  exporter is called with `fmt=`, the Crafter pages document `charge.params`,
-  the valid `fixed_property` values and the files each step writes, the
-  installation page names the `imc_cpu` / `imc_cuda` environments and the
-  `docs` / `test` extras, the dihedral and thermodynamic trainer pages use the
-  current signatures (`fit(steps, checkpoint_frequency)`, the restart through
-  `from_checkpoint`), and the API reference gains
-  `imolcraft.calculator.gmx` / `md` / `omm` and `imolcraft.provenance`. The
-  overview figure is replaced.
+- `imolcraft.io.exporter_lmp.write_lammps(topology, system, positions,
+  filename)` writes a data file from in-memory OpenMM objects.
 
 ### Fixed
 
@@ -76,6 +96,7 @@ fixes and backwards-compatible additions moves the patch number.
 - The `ValueError` that refused a force field with virtual sites in
   `GMXCalculator.run` and, at construction, in a `ThermodynamicTrainer`
   replica with `software: gromacs`.
+- `imolcraft.io.exporter_lmp.to_lammps_non_rectangular`. Use `write_lammps`.
 
 ## [0.4.3] — 2026-09-24
 
