@@ -677,8 +677,10 @@ does not go unnoticed.
 
 The trainer's `device` is the OpenMM platform name for `openmm`; for
 `gromacs` anything but `CPU` asks `mdrun` for the GPU (`-nb gpu`). A force
-field that places virtual sites cannot be sampled with GROMACS yet (the
-exporter does not translate them), and the trainer says so when it is built.
+field that places virtual sites (`average2`, `average3`, `outOfPlane`) is
+sampled with GROMACS as well: the exporter writes them as
+`[ virtual_sites2 ]` / `[ virtual_sites3 ]` with OpenMM's exclusions.
+`localCoords` sites are refused when the run exports the topology.
 
 #### Restarting from a Checkpoint
 

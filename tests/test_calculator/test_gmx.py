@@ -10,9 +10,16 @@ from imolcraft.calculator import GMXCalculator, MDCalculator, _mdcommon, gmx, gm
 DATA = os.path.join(os.path.dirname(__file__), "..", "data")
 PDB = os.path.join(DATA, "supercell_bonds.pdb")
 #: vsite_average2.xml with its two virtual sites stripped: the same molecule
-#: without extra particles, which the GROMACS exporter can write.
+#: without extra particles.
 FFXML = os.path.join(DATA, "supercell_bonds_novsite.xml")
 VSITE_FFXML = os.path.join(DATA, "vsite_average2.xml")
+#: The same molecule with most of each nitrogen's charge moved onto its
+#: virtual site and a Lennard-Jones site there, so that a wrong exclusion or
+#: weight changes the energy (the sites of VSITE_FFXML carry nothing).
+VSITE_CHARGED = {
+    "average2": os.path.join(DATA, "vsite_average2_charged.xml"),
+    "average3": os.path.join(DATA, "vsite_average3_charged.xml"),
+}
 
 TEMPLATES = ("min", "nvt", "isonpt", "anisonpt_xyz", "trinpt_xyz_xy_yz_zx")
 
@@ -642,16 +649,180 @@ def test_export_inputs_writes_top_and_gro_from_an_ffxml(tmp_path):
     assert (tmp_path / "system.xml").exists() and (tmp_path / "system.pdb").exists()
 
 
-def test_run_refuses_a_force_field_with_virtual_sites(tmp_path, monkeypatch):
-    """Virtual sites are not translated to [ virtual_sites2 ], so a vsite ffxml is refused before any GROMACS call"""
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(gmx.shutil, "which", lambda name: "/fake/gmx")
-    calls = []
-    monkeypatch.setattr(gmx, "_run_command", lambda *a, **k: calls.append(a))
-    calc = GMXCalculator(PDB, md_log="none")
-    with pytest.raises(ValueError, match="virtual sites are not supported yet"):
-        calc.run(VSITE_FFXML, "s_0.xtc")
-    assert calls == []
+def _top_section(top_text, name):
+    """Non-comment lines of every ``[ name ]`` section of a .top, as int lists"""
+    rows, inside = [], False
+    for line in top_text.splitlines():
+        stripped = line.split(";", 1)[0].strip()
+        if stripped.startswith("["):
+            inside = stripped.strip("[] ") == name
+            continue
+        if inside and stripped:
+            rows.append(stripped.split())
+    return rows
+
+
+def test_export_inputs_writes_virtual_sites(tmp_path):
+    """average2 sites: massless particles, [ virtual_sites2 ], OpenMM's exclusions"""
+    calc = GMXCalculator(PDB)
+    top, gro = calc._export_inputs(VSITE_CHARGED["average2"], str(tmp_path))
+    # the .gro carries the 10 atoms and the 2 sites
+    assert int(open(gro).read().splitlines()[1]) == 12
+    text = open(top).read()
+
+    atoms = {int(r[0]): r for r in _top_section(text, "atoms")}
+    assert len(atoms) == 12
+    assert float(atoms[11][7]) == 0.0 and float(atoms[12][7]) == 0.0
+    assert atoms[11][1] == atoms[12][1] == "VS1"
+    assert float(atoms[11][6]) == pytest.approx(-0.4)
+
+    # x = (1 - a) x_i + a x_j with the fixture's weights (1.2, -0.2)
+    sites = _top_section(text, "virtual_sites2")
+    assert [r[:4] for r in sites] == [["11", "1", "2", "1"], ["12", "6", "5", "1"]]
+    assert all(float(r[4]) == pytest.approx(-0.2) for r in sites)
+    # each site extends a bond: N and its own nitrile carbon, at both ends
+    bonded = {tuple(sorted(map(int, r[:2]))) for r in _top_section(text, "bonds")}
+    assert all(tuple(sorted((int(r[1]), int(r[2])))) in bonded for r in sites)
+
+    # a site inherits the exceptions of its first particle: the particle
+    # itself, its 1-2 and 1-3 partners (excluded) and 1-4 partners (pairs)
+    exclusions = {int(r[0]): {int(x) for x in r[1:]} for r in _top_section(text, "exclusions")}
+    assert exclusions == {11: {1, 2, 3, 4, 9, 10}, 12: {3, 4, 5, 6, 7, 8}}
+    pairs = {tuple(sorted(map(int, r[:2]))) for r in _top_section(text, "pairs")}
+    assert {(4, 11), (9, 11), (10, 11), (3, 12), (7, 12), (8, 12)} <= pairs
+
+    # the tie that keeps a site in its molecule is a connection, no force
+    bonds = _top_section(text, "bonds")
+    assert ["11", "1", "5"] in bonds and ["12", "6", "5"] in bonds
+
+
+def test_export_inputs_writes_average3_sites(tmp_path):
+    calc = GMXCalculator(PDB)
+    top, _ = calc._export_inputs(VSITE_CHARGED["average3"], str(tmp_path))
+    sites = _top_section(open(top).read(), "virtual_sites3")
+    assert [r[:5] for r in sites] == [["11", "1", "2", "3", "1"]]
+    assert [float(x) for x in sites[0][5:]] == pytest.approx([0.106676721] * 2)
+
+
+def test_export_of_several_molecules_shares_one_moleculetype(tmp_path):
+    """Three copies of the molecule: one [ moleculetype ] with its sites, 3 molecules"""
+    import numpy as np
+    from openmm import app, unit
+
+    from imolcraft.io import exporter
+
+    pdb = app.PDBFile(PDB)
+    forcefield = app.ForceField(VSITE_CHARGED["average2"])
+    xyz = np.array(pdb.getPositions().value_in_unit(unit.nanometer))
+    modeller = app.Modeller(pdb.topology, pdb.getPositions())
+    for shift in ((1.5, 0.3, 0.2), (0.2, 1.6, 1.4)):
+        modeller.add(pdb.topology, (xyz + np.array(shift)) * unit.nanometer)
+    modeller.addExtraParticles(forcefield)
+    system = forcefield.createSystem(modeller.topology, nonbondedMethod=app.PME)
+    pdbfile, system_xml = str(tmp_path / "s.pdb"), str(tmp_path / "s.xml")
+    with open(pdbfile, "w") as handle:
+        app.PDBFile.writeFile(modeller.topology, modeller.getPositions(), handle)
+    import openmm
+
+    with open(system_xml, "w") as handle:
+        handle.write(openmm.XmlSerializer.serialize(system))
+    stem = str(tmp_path / "s")
+    exporter(pdbfile, system_xml, stem, "gmx")
+
+    text = open(f"{stem}.top").read()
+    assert text.count("[ moleculetype ]") == 1
+    assert _top_section(text, "molecules")[-1][1] == "3"
+    assert len(_top_section(text, "virtual_sites2")) == 2
+    assert int(open(f"{stem}.gro").read().splitlines()[1]) == 36
+
+
+def _mixed_build_system(calc):
+    """
+    ``calc._build_system`` for SN (charged average2 sites) and TIP5P water
+    (outOfPlane sites) interleaved as SN, water, SN, water, with the
+    settings of ``calc``: two molecule types whose copies alternate.
+    """
+    import numpy as np
+    import openmm
+    from openmm import app, unit
+
+    def build(ffxml):
+        forcefield = app.ForceField(VSITE_CHARGED["average2"], "tip5p.xml")
+        sn = app.PDBFile(PDB)
+        xyz = np.array(sn.getPositions().value_in_unit(unit.nanometer))
+        water = app.Topology()
+        residue = water.addResidue("HOH", water.addChain())
+        oxygen = water.addAtom("O", app.element.oxygen, residue)
+        for name in ("H1", "H2"):
+            water.addBond(oxygen, water.addAtom(name, app.element.hydrogen, residue))
+        wxyz = np.array([[0.0, 0.0, 0.0], [0.09572, 0.0, 0.0], [-0.02399, 0.09267, 0.0]])
+        modeller = app.Modeller(sn.topology, sn.getPositions())
+        modeller.add(water, (wxyz + [2.0, 2.0, 2.0]) * unit.nanometer)
+        modeller.add(sn.topology, (xyz + [1.5, 0.3, 0.2]) * unit.nanometer)
+        modeller.add(water, (wxyz + [3.0, 1.0, 2.5]) * unit.nanometer)
+        modeller.topology.setPeriodicBoxVectors(sn.topology.getPeriodicBoxVectors())
+        modeller.addExtraParticles(forcefield)
+        system = forcefield.createSystem(
+            modeller.topology,
+            nonbondedMethod=_mdcommon.resolve_nonbondedmethod(calc.nonbondedmethod),
+            nonbondedCutoff=calc.rcut_nm * unit.nanometer,
+            rigidWater=False,
+        )
+        for force in system.getForces():
+            if isinstance(force, openmm.NonbondedForce):
+                force.setUseDispersionCorrection(calc.dispcorr)
+        return modeller.topology, modeller.getPositions(), system
+
+    return build
+
+
+def test_export_of_interleaved_molecule_types_with_out_of_plane_sites(tmp_path, monkeypatch):
+    """SN and TIP5P water alternate: each type keeps its own sites, outOfPlane is funct 4"""
+    calc = GMXCalculator(PDB)
+    monkeypatch.setattr(calc, "_build_system", _mixed_build_system(calc))
+    top, gro = calc._export_inputs(VSITE_CHARGED["average2"], str(tmp_path))
+    # 2 x (10 atoms + 2 sites) + 2 x (3 atoms + 2 sites)
+    assert int(open(gro).read().splitlines()[1]) == 34
+    text = open(top).read()
+
+    assert [r[0] for r in _top_section(text, "molecules")] == ["M0", "HOH", "M0", "HOH"]
+    assert text.count("[ moleculetype ]") == 2
+    sites2 = _top_section(text, "virtual_sites2")
+    assert [r[:4] for r in sites2] == [["11", "1", "2", "1"], ["12", "6", "5", "1"]]
+    # x = x_O + a r_OH1 + b r_OH2 + c (r_OH1 x r_OH2), the weights of tip5p.xml
+    sites3 = _top_section(text, "virtual_sites3")
+    assert [r[:5] for r in sites3] == [["4", "1", "2", "3", "4"], ["5", "1", "2", "3", "4"]]
+    assert [float(x) for x in sites3[0][5:]] == pytest.approx([-0.34490826, -0.34490826, -6.4437903])
+    assert [float(x) for x in sites3[1][5:]] == pytest.approx([-0.34490826, -0.34490826, 6.4437903])
+
+    # the water sites exclude the whole molecule, each other included
+    exclusions = [[int(x) for x in r] for r in _top_section(text, "exclusions")]
+    assert [4, 1, 2, 3, 5] in exclusions and [5, 1, 2, 3, 4] in exclusions
+    # the SN sites are VS1, the water sites a type of their own
+    atoms = _top_section(text, "atoms")
+    assert {r[1] for r in atoms if r[4].startswith("M")} == {"VS1", "VS2"}
+
+
+def test_export_refuses_local_coordinates_sites(tmp_path):
+    import openmm
+    from openmm import app
+
+    from imolcraft.io import exporter
+
+    pdb = app.PDBFile(PDB)
+    modeller = app.Modeller(pdb.topology, pdb.getPositions())
+    modeller.addExtraParticles(app.ForceField(VSITE_FFXML))
+    system = app.ForceField(VSITE_FFXML).createSystem(modeller.topology)
+    system.setVirtualSite(10, openmm.LocalCoordinatesSite(
+        0, 1, 2, (1, 0, 0), (-1, 1, 0), (-1, 0, 1), (0.1, 0, 0)
+    ))
+    pdbfile, system_xml = str(tmp_path / "s.pdb"), str(tmp_path / "s.xml")
+    with open(pdbfile, "w") as handle:
+        app.PDBFile.writeFile(modeller.topology, modeller.getPositions(), handle)
+    with open(system_xml, "w") as handle:
+        handle.write(openmm.XmlSerializer.serialize(system))
+    with pytest.raises(ValueError, match="LocalCoordinatesSite"):
+        exporter(pdbfile, system_xml, str(tmp_path / "s"), "gmx")
 
 
 # -- B. smoke test with the real gmx -----------------------------------------
@@ -753,6 +924,9 @@ def _openmm_energies(calc, ffxml, gro, zero_charges=False):
         openmm.Platform.getPlatformByName("Reference"),
     )
     context.setPositions(positions)
+    # GROMACS constructs the virtual sites from their particles; do the same
+    # rather than use the 3-decimal site positions of the .gro.
+    context.computeVirtualSites()
 
     def energy(**kwargs):
         return context.getState(getEnergy=True, **kwargs).getPotentialEnergy(
@@ -866,3 +1040,72 @@ def test_single_point_energy_matches_openmm(method, dispcorr, tmp_path):
     assert gmx_coulomb == pytest.approx(omm_coulomb, rel=1e-3)
 
     assert gmx_terms["Potential"] == pytest.approx(omm["total"], abs=1e-2)
+
+
+@pytest.mark.gmx
+@pytest.mark.skipif(shutil.which("gmx") is None, reason="gmx binary not on PATH")
+@pytest.mark.parametrize("kind", ["average2", "average3"])
+def test_single_point_energy_with_virtual_sites_matches_openmm(kind, tmp_path):
+    """
+    OpenMM and GROMACS agree on a force field whose virtual sites carry
+    charge and Lennard-Jones: the site positions, their exclusions and their
+    1-4 pairs all enter the energy, so a wrong weight or a missing exclusion
+    shows up here (an unexcluded site sits ~0.03 nm from its nitrogen).
+    """
+    ffxml = VSITE_CHARGED[kind]
+    calc = GMXCalculator(
+        PDB, nonbondedmethod="PME", dispcorr=False, useHbondConstraint=False,
+        rcut_nm=1.2, md_log="none",
+    )
+    gmx_terms, gro = _gromacs_energies(calc, ffxml, str(tmp_path))
+    omm = _openmm_energies(calc, ffxml, gro)
+    omm_lj = _openmm_energies(calc, ffxml, gro, zero_charges=True)
+
+    gmx_lj = gmx_terms["LJ-14"] + gmx_terms["LJ (SR)"]
+    assert gmx_lj == pytest.approx(omm_lj["NonbondedForce"] + omm_lj["recip"], abs=2e-3)
+    gmx_coulomb = gmx_terms["Coulomb-14"] + gmx_terms["Coulomb (SR)"] + gmx_terms["Coul. recip."]
+    assert gmx_coulomb == pytest.approx(omm["total"] - omm_lj["total"], rel=1e-3)
+    assert gmx_terms["Potential"] == pytest.approx(omm["total"], abs=1e-2)
+
+
+@pytest.mark.gmx
+@pytest.mark.skipif(shutil.which("gmx") is None, reason="gmx binary not on PATH")
+def test_single_point_energy_of_interleaved_molecule_types_matches_openmm(tmp_path, monkeypatch):
+    """
+    SN (average2) and TIP5P water (outOfPlane) alternating in one box: a
+    wrong sign or unit of the funct 4 cross term, or a molecule offset that
+    puts a site in the wrong copy, changes the energy.
+    """
+    calc = GMXCalculator(
+        PDB, nonbondedmethod="PME", dispcorr=False, useHbondConstraint=False,
+        rcut_nm=1.2, md_log="none",
+    )
+    monkeypatch.setattr(calc, "_build_system", _mixed_build_system(calc))
+    ffxml = VSITE_CHARGED["average2"]
+    gmx_terms, gro = _gromacs_energies(calc, ffxml, str(tmp_path))
+    omm = _openmm_energies(calc, ffxml, gro)
+    omm_lj = _openmm_energies(calc, ffxml, gro, zero_charges=True)
+
+    gmx_lj = gmx_terms["LJ-14"] + gmx_terms["LJ (SR)"]
+    assert gmx_lj == pytest.approx(omm_lj["NonbondedForce"] + omm_lj["recip"], abs=2e-3)
+    gmx_coulomb = gmx_terms["Coulomb-14"] + gmx_terms["Coulomb (SR)"] + gmx_terms["Coul. recip."]
+    assert gmx_coulomb == pytest.approx(omm["total"] - omm_lj["total"], rel=1e-3)
+    assert gmx_terms["Potential"] == pytest.approx(omm["total"], abs=1e-2)
+
+
+@pytest.mark.gmx
+@pytest.mark.skipif(shutil.which("gmx") is None, reason="gmx binary not on PATH")
+def test_smoke_run_with_virtual_sites(tmp_path, monkeypatch):
+    """A vsite force field runs through every stage; the .xtc holds the sites"""
+    mdtraj = pytest.importorskip("mdtraj")
+    monkeypatch.chdir(tmp_path)
+    calc = GMXCalculator(
+        PDB, dt_fs=1.0, min_steps=50, relax_steps=100, prod_steps=100,
+        nstxout=20, md_log="none",
+    )
+    xtc = calc.run(VSITE_CHARGED["average2"], "vsite_0.xtc")
+    traj = mdtraj.load(xtc, top=os.path.join("gmxfiles", "vsite_0_prod.gro"))
+    assert traj.n_atoms == 12
+    # the sites stay where their particles put them: M1 = 1.2 N1 - 0.2 C1
+    xyz = traj.xyz[-1]
+    assert xyz[10] == pytest.approx(1.2 * xyz[0] - 0.2 * xyz[1], abs=2e-3)
