@@ -9,6 +9,38 @@ name, a default that changes results, a new shape for a saved pickle, a
 feature switched off — moves the minor number. A release of nothing but bug
 fixes and backwards-compatible additions moves the patch number.
 
+## [Unreleased]
+
+This release breaks compatibility: an import is removed and the LAMMPS data
+file changes, so it moves the minor number.
+
+### Changed
+
+- The LAMMPS exporter (`exporter(..., fmt="lmp")`) writes the data file
+  straight from the OpenMM System instead of going through OpenFF Interchange.
+  Terms with equal parameters now share one atom / bond / angle / dihedral /
+  improper type, where every term used to get a type of its own, and atom
+  types are also split by molecular species. Molecule IDs are bonded
+  fragments. The title line names iMolCRAFT and its version, a rectangular box
+  has no `xy xz yz` line, and without a CRYST1 record the default box of the
+  system is written instead of a 100 Å cube. The input script is expected to
+  use `units real`, `atom_style full`, `bond_style harmonic`,
+  `angle_style harmonic`, `dihedral_style fourier` and `improper_style cvff`.
+- The LAMMPS exporter refuses systems the data file cannot represent with a
+  `NotImplementedError`: forces other than NonbondedForce, HarmonicBondForce,
+  HarmonicAngleForce, PeriodicTorsionForce and CMMotionRemover, parameter
+  offsets, virtual sites, constraints without a bond term, and nonbonded
+  exceptions between atoms more than three bonds apart.
+
+### Added
+
+- `imolcraft.io.exporter_lmp.write_lammps(topology, system, positions,
+  filename)` writes a data file from in-memory OpenMM objects.
+
+### Removed
+
+- `imolcraft.io.exporter_lmp.to_lammps_non_rectangular`. Use `write_lammps`.
+
 ## [0.4.3] — 2026-09-24
 
 ### Changed
