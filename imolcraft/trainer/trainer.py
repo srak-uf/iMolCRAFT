@@ -842,7 +842,7 @@ class ThermodynamicTrainer(BaseTrainer):
         # first run so a bad ensemble, a broken annealing schedule or an
         # unsupported software shows up while the trainer is still empty.
         self.md_calculators = []
-        for i, params in enumerate(self.sampling_params):
+        for params in self.sampling_params:
             settings = {
                 key: value for key, value in params.items()
                 if key in MDCalculator.SETTINGS
@@ -854,13 +854,6 @@ class ThermodynamicTrainer(BaseTrainer):
                 md_logfile=self.md_logfile,
             )
             calculator = MDCalculator(params["init_structure"], **settings)
-            if self.num_vsites > 0 and calculator.software == "gromacs":
-                raise ValueError(
-                    f"replica {i} asks for software='gromacs', but {self.ffxml} "
-                    f"places {self.num_vsites} virtual sites and the GROMACS "
-                    "exporter does not translate OpenMM virtual sites yet; use "
-                    "software='openmm' for this force field"
-                )
             self.md_calculators.append(calculator)
 
         # target

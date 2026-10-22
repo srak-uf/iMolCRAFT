@@ -1,5 +1,5 @@
 sampling:
-    init_structure: merged_supercell_bonds.pdb
+    init_structure: supercell_bonds.pdb   # must be the same system as pdbfile; the lattice targets are for this cell
     ensemble: anisonpt
     dt_fs: 1.0
     rcut_nm: 0.8

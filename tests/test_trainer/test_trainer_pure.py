@@ -1934,18 +1934,11 @@ def test_each_replica_picks_its_own_software(thermo_trainer_env):
     assert type(trainer.md_calculators[1].backend) is GMXCalculator
 
 
-def test_a_virtual_site_force_field_is_refused_under_gromacs(thermo_trainer_env):
-    """F10: the GROMACS exporter has no virtual sites, so the trainer says so at once"""
-    with pytest.raises(ValueError) as excinfo:
-        thermo_trainer_env([_sampling_block(software="gromacs")], ffxml=VSITE_FFXML)
-    message = str(excinfo.value)
-    assert "virtual sites" in message and "software='openmm'" in message
-    assert "replica 0" in message
-
-    # the same force field is fine with the default software
-    trainer = thermo_trainer_env([_sampling_block()], ffxml=VSITE_FFXML)
+def test_a_virtual_site_force_field_runs_under_gromacs(thermo_trainer_env):
+    """F10: the GROMACS exporter writes virtual sites, so the trainer takes the pair"""
+    trainer = thermo_trainer_env([_sampling_block(software="gromacs")], ffxml=VSITE_FFXML)
     assert trainer.num_vsites == 2
-    assert trainer.md_calculators[0].software == "openmm"
+    assert trainer.md_calculators[0].software == "gromacs"
 
 
 def test_the_checkpoint_records_the_software_and_restores_the_backend(

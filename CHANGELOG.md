@@ -31,14 +31,71 @@ file changes, so it moves the minor number.
   HarmonicAngleForce, PeriodicTorsionForce and CMMotionRemover, parameter
   offsets, virtual sites, constraints without a bond term, and nonbonded
   exceptions between atoms more than three bonds apart.
+- The user manual (`docs/source`) is brought up to date with 0.4.3: the
+  exporter is called with `fmt=`, the Crafter pages document `charge.params`,
+  the valid `fixed_property` values and the files each step writes, the
+  installation page names the `imc_cpu` / `imc_cuda` environments and the
+  `docs` / `test` extras, the dihedral and thermodynamic trainer pages use the
+  current signatures (`fit(steps, checkpoint_frequency)`, the restart through
+  `from_checkpoint`), and the API reference gains
+  `imolcraft.calculator.gmx` / `md` / `omm` and `imolcraft.provenance`. The
+  overview figure is replaced.
 
 ### Added
 
+- **Virtual sites under GROMACS.** The GROMACS exporter
+  (`imolcraft.io.exporter(..., "gmx")`, and through it `GMXCalculator` and
+  `software: gromacs`) now writes the virtual sites of the OpenMM System:
+  `TwoParticleAverageSite` (`average2`) as `[ virtual_sites2 ]` funct 1,
+  `ThreeParticleAverageSite` (`average3`) as `[ virtual_sites3 ]` funct 1
+  and `OutOfPlaneSite` (`outOfPlane`) as `[ virtual_sites3 ]` funct 4. The
+  sites are massless particles of their molecule (atom types `VS1`,
+  `VS2`, ...), tied to their first particle by a `funct 5` connection, and
+  every exception of the System that involves a site is listed in
+  `[ exclusions ]` (the 1-4 ones also in `[ pairs ]`), because GROMACS does
+  not derive exclusions for virtual sites as OpenMM does. Averaging weights
+  must sum to one, as the trainer's weight update keeps them.
+  `LocalCoordinatesSite` (`localCoords`) is refused with a `ValueError`.
+  Single-point energy tests with charged sites (`gmx` marker) check the
+  result against OpenMM, including SN (`average2`) and TIP5P water
+  (`outOfPlane`) interleaved in one box.
 - `imolcraft.io.exporter_lmp.write_lammps(topology, system, positions,
   filename)` writes a data file from in-memory OpenMM objects.
 
+### Fixed
+
+- Examples that no longer ran or silently optimized nothing:
+  `examples/crafter/pf6` (import typo, no density for the default packing
+  mode), `examples/trainer/distance` (`NonbondedForce/charges` and a missing
+  PDB file) and `examples/trainer/distance_vsite` (`VirtualSite/weight`
+  instead of `VirtualSite/vsite_w2_type_2`). The example YAML files drop
+  `charge.basis` / `charge.method`, which the Crafter ignores.
+- `examples/trainer/2rdf_1adf_density/loss_jsdivergence` fitted with the
+  Wright factor; it now uses `losstype_distribfn="jsdivergence"`.
+- `examples/trainer/2rdf_1adf_density_vsite/dmff.yml` sampled a 4320-atom box
+  (`merged_supercell_bonds.pdb`) while the trainer read the 960-atom
+  `supercell_bonds.pdb`, which stopped the run at the first trajectory load.
+- The examples were re-run against 0.4.3 and are committed with their outputs.
+  The thermodynamic trainers are shortened to about 50 epochs (the original
+  counts are noted in the cells). `examples/crafter/crystal` and
+  `examples/exporter/system.xml` are regenerated; the old files described a
+  4x4x4 supercell that matched neither the YAML nor the PDB next to them.
+- The second virtual site of succinonitrile (`M2`) in
+  `examples/trainer/2rdf_1adf_density_vsite/SN.xml`,
+  `examples/trainer/distance_vsite/SN.xml` and `tests/data/vsite_average2.xml`
+  was built from `N2` and `C2`, the CH2 carbon at the other end of the
+  molecule, rather than from `N2` and its own nitrile carbon `C4`. The site
+  therefore sat off the C≡N axis (0.70 Å from N at 23° with weight 1.2 in
+  `tests/data/vsite_average2.xml`) while `M1` sat on it (0.23 Å, 0°). `M2` now uses `atomName2="C4"`, so both
+  sites extend their C≡N bond. Force fields optimized from these files
+  carry the asymmetric `M2` and should be re-optimized.
+
 ### Removed
 
+- The stray `docs/docs/` apidoc output and the committed Psi4 `docs/timer.dat`.
+- The `ValueError` that refused a force field with virtual sites in
+  `GMXCalculator.run` and, at construction, in a `ThermodynamicTrainer`
+  replica with `software: gromacs`.
 - `imolcraft.io.exporter_lmp.to_lammps_non_rectangular`. Use `write_lammps`.
 
 ## [0.4.3] — 2026-09-24

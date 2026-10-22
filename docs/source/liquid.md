@@ -2,33 +2,25 @@
 
 ## Overview
 
-The **Crafter** is a versatile feature in iMolCRAFT that automates the preparation of molecular systems for molecular dynamics (MD) simulations. This section focuses on the **Liquid System** workflow, where Crafter takes multiple molecular structures (as PDB files), performs charge calculations and QM geometry optimization (optionally), builds a liquid box with specified density and cell size, and generates MD input files for GROMACS or LAMMPS with proper force field parameters from GAFF or other force fields.
+The **Crafter** automates the preparation of molecular systems for molecular dynamics (MD) simulations. This page covers the **liquid** workflow: Crafter takes one PDB file per molecular species, runs a QM geometry optimization (optional) and a charge fit for each species, packs the molecules into a box with packmol at the requested density or cell size, assigns GAFF parameters and writes an OpenMM system. The result can be exported to GROMACS (or, experimentally, LAMMPS).
 
-## Theoretical Foundation
+## Workflow
 
-### Liquid Structure Handling
+1. **Load** one PDB file per unique species.
+2. **Optimize** each species in vacuum at the QM level (`prep(do_opt=True)`, optional). The optimized geometry is used only for the charge fit; packmol places the molecules as they are in the PDB files.
+3. **Charge** each species by RESP (or AM1-BCC on the Gaussian/antechamber path) and scale the charges (`prep(do_charge=True)`).
+4. **Pack** the molecules into the box and **parameterize** with GAFF (`build()`).
+5. **Export** to an MD engine format with `imolcraft.io.exporter`.
 
-Liquid systems in iMolCRAFT are:
-1. **Loaded** from individual PDB files for each unique molecular species
-2. **Repeated** to create the desired number of molecules at specified density
-3. **Packed** into a simulation box with specified dimensions (cell size or density)
-4. **Optimized** using QM methods to refine atomic positions (optional)
-5. **Charged** using Restrained Electrostatic Potential (RESP) or other methods
-6. **Parameterized** with GAFF or custom force fields
-7. **Exported** to MD engine formats (GROMACS/LAMMPS)
-
-The key difference from crystal systems is that liquid systems require careful packing of multiple molecular species into a simulation box while maintaining target density and avoiding steric clashes.
+Unlike a crystal, a liquid needs the number of molecules, the box size and the density to be made consistent; `fixed_property` and `priority_property` decide which of them is derived from the others.
 
 ## Key Components
 
 ### Crafter Class
 
-The `Crafter` class is the unified interface for building MD systems from various structure types. It handles both **crystal** and **liquid** systems with a consistent workflow.
-
 ```python
 from imolcraft.crafter import Crafter
 
-# Initialize with configuration file
 craft = Crafter("crafter.yml")
 ```
 
@@ -36,83 +28,80 @@ craft = Crafter("crafter.yml")
 
 | Method | Purpose |
 |--------|---------|
-| `from_yaml(filename)` | Load parameters from a YAML configuration file |
-| `prep(do_opt=True, do_charge=True)` | Prepare the system with optional geometry optimization and charge calculation |
-| `build()` | Generate force field parameters and OpenMM system |
-| `save_crafter(filename)` | Save the Crafter object to a pickle file for later use |
-| `load_crafter(filename)` | Load a previously saved Crafter object from a pickle file |
+| `from_yaml(filename)` | Load the settings and the structure from a YAML file |
+| `prep(do_opt=True, do_charge=True)` | Optional QM geometry optimization and charge fit for every species |
+| `build()` | Pack the box, generate the GAFF force field and the OpenMM system. Needs the charges from `prep(do_charge=True)` |
+| `get_ffxml()` | Write only the `gaffxml_{i}.xml` files, without building the system |
+| `save_crafter(filename="crafter.pkl")` | Save the Crafter object to a pickle file |
+| `load_crafter(filename)` | Load a previously saved Crafter object |
 
 **Key Attributes:**
 
-- `mol_info`: Dictionary containing molecular information for each unique species
-- `structure`: Dictionary with structure type (`crystal` or `liquid`) and configuration
-- `params_geoopt`: Geometry optimization parameters (basis set, QM method, software)
-- `params_charge`: Charge calculation parameters (method, basis set)
-- `params_ff`: Force field parameters (type, ion parameters, charge scaling)
+- `mol_info`: dictionary keyed by `MOL_0`, `MOL_1`, ... (in the order of `structure.molecules`) with the structures, charges and settings of each species
+- `structure`: the `structure` section of the YAML file
+- `params_geoopt`, `params_charge`, `params_ff`: the `geoopt`, `charge` and `forcefield` sections
 
 ### Configuration via `crafter.yml`
 
-The YAML file controls all aspects of liquid system preparation:
-
 ```yaml
 geoopt:
-  basis: 6-311+g(2d,p)        # Basis set for QM optimization
-  method: wb97xd               # DFT method
-  software: psi4               # QM software (psi4 or gaussian)
+  basis: 6-311+g(2d,p)        # Basis set for the QM optimization
+  method: wb97xd               # DFT method (translated to wb97x-d for Psi4)
+  software: psi4               # psi4 or g16
 
 charge:
-  type: resp                   # Charge calculation method
-  basis: 6-31g(d)             # Basis set for charge fitting
-  method: hf                   # HF or DFT
-  software: psi4              # QM software
+  type: resp                   # resp (psi4 or g16) or am1bcc (g16 path only)
+  software: psi4               # psi4 or g16
+  # params:                    # optional; overrides the RESP level of theory
+  #   method: hf
+  #   basis: 6-31g(d)
 
 forcefield:
-  fftype: gaff-2.11           # Force field type
+  fftype: gaff-2.11            # GAFF version
   iontype: amber/ions/ionsff99_tip3p.xml  # Ion parameters (the default; or Gmanr / Madrid / Wu-Wick / SMM for Li+)
-  charge_scale_ion: 0.8       # Charge scaling for ionic interactions
-  charge_scale_neutral: 1.0   # Charge scaling for neutral molecules
+  charge_scale_ion: 0.8        # Charge scaling for ions
 
 structure:
-  type: liquid                # System type: "crystal" or "liquid"
-  molecules:                  # List of PDB files for each molecular species
+  type: liquid                 # "crystal" or "liquid"
+  molecules:                   # One PDB file per species
     - Li.pdb
     - BF4.pdb
     - SL.pdb
-  nmols:                      # Number or ratio of each molecule in the system
-    - 1
-    - 1
-    - 10
-  density_kgm3: 1304          # Target liquid density (kg/m³)
-  cell_A: [40, 40, 40]        # Simulation box dimensions (Ångströms)
-  fixed_property: "density"   # Which property is fixed during packing
-  priority_property: "cell"   # Which property takes priority if conflict exists
+  nmols: [1, 1, 10]            # Number (or ratio) of each species
+  density_kgm3: 1304           # Target density (kg/m³)
+  cell_A: [40, 40, 40]         # Box lengths (Å)
+  fixed_property: density      # See the table below
+  priority_property: cell
 ```
 
+See {doc}`crystal` for the meaning of the `geoopt`, `charge` and `forcefield` keys; they are the same for both structure types.
+
+### Output Files
+
+| File | Written by | Content |
+|------|-----------|---------|
+| `MOL_{i}/` | `prep()` | QM inputs and outputs of species `i` (`MOL_{i}.xyz`, `MOL_{i}.sdf`, `MOL_{i}_resp.mol2`, optimization logs) |
+| `gaffxml_{i}.xml` | `build()` | OpenMM force field of species `i` |
+| `supercell.pdb` | `build()` | packmol output, without bonds |
+| `supercell_bonds.pdb` | `build()` | Packed box with CONECT records |
+| `system.xml` | `build()` | Serialized OpenMM `System` |
+| `crafter.pkl`, `MOL_{i}/mol_info.pkl` | `save_crafter()` | Crafter state, stamped with the iMolCRAFT version |
 
 ### Exporter Function
-
-The `exporter()` function converts the prepared system to MD engine formats:
 
 ```python
 from imolcraft.io import exporter
 
 exporter(
-    pdb="supercell_bonds.pdb",        # Input PDB file with bonds
-    system="system.xml",               # OpenMM system XML file
-    filename="liquid",                 # Output filename (without extension)
-    format="gmx"                       # "gmx" for GROMACS, "lmp" for LAMMPS
+    pdb="supercell_bonds.pdb",   # PDB file with bonds
+    system="system.xml",         # OpenMM system XML file
+    filename="liquid",           # Output name without extension
+    fmt="gmx",                   # "gmx" for GROMACS, "lmp" for LAMMPS
 )
 ```
 
-**Output Files:**
-
-- **GROMACS** (`format="gmx"`): 
-  - `liquid.top`: Topology file
-  - `liquid.gro`: Structure file (GROMACS format)
-  - `posre.itp`: Position restraint file
-
-- **LAMMPS** (`format="lmp"`, *experimental*):
-  - `liquid.data`: Data file
+- **GROMACS** (`fmt="gmx"`): `liquid.top` and `liquid.gro`
+- **LAMMPS** (`fmt="lmp"`, *experimental*): `liquid.data`
 
 ```{warning}
 The LAMMPS exporter is experimental and not considered stable; verify its output before use.
@@ -121,196 +110,86 @@ LAMMPS is not installed by `env.yml`. See {doc}`exporter` for details.
 
 ## Key Parameters Reference
 
-### Geometry Optimization (`geoopt`)
-
-| Parameter | Type | Example | Description |
-|-----------|------|---------|-------------|
-| `basis` | str | `6-311+g(2d,p)` | Gaussian basis set |
-| `method` | str | `wb97xd` | DFT method (B3LYP, PBE, ωB97X-D, etc.) |
-| `software` | str | `psi4` or `g16` | QM software to use |
-
-### Charge Calculation (`charge`)
-
-| Parameter | Type | Options | Description |
-|-----------|------|---------|-------------|
-| `type` | str | `resp`, `am1bcc` | Charge fitting method |
-| `basis` | str | `6-31g(d)` | Basis set for charge fitting |
-| `method` | str | `hf` | Method for charge calculation |
-| `software` | str | `psi4`, `g16` | QM software |
-
-### Force Field (`forcefield`)
-
-| Parameter | Type | Options | Description |
-|-----------|------|---------|-------------|
-| `fftype` | str | `gaff-2.11`, `gaff-2.1`, `gaff-1.81`, `gaff-1.8`, `gaff-1.4`   | Force field type |
-| `iontype` | str | `Gmanr`, `Madrid`, `Wu-Wick`, `SMM`, or a path to an XML file. Default `amber/ions/ionsff99_tip3p.xml` | Ion force field parameters. The four names each supply Li<sup>+</sup> alone; every other ion falls back to the default Amber library. A path is taken as it stands if it exists, otherwise as relative to the `ffxml` directory of openmmforcefields |
-| `charge_scale_ion` | float | 0.0-1.0 | Scale factor for ionic charges |
-| `charge_scale_neutral` | float | 0.0-1.0 | Scale factor for neutral charges |
-
 ### Structure Definition (`structure`)
 
 | Parameter | Type | Options | Description |
 |-----------|------|---------|-------------|
 | `type` | str | `crystal`, `liquid` | System type |
-| `molecules` | list | File paths | PDB files for each molecular species |
-| `nmols` | list | Integers | Number or ratio of each molecule type |
-| `density_kgm3` | float | > 0 | Target liquid density in kg/m³ |
-| `cell_A` | list | `[x, y, z]` | Simulation box dimensions in Ångströms |
-| `fixed_property` | str | `nmols`, `density`, `volume` | Which property is fixed during packing |
-| `priority_property` | str | `cell`, `density` | Which property takes priority if conflict exists |
+| `molecules` | list | File paths | One PDB file per species. Relative paths are also searched next to the YAML file |
+| `nmols` | list | Integers | Number of each species, or their ratio when the number is derived |
+| `density_kgm3` | float | > 0 | Target density in kg/m³ |
+| `cell_A` | list | `[x, y, z]` | Box lengths in Å |
+| `fixed_property` | str | `nmols`, `cell`, `density` | Which property is kept fixed. Default `cell` |
+| `priority_property` | str | `cell`, `density` | Which property is honoured when the others are derived. Default `density` |
 
-#### Kewword of `fixed_property` and `priority_property` 
+#### Combinations of `fixed_property` and `priority_property`
+
 | fixed_property | priority_property | Process |
-|--------   |---------|---------|
-| `nmols`   | `cell` | `nmols` of molecules are packed in `cell_A`. |
-| `nmols`   | `density` | `cell_A` is determined by `nmols` and `density_kgm3`|
-| `cell`    | `density` | `nmol` is adjusted to approach the `density_kgm3` while maintaining the ratio. |
-| `density` | `cell` | `nmol` is adjusted while maintaining the ratio, and the value of `cell_A` is also adjusted so that it equals `density_kgm3`.|
+|--------|---------|---------|
+| `nmols`   | `cell`    | `nmols` molecules are packed into `cell_A`. `density_kgm3` is not used. |
+| `nmols`   | `density` | A cubic box is derived from `nmols` and `density_kgm3`. |
+| `cell`    | `density` | `nmols` is scaled, keeping the ratio, to approach `density_kgm3` in `cell_A`. |
+| `density` | `cell`    | `nmols` is scaled as above, then the box is made cubic and resized so that the density equals `density_kgm3`. |
+
+Only these four combinations are implemented. With the defaults (`cell` / `density`) `density_kgm3` is required.
 
 ## Usage Example: Liquid System to MD Simulation
 
-### Step 1: Prepare Configuration File
+### Step 1: Prepare the configuration file and the molecules
 
-Create a `crafter.yml` with your liquid system specification:
+Write a `crafter.yml` as above and put one PDB file per species next to it (`Li.pdb`, `BF4.pdb`, `SL.pdb`). Each file holds a single molecule with reasonable 3D coordinates; packmol uses these coordinates as they are.
 
-```yaml
-geoopt:
-  basis: 6-311+g(2d,p)
-  method: wb97xd
-  software: psi4
-
-charge:
-  type: resp
-  basis: 6-31g(d)
-  method: hf
-  software: psi4
-
-forcefield:
-  fftype: gaff-2.11
-  iontype: amber/ions/ionsff99_tip3p.xml
-  charge_scale_ion: 0.8
-  charge_scale_neutral: 1.0
-
-structure:
-  type: liquid
-  molecules:
-    - Li.pdb         # Lithium ion
-    - BF4.pdb        # Tetrafluoroborate anion
-    - SL.pdb         # Solvent molecule
-  nmols:
-    - 1              # 1 Li+ ion
-    - 1              # 1 BF4- ion
-    - 10             # 10 solvent molecules
-  density_kgm3: 1304 # Ionic liquid density
-  cell_A: [40, 40, 40]
-  fixed_property: "density"
-  priority_property: "cell"
-```
-
-### Step 2: Prepare Component Molecules
-
-For each molecular species, create an optimized PDB file:
-
-```bash
-# Li.pdb, BF4.pdb, SL.pdb should be:
-# - Individual molecular structures
-# - Already optimized (or will be if do_opt=True)
-# - In proper PDB format with correct connectivity
-```
-
-### Step 3: Initialize Crafter and Prepare System
+### Step 2: Prepare the species
 
 ```python
 from imolcraft.crafter import Crafter
 
-# Initialize with configuration
 craft = Crafter("crafter.yml")
 
-# Prepare the system:
-# - Load individual molecules from PDB files
-# - For liquid systems, do_opt=False is common (molecules often pre-optimized)
-# - Calculate partial charges using RESP
+# The geometry optimization only affects the charge fit; it is often skipped
+# for liquids when the PDB geometries are already reasonable.
 craft.prep(do_opt=False, do_charge=True)
 ```
 
-**What happens during `prep()`:**
-1. **Molecule loading**: PDB files are read for each species
-2. **RDKit molecule generation**: Structures are converted for bond/connectivity detection
-3. **Charge calculation**: RESP charges calculated at provided geometry
-4. **Density-based packing**: Molecules are packed into a box achieving target density
+What happens during `prep()`:
 
-### Step 4: Build Force Field
+1. The PDB files are read and converted to RDKit molecules, and the net charge of every species is assigned.
+2. With `do_opt=True`, each species is optimized at the `geoopt` level.
+3. With `do_charge=True`, RESP charges are fitted and scaled by `charge_scale_ion`.
+
+### Step 3: Build the box and the force field
 
 ```python
-# Generate force field parameters and OpenMM system
 craft.build()
-
-# This produces:
-# - system.xml: OpenMM system file with all force field parameters
-# - supercell_bonds.pdb: Packed liquid box with all molecules and bonds
-# - Force field parameters automatically generated from GAFF
+# -> gaffxml_{i}.xml, supercell.pdb, supercell_bonds.pdb, system.xml
 ```
 
-### Step 5: Export to MD Engines
+### Step 4: Export to an MD engine
 
 ```python
 from imolcraft.io import exporter
 
-# Export liquid box for MD simulation
-
-# Option 1: GROMACS format
-exporter(
-    pdb="supercell_bonds.pdb",
-    system="system.xml",
-    filename="liquid_md",
-    format="gmx"
-)
-
-# Option 2: LAMMPS format (experimental, see the Exporter page)
-exporter(
-    pdb="supercell_bonds.pdb",
-    system="system.xml",
-    filename="liquid_md",
-    format="lmp"
-)
+exporter(pdb="supercell_bonds.pdb", system="system.xml", filename="liquid_md", fmt="gmx")
+# LAMMPS (experimental, see the Exporter page)
+exporter(pdb="supercell_bonds.pdb", system="system.xml", filename="liquid_md", fmt="lmp")
 ```
 
 ## Saving and Loading Crafter State
 
-### Saving the Crafter Object
-
-After preparing your liquid system, save the Crafter object to avoid re-running charge calculations:
+Save the Crafter object after `prep()` to avoid re-running the QM calculations:
 
 ```python
-# Save after preparation and building
-craft.save_crafter(filename="liquid_system.pkl")
+craft.save_crafter("liquid_system.pkl")
 ```
 
-The `save_crafter()` method:
-- Saves the complete Crafter object with all internal state
-- Preserves all charge calculations
-- Stores molecular information for each species
-- Allows reuse across multiple MD export formats
+`save_crafter()` pickles the whole object (charges, settings and `mol_info` of every species) and also writes `MOL_{i}/mol_info.pkl` for each species. Both are stamped with the iMolCRAFT version that wrote them.
 
-### Loading the Crafter Object
-
-Resume work from a saved Crafter object in a new session:
+Resume in a new session:
 
 ```python
 from imolcraft.crafter import Crafter
-from imolcraft.io import exporter
 
-# Initialize empty Crafter
 craft = Crafter()
-
-# Load from saved pickle file
-craft.load_crafter(filename="liquid_system.pkl")
-
-# Immediately export to different MD engine format
-exporter(
-    pdb="supercell_bonds.pdb",
-    system="system.xml",
-    filename="liquid_md",
-    format="gmx"
-)
+craft.load_crafter("liquid_system.pkl")
+craft.build()   # e.g. rebuild with another box after editing craft.structure
 ```

@@ -34,19 +34,22 @@ The `DihedralCalculator` class manages the setup and execution of dihedral param
 
 **Initialization:**
 ```python
-calculator = DihedralCalculator(atoms, molecule_name, directory="temp_directory")
+calculator = DihedralCalculator(atoms, label, nc=0, directory="temp_directory", qmparams=None)
 ```
+
+- `nc`: net charge of the molecule (needed for ions)
+- `qmparams`: Gaussian settings of the relaxed scan. Default `{"method": "wb97xd", "basis": "6-311+g(2d,p)", "opt": "modredundant"}`; each scan takes 36 points 10° apart
 
 **Key attributes:**
 - `scan_list`: List of dihedral atom indices to optimize (e.g., `[1, 0, 3, 4]`)
 - `qm_scan`: QM potential energy data for each dihedral
 - `ff_scan`: FF potential energy data for each dihedral
-- `qm_calculators`: QM calculation setup (Gaussian16, Psi4, etc.)
+- `qm_calculators`: Gaussian 16 calculators of the relaxed scans (Psi4 is not supported for scans)
 - `ff_calculators`: FF calculation setup with OpenMM
 
 **Key methods:**
-- `do_qmscan()`: Execute QM relaxed scans (computationally expensive)
-- `do_ffscan(ffxml, angles="QM", ini_geom="FF")`: Calculate FF energies along QM scan angles
+- `do_qmscan(dihed_idx=None, do_calc=True)`: Run the Gaussian 16 relaxed scans. `do_calc=False` only writes the `<directory>/<label>_dihed_<i>.com` inputs, e.g. to run them on a cluster; `dihed_idx` restricts the scan to some dihedrals
+- `do_ffscan(ffxml, dihed_idx=None, angles=None, ini_geom="QM")`: Relaxed FF scan. `angles="QM"` uses the angles of the loaded QM scan (otherwise -180° to 180° every 10°). `ini_geom="QM"` starts each point from the QM geometry, `ini_geom="FF"` from `calculator.atoms` rotated to the angle
 
 ### Loss Function for Dihedral Fitting
 
@@ -60,7 +63,8 @@ Multiple weighting schemes are available:
 
 - **Uniform**: Equal weight to all points on the PES
 - **Boltzmann**: Weight points by thermal population at a given temperature (higher energy points weighted less)
-- **Auto zero-point**: Shift energies so that the QM minimum matches the FF minimum
+
+and the energies are lined up by `zeropoint`: `"qmmin"` aligns both curves at the QM minimum, `"auto"` subtracts the FF-QM offset, `None` compares raw values.
 
 ### DihedralTrainer Workflow
 
@@ -102,12 +106,12 @@ print(calculator.scan_list)
 # For dihedral 0:
 # calculator.qm_scan[0]["angle_deg"], \
 # calculator.qm_scan[0]["energy_kjmol"], \
-# calculator.qm_scan[0]["atoms"] = load_g16scan("dmc_dihed_0.log")
+# calculator.qm_scan[0]["atoms"] = load_g16scan("temp_directory/dmc_dihed_0.log")
 
 # # For dihedral 2:
 # calculator.qm_scan[2]["angle_deg"], \
 # calculator.qm_scan[2]["energy_kjmol"], \
-# calculator.qm_scan[2]["atoms"] = load_g16scan("dmc_dihed_2.log")
+# calculator.qm_scan[2]["atoms"] = load_g16scan("temp_directory/dmc_dihed_2.log")
 ```
 
 ### Step 2: Calculate Initial Force Field Energies
@@ -118,7 +122,12 @@ print(calculator.scan_list)
 # See: examples/crafter/crystal/ or examples/crafter/liquid/ for how to generate the XML file
 calculator.do_ffscan("dmc.xml", angles="QM", ini_geom="FF")
 # dmc.xml is the force field file created by crafter with GAFF parameters
+
+# Keep the initial curve for the comparison in Step 4
+ff_before_optimization = list(calculator.ff_scan[0]["energy_kjmol"])
 ```
+
+`trainer.setup()` runs the same FF scan itself, so this step is needed only to keep the curve before optimization.
 
 ### Step 3: Set Up and Run Optimization
 
@@ -129,7 +138,7 @@ from functools import partial
 
 # Define loss function
 lossfn = partial(loss_energy, 
-                 weight_scheme="uniform",  # or "boltzmann", "nonboltzmann"
+                 weight_scheme="uniform",  # or "boltzmann"
                  zeropoint="qmmin",        # or "auto", None
                  norm_var=True)
 
@@ -143,7 +152,8 @@ trainer = DihedralTrainer(
     opt_fftypes=["PeriodicTorsionForce/proper_k"],  # Parameter types to optimize
     relax_steps=1,    # Perform relaxed scan every N steps
     lr=0.1,           # Learning rate
-    clip=0.5          # Gradient clipping threshold
+    clip=0.5,         # Gradient clipping threshold
+    label="dmc1",     # default: <ffxml basename>1
 )
 
 # Setup trainer
@@ -173,7 +183,7 @@ from imolcraft.crafter.asemol import aseatoms2pdb_bonded
 
 # Convert ASE Atoms to PDB format with bonded information
 atoms = read(pdbfile)
-aseatoms2pdb_bonded(atoms, "dihedral_opt.pdb")
+aseatoms2pdb_bonded("dihedral_opt.pdb", atoms)
 ```
 
 ### Step 4: Evaluate Optimized Parameters
@@ -215,16 +225,33 @@ plt.show()
 | `pdbfile` | str | - | Path to PDB file with molecular structure |
 | `calculator` | DihedralCalculator | - | Calculator object with QM/FF data |
 | `loss_fn` | function | - | Loss function (typically `loss_energy`) |
-| `opt_fftypes` | list | - | Force field parameter types to optimize (e.g., `["PeriodicTorsionForce/proper_k"]`) |
-| `relax_steps` | int | 1 | Frequency of relaxed scan updates (1 = every step, high = rarely) |
-| `lr` | float | 0.01 | Learning rate for parameter updates |
-| `clip` | float | 1.0 | Gradient clipping threshold (prevents large jumps) |
+| `opt_fftypes` | list | `["PeriodicTorsionForce/proper_phase", "PeriodicTorsionForce/proper_k"]` | Force field parameter types to optimize |
+| `relax_steps` | int | 20 | Frequency of relaxed scan updates (1 = every step, high = rarely) |
+| `lr` | float or list | 0.01 | Learning rate (a list gives one value per `opt_fftypes` entry) |
+| `clip` | float or list | 0.1 | Gradient clipping threshold (prevents large jumps) |
+| `optimizer_algo` | str | `"adam"` | optax optimizer |
+| `label` | str | `<ffxml basename>1` | Prefix of the output files |
+| `param_floors` | dict | LJ floors | Lower bounds; torsion parameters are not bounded |
+
+### Output Files
+
+| File | Content |
+|------|---------|
+| `<label>.xml` | Starting force field |
+| `xmlfiles/loop_<label>-<epoch>.xml` | Force field at every relaxed scan |
+| `<label>_best.xml` | Force field of the smallest loss (`best_epoch`, `best_params`, `best_loss`) |
+| `train_state_<label>.pkl` | Checkpoint, every `checkpoint_frequency` epochs of `fit(steps, checkpoint_frequency=100)` |
+
+`fit()` continues from the last epoch when called again. A run is resumed with
+`DihedralTrainer.from_checkpoint("train_state_dmc1.pkl", ffxml, pdbfile, loss_fn=lossfn)`; the scan geometries come from the checkpoint.
+Gradients and parameters can be modified at every step with
+`trainer.add_modifyfn("after_grad" | "after_update", fn)` (see {doc}`thermodyn_perturb`).
 
 ### Loss Function Parameters
 
 | Parameter | Type | Options | Description |
 |-----------|------|---------|-------------|
-| `weight_scheme` | str | `"uniform"`, `"boltzmann"` | How to weight energy points on the PES |
+| `weight_scheme` | str | `"uniform"`, `"boltzmann"` | How to weight energy points on the PES (`"nonboltzmann"` is not implemented) |
 | `zeropoint` | str | `"auto"`, `"qmmin"`, `None` | Energy reference point |
 | `norm_var` | bool | `True`, `False` | Normalize by variance of QM energies |
 | `temperature` | float | 500 | Temperature (K) for Boltzmann weighting |

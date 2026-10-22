@@ -817,22 +817,12 @@ class GMXCalculator:
         The System of :meth:`_build_system` is serialized to ``system.xml``,
         the (extra-particle complete) topology and positions to a ``.pdb``,
         and both go through :func:`imolcraft.io.exporter` with ``fmt="gmx"``.
-        A force field with virtual sites is refused: the GROMACS exporter
-        does not translate OpenMM virtual sites to ``[ virtual_sites2 ]``
-        (parmed's ``load_topology`` keeps them as extra points and fails when
-        writing the ``.gro``), so such force fields are not supported yet.
+        Virtual sites become ``[ virtual_sites2 ]`` / ``[ virtual_sites3 ]``
+        with the System's exclusions (see :func:`imolcraft.io.exporter_gmx`);
+        their positions in the ``.gro`` and the ``.xtc`` follow the extra
+        particles of the topology, as in OpenMM's trajectory.
         """
         topology, positions, system = self._build_system(ffxml)
-        n_vsites = sum(
-            system.isVirtualSite(i) for i in range(system.getNumParticles())
-        )
-        if n_vsites:
-            raise ValueError(
-                f"{ffxml} places {n_vsites} virtual sites; the GROMACS exporter "
-                "does not translate OpenMM virtual sites to [ virtual_sites2 ], "
-                "so force fields with virtual sites are not supported yet. Use "
-                "software='openmm' for this force field."
-            )
         pdbfile = os.path.join(tmpdir, "system.pdb")
         with open(pdbfile, "w") as handle:
             app.PDBFile.writeFile(topology, positions, handle)
@@ -883,8 +873,8 @@ class GMXCalculator:
             OpenMM force field (``.ffxml``) to sample with, as
             :meth:`OpenMMCalculator.run` takes it. The ``.top`` / ``.gro``
             GROMACS needs are generated from it and ``init_structure`` in a
-            temporary directory that is removed when the run ends. A force
-            field with virtual sites is refused (see :meth:`_export_inputs`).
+            temporary directory that is removed when the run ends. Virtual
+            sites are translated (see :meth:`_export_inputs`).
         trajectory : str
             Name of the trajectory file, written under ``xtcfiles/``.
 
