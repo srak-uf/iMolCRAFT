@@ -64,10 +64,18 @@ def write_lammps(topology, system, positions, filename):
     """
     Write an OpenMM topology / system / positions to ``filename.data``.
 
-    Raises NotImplementedError for systems the data file cannot represent.
+    Raises NotImplementedError for systems the data file cannot represent
+    and ValueError when topology, positions and system differ in size.
     Returns the path of the data file.
     """
     _check_supported(system)
+    n_atoms = system.getNumParticles()
+    if topology.getNumAtoms() != n_atoms or len(positions) != n_atoms:
+        raise ValueError(
+            f"The topology ({topology.getNumAtoms()} atoms), the positions "
+            f"({len(positions)}) and the system ({n_atoms} particles) disagree "
+            "on the number of atoms."
+        )
     nonbonded = _forces(system, openmm.NonbondedForce)[0]
 
     # Every term below gets a type ID from a dict {parameter string: type ID},
@@ -256,6 +264,22 @@ def _check_supported(system):
             "Some constraints have no bond term; create the system with "
             "constraints=None and rigidWater=False."
         )
+    # Exclusions and 1-4 scaling become special_bonds in the input script,
+    # which only reaches pairs at most three bonds apart.
+    neighbors = {}
+    for p1, p2 in map(tuple, bonded):
+        neighbors.setdefault(p1, set()).add(p2)
+        neighbors.setdefault(p2, set()).add(p1)
+    for i in range(nonbonded[0].getNumExceptions()):
+        p1, p2 = nonbonded[0].getExceptionParameters(i)[:2]
+        near = {p1}  # atoms at most three bonds from p1
+        for _ in range(3):
+            near |= {j for k in near for j in neighbors.get(k, ())}
+        if p2 not in near:
+            raise NotImplementedError(
+                f"The nonbonded exception between atoms {p1} and {p2} is not "
+                "within three bonds, so special_bonds cannot reproduce it."
+            )
 
 
 def _torsions(system, bonds):
