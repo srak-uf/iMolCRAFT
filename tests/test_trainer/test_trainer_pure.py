@@ -1839,6 +1839,48 @@ def test_sumtrainer_keeps_the_real_gradient_past_bad_unoptimized_leaves(
 
 
 @pytest.mark.parametrize(
+    "sub_fftypes, sigma, epsilon, expected_recoveries",
+    [
+        # epsilon is optimized by the subs only, so its NaN must not perturb
+        (["NonbondedForce/sigma", "NonbondedForce/epsilon"], 0.1, jnp.nan, 0),
+        # sigma is optimized by the parent only, so its NaN must not be zeroed
+        (["NonbondedForce/charge"], jnp.nan, 0.1, 2),
+    ],
+    ids=["optimized-by-subs-only", "optimized-by-parent-only"],
+)
+def test_sumtrainer_guards_the_halves_by_the_parent_opt_fftypes(
+    sub_fftypes, sigma, epsilon, expected_recoveries, sum_trainer_env, monkeypatch,
+    capsys,
+):
+    """The joint optimizer steps the parameters, so its opt_fftypes decide"""
+    from imolcraft.trainer.base import SumTrainer, tree_is_finite
+
+    make = sum_trainer_env
+    trainer = SumTrainer(
+        make("t1", opt_fftypes=sub_fftypes),
+        make("t2", opt_fftypes=sub_fftypes),
+        opt_fftypes=["NonbondedForce/sigma"], weight=[1.0, 1.0], lr=0.01, clip=0.1,
+    )
+    trainer.setup()
+    before = trainer.ffparams["NonbondedForce"]["sigma"]
+    for sub in (trainer.trainer1, trainer.trainer2):
+        sub.get_loss_gradients = (
+            lambda sub=sub: _sigma_epsilon_gradients(sub, sigma, epsilon)
+        )
+    calls = _count_recovery_calls(monkeypatch)
+    trainer.training_step()
+
+    # one guard per half, each deciding the way the parent's list says
+    assert len(calls) == expected_recoveries
+    assert tree_is_finite(trainer.ffparams)
+    out = capsys.readouterr().out
+    assert ("Skipping this step" in out) is (expected_recoveries > 0)
+    if expected_recoveries == 0:
+        assert bool(jnp.all(trainer.ffparams["NonbondedForce"]["sigma"] < before))
+        assert "not optimized (NonbondedForce/epsilon)" in out
+
+
+@pytest.mark.parametrize(
     "keys, opt_fftypes, expected",
     [
         (("NonbondedForce", "sigma"), ["NonbondedForce/sigma"], True),

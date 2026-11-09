@@ -719,11 +719,14 @@ class SumTrainer(BaseTrainer):
         if getattr(self, "opt_state", None) is None:
             self.opt_state = self.optimizer.init(self.ffparams)
     
-    @staticmethod
-    def _substep(trainer, name):
+    def _substep(self, trainer, name):
         """
         Loss and gradients of one sub-trainer, with its own "after_grad" hook
         applied.
+
+        The gradients are guarded against the ``opt_fftypes`` of this trainer,
+        not of the sub-trainer, because the joint optimizer is the one that
+        steps the parameters.
 
         The sub-trainer's own optimizer is deliberately left alone: the
         parameters are updated by :meth:`training_step` through the joint
@@ -736,7 +739,7 @@ class SumTrainer(BaseTrainer):
         print(f"{name}: {loss}")
         loss, grads = trainer._retry_invalid_loss(loss, grads)
         trainer.loss = loss
-        grads = _guard_gradients(loss, grads, trainer.ffparams, trainer.opt_fftypes)
+        grads = _guard_gradients(loss, grads, trainer.ffparams, self.opt_fftypes)
         return loss, trainer._do_modify("after_grad", grads)
 
     def get_loss_gradients(self):
