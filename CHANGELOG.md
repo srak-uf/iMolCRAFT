@@ -89,6 +89,10 @@ file changes, so it moves the minor number.
   `tests/data/vsite_average2.xml`) while `M1` sat on it (0.23 Å, 0°). `M2` now uses `atomName2="C4"`, so both
   sites extend their C≡N bond. Force fields optimized from these files
   carry the asymmetric `M2` and should be re-optimized.
+- The training step no longer discards the whole gradient when only parameters
+  outside `opt_fftypes` differentiate into NaN or Inf (e.g. the zero-epsilon
+  Lennard-Jones type of a virtual site); those entries are set to zero and the
+  step uses the real gradient.
 
 ### Removed
 

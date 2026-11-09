@@ -111,15 +111,76 @@ def _nan_recovery_gradients(ffparams):
     )
 
 
-def _guard_gradients(loss, grads, ffparams):
+def _leaf_keys(path) -> Tuple[str, ...]:
+    """The keys leading to a pytree leaf, as ``"Force/parameter"`` splits them."""
+    return tuple(str(getattr(entry, "key", entry)) for entry in path)
+
+
+def _nonfinite_leaves(grads) -> List[Tuple[str, ...]]:
     """
-    The gradients to step with: ``grads`` when loss and gradients are finite,
-    the random nudge of :func:`_nan_recovery_gradients` otherwise.
+    The key paths of the floating-point leaves holding a NaN or Inf. Integer
+    leaves are not looked at, as in the mask of :func:`_build_optimizer`.
     """
-    if _loss_is_invalid(loss) or not tree_is_finite(grads):
+    leaves, _ = jax.tree_util.tree_flatten_with_path(grads)
+    return [
+        _leaf_keys(path)
+        for path, leaf in leaves
+        if jnp.issubdtype(jnp.result_type(leaf), jnp.floating)
+        and not bool(jnp.all(jnp.isfinite(leaf)))
+    ]
+
+
+def _is_optimized(keys: Tuple[str, ...], opt_fftypes: List[str]) -> bool:
+    """
+    Whether the leaf at ``keys`` is selected by ``opt_fftypes``. Each entry is
+    split at "/" and walked from the root, so an entry naming a subtree selects
+    every leaf below it.
+    """
+    for opt_fftype in opt_fftypes:
+        target = tuple(opt_fftype.split("/"))
+        if keys[: len(target)] == target:
+            return True
+    return False
+
+
+def _zero_nonfinite_entries(grads, leaves: List[Tuple[str, ...]]):
+    """
+    A copy of ``grads`` with the NaN and Inf entries of ``leaves`` set to zero.
+    Every other entry and leaf is kept as it is.
+    """
+
+    def clean(path, leaf):
+        if _leaf_keys(path) not in leaves:
+            return leaf
+        return jnp.where(jnp.isfinite(leaf), leaf, jnp.zeros_like(leaf))
+
+    return jax.tree_util.tree_map_with_path(clean, grads)
+
+
+def _guard_gradients(loss, grads, ffparams, opt_fftypes):
+    """
+    The gradients to step with.
+
+    A non-finite loss, or non-finite gradients of optimized parameters, give
+    the random nudge of :func:`_nan_recovery_gradients`. Non-finite gradients
+    of parameters outside ``opt_fftypes`` cannot affect the update, so only
+    those entries are set to zero and the real gradient is used. Otherwise
+    ``grads`` comes back untouched.
+    """
+    nonfinite = _nonfinite_leaves(grads)
+    if _loss_is_invalid(loss) or any(
+        _is_optimized(keys, opt_fftypes) for keys in nonfinite
+    ):
         print("Warning: Loss or gradients are NaN or Inf. Skipping this step.")
         return _nan_recovery_gradients(ffparams)
-    return grads
+    if not nonfinite:
+        return grads
+    names = ", ".join("/".join(keys) for keys in nonfinite)
+    print(
+        f"Warning: non-finite gradients of parameters that are not optimized "
+        f"({names}) were set to zero."
+    )
+    return _zero_nonfinite_entries(grads, nonfinite)
 
 
 def restore_nonfinite_params(ffparams, previous):
@@ -473,14 +534,16 @@ class BaseTrainer:
         Run one training step: loss, gradients and a parameter update.
 
         A NaN or Inf loss is retried through :meth:`_retry_invalid_loss`; one
-        that survives, or non-finite gradients, turn the step into a small
-        random perturbation. After the update, non-finite entries are put back
-        and the bounded parameters held at their floors, before "after_update".
+        that survives, or non-finite gradients of optimized parameters, turn
+        the step into a small random perturbation (see
+        :func:`_guard_gradients`). After the update, non-finite entries are put
+        back and the bounded parameters held at their floors, before
+        "after_update".
         """
         self.loss, grads = self.get_loss_gradients()
         _print_memory("grad obtained....")
         self.loss, grads = self._retry_invalid_loss(self.loss, grads)
-        grads = _guard_gradients(self.loss, grads, self.ffparams)
+        grads = _guard_gradients(self.loss, grads, self.ffparams, self.opt_fftypes)
         grads = self._do_modify("after_grad", grads)
         _print_memory("grad modify....")
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
@@ -673,7 +736,7 @@ class SumTrainer(BaseTrainer):
         print(f"{name}: {loss}")
         loss, grads = trainer._retry_invalid_loss(loss, grads)
         trainer.loss = loss
-        grads = _guard_gradients(loss, grads, trainer.ffparams)
+        grads = _guard_gradients(loss, grads, trainer.ffparams, trainer.opt_fftypes)
         return loss, trainer._do_modify("after_grad", grads)
 
     def get_loss_gradients(self):
@@ -701,9 +764,11 @@ class SumTrainer(BaseTrainer):
 
         Each half was already retried by :meth:`_substep`; the joint tree is
         sanitised before it is split, so neither half is handed a bad value.
+        Only non-finite gradients of optimized parameters turn the step into a
+        perturbation, see :func:`_guard_gradients`.
         """
         self.loss, grads = self.get_loss_gradients()
-        grads = _guard_gradients(self.loss, grads, self.ffparams)
+        grads = _guard_gradients(self.loss, grads, self.ffparams, self.opt_fftypes)
         grads = self._do_modify("after_grad", grads)
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
         self._apply_update(updates)
