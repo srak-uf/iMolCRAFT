@@ -306,19 +306,11 @@ def _is_number(text: str) -> bool:
     return True
 
 
-def _shift(number: str, offset: int) -> str:
-    """Shift a type/class number by ``offset``, keeping 0 and the sign."""
-    value = int(number)
-    if value == 0:
-        return number
-    return str(value + offset if value > 0 else value - offset)
-
-
 def _fmt(value: float) -> str:
     return repr(float(value))
 
 
-def _add_terms(root, params, shift):
+def _add_terms(root, params):
     """Write the bonded force elements."""
     s = params["scalars"]
 
@@ -328,7 +320,7 @@ def _add_terms(root, params, shift):
     })
     for c1, c2, k, r0 in params["bond"]:
         ET.SubElement(bonds, "Bond", {
-            "class1": shift(c1), "class2": shift(c2),
+            "class1": c1, "class2": c2,
             "length": _fmt(float(r0) * 0.1),
             "k": _fmt(float(k) * KCAL2KJ * 100),
         })
@@ -339,7 +331,7 @@ def _add_terms(root, params, shift):
     })
     for c1, c2, c3, k, *theta in params["angle"]:
         attrib = {
-            "class1": shift(c1), "class2": shift(c2), "class3": shift(c3),
+            "class1": c1, "class2": c2, "class3": c3,
             "k": _fmt(float(k) * KCAL2KJ * DEG2RAD**2),
         }
         # several ideal angles, chosen by the number of attached hydrogens
@@ -356,9 +348,9 @@ def _add_terms(root, params, shift):
     })
     for c1, c2, c3, c4, k in params["opbend"]:
         ET.SubElement(opbends, "Angle", {
-            "class1": shift(c1), "class2": shift(c2),
-            "class3": "" if c3 == "0" else shift(c3),
-            "class4": "" if c4 == "0" else shift(c4),
+            "class1": c1, "class2": c2,
+            "class3": "" if c3 == "0" else c3,
+            "class4": "" if c4 == "0" else c4,
             "k": _fmt(float(k) * KCAL2KJ * DEG2RAD**2),
         })
 
@@ -366,7 +358,7 @@ def _add_terms(root, params, shift):
     strbnd_scale = 10 * KCAL2KJ * DEG2RAD * float(s["strbndunit"])
     for c1, c2, c3, k1, k2 in params["strbnd"]:
         ET.SubElement(stretchbends, "StretchBend", {
-            "class1": shift(c1), "class2": shift(c2), "class3": shift(c3),
+            "class1": c1, "class2": c2, "class3": c3,
             "k1": _fmt(float(k1) * strbnd_scale),
             "k2": _fmt(float(k2) * strbnd_scale),
         })
@@ -381,7 +373,7 @@ def _add_terms(root, params, shift):
         if classes in seen or classes[::-1] in seen:
             continue
         seen.add(classes)
-        attrib = {f"class{n}": shift(c) for n, c in enumerate(classes, 1)}
+        attrib = {f"class{n}": c for n, c in enumerate(classes, 1)}
         terms = fields[4:]
         for n in range(len(terms) // 3):
             amplitude, phase, periodicity = terms[3 * n:3 * n + 3]
@@ -394,12 +386,12 @@ def _add_terms(root, params, shift):
         pitorsions = ET.SubElement(root, "AmoebaPiTorsionForce", piTorsionUnit="1.0")
         for c1, c2, k in params["pitors"]:
             ET.SubElement(pitorsions, "PiTorsion", {
-                "class1": shift(c1), "class2": shift(c2),
+                "class1": c1, "class2": c2,
                 "k": _fmt(float(k) * float(s["pitorsunit"]) * KCAL2KJ),
             })
 
 
-def _add_nonbonded(root, params, shift):
+def _add_nonbonded(root, params):
     """Write the vdW and the multipole / polarization elements."""
     s = params["scalars"]
 
@@ -412,14 +404,14 @@ def _add_nonbonded(root, params, shift):
     for fields in params["vdw"]:
         cls, radius, epsilon = fields[:3]
         ET.SubElement(vdw, "Vdw", {
-            "class": shift(cls),
+            "class": cls,
             "sigma": _fmt(float(radius) * 0.1),
             "epsilon": _fmt(float(epsilon) * KCAL2KJ),
             "reduction": fields[3] if len(fields) > 3 else "0.0",
         })
     for c1, c2, radius, epsilon in params["vdwpr"]:
         ET.SubElement(vdw, "Pair", {
-            "class1": shift(c1), "class2": shift(c2),
+            "class1": c1, "class2": c2,
             "sigma": _fmt(float(radius) * 0.1),
             "epsilon": _fmt(float(epsilon) * KCAL2KJ),
         })
@@ -428,10 +420,10 @@ def _add_nonbonded(root, params, shift):
     quadrupole_scale = BOHR_NM**2 / 3.0
     for head, dipole, q1, q2, q3 in params["multipole"]:
         atom_type, axes, charge = head[0], head[1:-1], head[-1]
-        attrib = {"type": shift(atom_type)}
-        # a negative axis type marks a bisector frame and keeps its sign
+        attrib = {"type": atom_type}
+        # a negative axis type marks a bisector frame
         for name, axis in zip(("kz", "kx", "ky"), axes):
-            attrib[name] = shift(axis)
+            attrib[name] = axis
         attrib["c0"] = charge
         for n, d in enumerate(dipole[:3], 1):
             attrib[f"d{n}"] = _fmt(float(d) * BOHR_NM)
@@ -447,12 +439,12 @@ def _add_nonbonded(root, params, shift):
                 "partners, but the OpenMM XML holds at most 6."
             )
         attrib = {
-            "type": shift(atom_type),
+            "type": atom_type,
             "polarizability": _fmt(float(alpha) * 1e-3),
             "thole": thole,
         }
         for n, partner in enumerate(group, 1):
-            attrib[f"pgrp{n}"] = shift(partner)
+            attrib[f"pgrp{n}"] = partner
         ET.SubElement(multipoles, "Polarize", attrib)
 
 
@@ -462,7 +454,6 @@ def tinker2xml(
         outxml: str,
         resname: str = "MOL",
         header: Optional[str] = None,
-        type_offset: int = 0,
         ) -> str:
     """
     Write an OpenMM ForceField XML file from a Poltype2 result.
@@ -483,11 +474,6 @@ def tinker2xml(
     header : str, optional
         Header parameter file to use instead of the one named on the
         ``parameters`` line of ``keyfile``.
-    type_offset : int, optional
-        Added to every atom type and class number. Poltype2 numbers the types
-        of each molecule from 401, so molecules parameterized separately need
-        different offsets before their XML files can be merged.
-        OpenMM requires AMOEBA types to be integers, which rules out a prefix.
 
     Returns
     -------
@@ -497,9 +483,6 @@ def tinker2xml(
     params = read_tinker_parameters(_parameters_files(keyfile, header) + [keyfile])
     atoms = read_tinker_xyz(xyzfile)
 
-    def shift(number):
-        return _shift(number, type_offset)
-
     root = ET.Element("ForceField")
 
     atom_types = ET.SubElement(root, "AtomTypes")
@@ -508,8 +491,8 @@ def tinker2xml(
             raise ValueError(f"Atom type {atom_type} of {xyzfile} is not defined in {keyfile}.")
         info = params["atom"][atom_type]
         ET.SubElement(atom_types, "Type", {
-            "name": shift(atom_type),
-            "class": shift(info["class"]),
+            "name": atom_type,
+            "class": info["class"],
             "element": _element_symbol(info["atomic_number"]),
             "mass": info["mass"],
         })
@@ -521,19 +504,47 @@ def tinker2xml(
         for atom in atoms
     }
     for atom in atoms:
-        ET.SubElement(residue, "Atom", name=names[atom["index"]], type=shift(atom["type"]))
+        ET.SubElement(residue, "Atom", name=names[atom["index"]], type=atom["type"])
     for atom in atoms:
         for other in atom["bonded"]:
             if other > atom["index"]:
                 ET.SubElement(residue, "Bond", atomName1=names[atom["index"]],
                               atomName2=names[other])
 
-    _add_terms(root, params, shift)
-    _add_nonbonded(root, params, shift)
+    _add_terms(root, params)
+    _add_nonbonded(root, params)
 
     ET.indent(root)
     ET.ElementTree(root).write(outxml)
     return outxml
+
+
+#: Attributes of a :func:`tinker2xml` file that hold an atom type number,
+#: per element. Class numbers are held by the ``class*`` attributes of any
+#: element (``_CLASS_ATTRIBUTES``).
+_TYPE_ATTRIBUTES = {
+    "Type": ("name",),
+    "Atom": ("type",),
+    "Multipole": ("type", "kz", "kx", "ky"),
+    "Polarize": ("type",) + tuple(f"pgrp{n}" for n in range(1, 7)),
+}
+_CLASS_ATTRIBUTES = ("class", "class1", "class2", "class3", "class4")
+
+
+def _shift(number: str, offset: int) -> str:
+    """Shift a type/class number away from zero, keeping 0, "" and the sign."""
+    if number in ("", "0"):
+        return number
+    value = int(number)
+    return str(value + offset if value > 0 else value - offset)
+
+
+def _renumber(root, offset: int) -> None:
+    """Shift every atom type and class number of a tinker2xml file."""
+    for element in root.iter():
+        for name in _TYPE_ATTRIBUTES.get(element.tag, ()) + _CLASS_ATTRIBUTES:
+            if name in element.attrib:
+                element.set(name, _shift(element.get(name), offset))
 
 
 def merge_amoeba_xml(ffxml_list: Sequence[str], outxml: str) -> str:
@@ -546,11 +557,20 @@ def merge_amoeba_xml(ffxml_list: Sequence[str], outxml: str) -> str:
     ``AttributeError``. The molecules of a system are therefore gathered into
     a single file, one element per force.
 
+    Poltype2 numbers the atom types of every molecule from 401 (unless told
+    otherwise by ``atmidx``), and OpenMM requires AMOEBA types to be
+    integers, so no prefix can tell the molecules apart. A file whose type
+    or class numbers clash with those of the files before it is therefore
+    renumbered: all its numbers move up by the same multiple of 100, past
+    the largest number taken so far, so 401 becomes 501, 601, ... The first
+    file and the files that do not clash keep their numbers, and every shift
+    is printed.
+
     Parameters
     ----------
     ffxml_list : sequence of str
         XML files written by :func:`tinker2xml`, each with its own residue
-        name and its own range of atom types (``type_offset``).
+        name.
     outxml : str
         Name of the merged XML file.
 
@@ -562,15 +582,32 @@ def merge_amoeba_xml(ffxml_list: Sequence[str], outxml: str) -> str:
     Raises
     ------
     ValueError
-        If two files define the same atom type or residue name, or give the
-        same force different global settings.
+        If two files share a residue name or give the same force different
+        global settings.
     """
     merged = ET.Element("ForceField")
     sections = {}
-    defined = {"AtomTypes": set(), "Residues": set()}
+    used_types, used_classes, residues = set(), set(), set()
 
     for ffxml in ffxml_list:
-        for section in ET.parse(ffxml).getroot():
+        root = ET.parse(ffxml).getroot()
+        types = {int(t.get("name")) for t in root.iter("Type")}
+        classes = {int(t.get("class")) for t in root.iter("Type")}
+        if types & used_types or classes & used_classes:
+            top = max(used_types | used_classes)
+            offset = (top // 100 + 1) * 100 - min(types | classes) // 100 * 100
+            _renumber(root, offset)
+            print(
+                f"merge_amoeba_xml: the atom types of {ffxml} clash with "
+                f"earlier files and move up by {offset} "
+                f"({min(types)} -> {min(types) + offset})"
+            )
+            types = {t + offset for t in types}
+            classes = {c + offset for c in classes}
+        used_types |= types
+        used_classes |= classes
+
+        for section in root:
             target = sections.get(section.tag)
             if target is None:
                 target = ET.SubElement(merged, section.tag, dict(section.attrib))
@@ -582,15 +619,13 @@ def merge_amoeba_xml(ffxml_list: Sequence[str], outxml: str) -> str:
                     f"{dict(target.attrib)}."
                 )
             for child in section:
-                if section.tag in defined:
-                    name = child.get("name")
-                    if name in defined[section.tag]:
-                        what = "atom type" if section.tag == "AtomTypes" else "residue"
+                if section.tag == "Residues":
+                    if child.get("name") in residues:
                         raise ValueError(
-                            f"The {what} {name} of {ffxml} is already defined. "
-                            "Give each molecule its own resname and type_offset."
+                            f"The residue {child.get('name')} of {ffxml} is "
+                            "already defined. Give each molecule its own resname."
                         )
-                    defined[section.tag].add(name)
+                    residues.add(child.get("name"))
                 target.append(child)
 
     ET.indent(merged)

@@ -62,16 +62,18 @@ file changes, so it moves the minor number.
 - `imolcraft.io.exporter_lmp.write_lammps(topology, system, positions,
   filename)` writes a data file from in-memory OpenMM objects.
 - **AMOEBA force fields from Poltype2.** `imolcraft.crafter.amoeba.tinker2xml
-  (keyfile, xyzfile, outxml, resname, header, type_offset)` turns the
+  (keyfile, xyzfile, outxml, resname, header)` turns the
   `final.key` / `final.xyz` of a Poltype2 run into an OpenMM ForceField XML
   file (bonds, angles, stretch-bend, out-of-plane bend, torsions,
   pi-torsions, buffered 14-7 vdW, multipoles and polarization). The header
   named on the `parameters` line is looked up next to the key file when the
   path Poltype2 wrote does not exist, or is given as `header=`.
-  `type_offset` shifts the type numbers, which Poltype2 starts at 401 for
-  every molecule. `merge_amoeba_xml(ffxml_list, outxml)` joins the files of
-  several molecules into one, since OpenMM 8.5 cannot load several AMOEBA
-  XML files into one `ForceField`. Terms the converter does not handle
+  `merge_amoeba_xml(ffxml_list, outxml)` joins the files of several
+  molecules into one, since OpenMM 8.5 cannot load several AMOEBA XML files
+  into one `ForceField`. Poltype2 starts the type numbers of every molecule
+  at 401, so a file whose types or classes clash with the earlier ones is
+  renumbered on the way in (401 -> 501, ...), and the shift is printed.
+  Terms the converter does not handle
   (`tortors`, `strtors`, `angtors`, non-zero `chgpen`, ...) and multipole
   scale factors other than the ones OpenMM fixes are refused instead of
   dropped. Tests on the FSI anion check the result term by term against

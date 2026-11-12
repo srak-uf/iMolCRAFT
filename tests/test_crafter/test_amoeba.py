@@ -168,26 +168,29 @@ def test_pair_pme_matches_tinkerfiles(tmp_path):
     _compare(_energies(reference, tinker.positions), _energies(converted, tinker.positions))
 
 
-def test_type_offset_and_merge(tmp_path):
+def test_merge_renumbers_clashing_types(tmp_path, capsys):
     """
-    Shifted types give the same energy, and the merged file holds both
-    copies, each usable through its own residue template.
+    Two copies of FSI-, both typed 401-404 by Poltype2: the second moves to
+    501-504 (types, classes, multipole frames and polarization groups alike),
+    and either copy gives the energy of the original.
     """
-    plain = tinker2xml(KEY, XYZ, str(tmp_path / "plain.xml"), resname="FS1",
-                       header=HEADER)
-    shifted = tinker2xml(KEY, XYZ, str(tmp_path / "shifted.xml"), resname="FS2",
-                         header=HEADER, type_offset=100)
-    text = open(shifted).read()
-    assert 'name="501"' in text and 'name="401"' not in text
-    assert 'kz="-502" kx="-502"' in text
+    first = tinker2xml(KEY, XYZ, str(tmp_path / "a.xml"), resname="FS1", header=HEADER)
+    second = tinker2xml(KEY, XYZ, str(tmp_path / "b.xml"), resname="FS2", header=HEADER)
+    merged = merge_amoeba_xml([first, second], str(tmp_path / "merged.xml"))
+    assert "move up by 100 (401 -> 501)" in capsys.readouterr().out
 
-    merged = merge_amoeba_xml([plain, shifted], str(tmp_path / "merged.xml"))
+    text = open(merged).read()
+    for shifted in ('name="501" class="501"', '<Atom name="N5" type="504"',
+                    'kz="-502" kx="-502"', 'pgrp1="501" pgrp2="503" pgrp3="504"',
+                    'class1="502" class2="504" class3="502" class4="501"'):
+        assert shifted in text, shifted
+    assert 'name="401" class="401"' in text
+
     forcefield = app.ForceField(merged)
-
     tinker = app.TinkerFiles(XYZ, _combined_key(tmp_path))
     residue = next(tinker.topology.residues())
     reference = _energies(
-        app.ForceField(plain).createSystem(tinker.topology, polarization="direct"),
+        app.ForceField(first).createSystem(tinker.topology, polarization="direct"),
         tinker.positions,
     )
     for template in ("FS1", "FS2"):
@@ -226,6 +229,8 @@ def test_mixture_with_monatomic_ion(tmp_path):
     assert 'element="Li"' in open(ion_xml).read()
     fsa_xml = tinker2xml(KEY, XYZ, str(tmp_path / "fsa.xml"), resname="FSA", header=HEADER)
     merged = merge_amoeba_xml([fsa_xml, ion_xml], str(tmp_path / "electrolyte.xml"))
+    # no clash, so both keep the numbers TinkerFiles knows them by
+    assert 'name="351" class="92"' in open(merged).read()
 
     pair = open(_two_molecules(tmp_path, shift=(1.2, 0.3, 0.2))).read().splitlines()
     pair[0] = "    20  LiFSI"
@@ -247,14 +252,9 @@ def test_mixture_with_monatomic_ion(tmp_path):
     _compare(_energies(reference, tinker.positions), _energies(converted, tinker.positions))
 
 
-def test_merge_refuses_clashes(tmp_path):
+def test_merge_refuses_shared_resname(tmp_path):
     first = tinker2xml(KEY, XYZ, str(tmp_path / "a.xml"), resname="FS1", header=HEADER)
-    same_types = tinker2xml(KEY, XYZ, str(tmp_path / "b.xml"), resname="FS2", header=HEADER)
-    with pytest.raises(ValueError, match="atom type 401"):
-        merge_amoeba_xml([first, same_types], str(tmp_path / "m.xml"))
-
-    same_name = tinker2xml(KEY, XYZ, str(tmp_path / "c.xml"), resname="FS1",
-                           header=HEADER, type_offset=100)
+    same_name = tinker2xml(KEY, XYZ, str(tmp_path / "b.xml"), resname="FS1", header=HEADER)
     with pytest.raises(ValueError, match="residue FS1"):
         merge_amoeba_xml([first, same_name], str(tmp_path / "m.xml"))
 
