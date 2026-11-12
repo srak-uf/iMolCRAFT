@@ -28,6 +28,8 @@ import shlex
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Sequence
 
+from openmm.app.element import Element
+
 __all__ = [
     "merge_amoeba_xml",
     "read_tinker_parameters",
@@ -202,7 +204,7 @@ def read_tinker_parameters(paths: Sequence[str]) -> Dict:
     -------
     dict
         ``scalars`` (setting -> value as written), ``atom`` (type ->
-        ``{"class", "symbol", "mass"}``), ``multipole`` (one
+        ``{"class", "symbol", "atomic_number", "mass"}``), ``multipole`` (one
         ``[head, dipole, q11, q21 q22, q31 q32 q33]`` block per entry) and one
         list of field lists per keyword of ``_TERM_KEYWORDS``.
 
@@ -228,9 +230,11 @@ def read_tinker_parameters(paths: Sequence[str]) -> Dict:
                 params["scalars"][keyword] = fields[1]
             elif keyword == "atom":
                 # atom <type> <class> <symbol> "<description>" <Z> <mass> <valence>
+                # the symbol is a label ("Li+", "CT"); the element is the Z
                 params["atom"][fields[1]] = {
                     "class": fields[2],
                     "symbol": fields[3],
+                    "atomic_number": int(fields[5]),
                     "mass": fields[6],
                 }
             elif keyword in _TERM_KEYWORDS:
@@ -288,6 +292,10 @@ def read_tinker_xyz(path: str) -> List[Dict]:
         }
         for row in rows[:natoms]
     ]
+
+
+def _element_symbol(atomic_number: int) -> str:
+    return Element.getByAtomicNumber(atomic_number).symbol
 
 
 def _is_number(text: str) -> bool:
@@ -502,12 +510,16 @@ def tinker2xml(
         ET.SubElement(atom_types, "Type", {
             "name": shift(atom_type),
             "class": shift(info["class"]),
-            "element": info["symbol"],
+            "element": _element_symbol(info["atomic_number"]),
             "mass": info["mass"],
         })
 
     residue = ET.SubElement(ET.SubElement(root, "Residues"), "Residue", name=resname)
-    names = {atom["index"]: f"{atom['symbol']}{atom['index']}" for atom in atoms}
+    names = {
+        atom["index"]:
+            _element_symbol(params["atom"][atom["type"]]["atomic_number"]) + str(atom["index"])
+        for atom in atoms
+    }
     for atom in atoms:
         ET.SubElement(residue, "Atom", name=names[atom["index"]], type=shift(atom["type"]))
     for atom in atoms:

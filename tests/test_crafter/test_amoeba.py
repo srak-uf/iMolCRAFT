@@ -197,6 +197,56 @@ def test_type_offset_and_merge(tmp_path):
         _compare(reference, _energies(system, tinker.positions))
 
 
+#: A monatomic cation in Tinker format. The numbers are made up for the
+#: test, not taken from an AMOEBA parameter file. The "Li+" label is not an
+#: element symbol, which is the point: the element comes from the Z field.
+_CATION_KEY = """\
+atom        351   92    Li+   "test cation"    3     6.941    0
+vdw          92               2.1000     0.0500
+polarize    351          0.0300     0.3900
+multipole   351    0    0               1.00000
+                                        0.00000    0.00000    0.00000
+                                        0.00000
+                                        0.00000    0.00000
+                                        0.00000    0.00000    0.00000
+"""
+
+
+def test_mixture_with_monatomic_ion(tmp_path):
+    """
+    Two cations and two FSI- converted separately, merged, and compared
+    with TinkerFiles reading all parameters at once (PME, mutual).
+    """
+    ion_key = tmp_path / "ion.key"
+    ion_key.write_text(_CATION_KEY)
+    ion_xyz = tmp_path / "ion.xyz"
+    ion_xyz.write_text("     1  ion\n     1  Li+   0.0  0.0  0.0   351\n")
+    ion_xml = tinker2xml(str(ion_key), str(ion_xyz), str(tmp_path / "ion.xml"),
+                         resname="LI", header=HEADER)
+    assert 'element="Li"' in open(ion_xml).read()
+    fsa_xml = tinker2xml(KEY, XYZ, str(tmp_path / "fsa.xml"), resname="FSA", header=HEADER)
+    merged = merge_amoeba_xml([fsa_xml, ion_xml], str(tmp_path / "electrolyte.xml"))
+
+    pair = open(_two_molecules(tmp_path, shift=(1.2, 0.3, 0.2))).read().splitlines()
+    pair[0] = "    20  LiFSI"
+    pair += ["    19  Li+   0.5   4.0   0.5   351", "    20  Li+  12.0  -1.0   4.5   351"]
+    xyz = tmp_path / "box.xyz"
+    xyz.write_text("\n".join(pair) + "\n")
+    combined = tmp_path / "all.key"
+    combined.write_text(open(_combined_key(tmp_path)).read() + _CATION_KEY)
+
+    box = [Vec3(3, 0, 0), Vec3(0, 3, 0), Vec3(0, 0, 3)] * unit.nanometer
+    settings = dict(nonbondedMethod=app.PME, nonbondedCutoff=1.2 * unit.nanometer,
+                    polarization="mutual", mutualInducedTargetEpsilon=1e-6,
+                    ewaldErrorTolerance=1e-5)
+    tinker = app.TinkerFiles(str(xyz), str(combined), periodicBoxVectors=box)
+    reference = tinker.createSystem(**settings)
+    converted = app.ForceField(merged).createSystem(tinker.topology, **settings)
+    for system in (reference, converted):
+        system.setDefaultPeriodicBoxVectors(*box)
+    _compare(_energies(reference, tinker.positions), _energies(converted, tinker.positions))
+
+
 def test_merge_refuses_clashes(tmp_path):
     first = tinker2xml(KEY, XYZ, str(tmp_path / "a.xml"), resname="FS1", header=HEADER)
     same_types = tinker2xml(KEY, XYZ, str(tmp_path / "b.xml"), resname="FS2", header=HEADER)
