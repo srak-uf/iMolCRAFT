@@ -1735,6 +1735,220 @@ def test_non_finite_parameters_never_reach_the_force_field(sum_trainer_env,
     assert "came out NaN or Inf after the update" in capsys.readouterr().out
 
 
+def _sigma_epsilon_gradients(trainer, sigma, epsilon):
+    """Gradients of ``trainer`` with sigma and epsilon filled with the given values"""
+    import jax
+
+    grads = jax.tree_util.tree_map(lambda x: jnp.ones_like(x) * 0.1, trainer.ffparams)
+    grads["NonbondedForce"]["sigma"] = jnp.full_like(
+        trainer.ffparams["NonbondedForce"]["sigma"], sigma
+    )
+    grads["NonbondedForce"]["epsilon"] = jnp.full_like(
+        trainer.ffparams["NonbondedForce"]["epsilon"], epsilon
+    )
+    return jnp.float32(1.0), grads
+
+
+def _count_recovery_calls(monkeypatch):
+    """Spy on the perturbation route and return the list its calls are added to"""
+    import imolcraft.trainer.base as base
+
+    calls = []
+    real = base._nan_recovery_gradients
+    monkeypatch.setattr(
+        base, "_nan_recovery_gradients",
+        lambda ffparams: (calls.append(1), real(ffparams))[1],
+    )
+    return calls
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_bad_gradients_outside_opt_fftypes_keep_the_real_gradient(
+    bad, sum_trainer_env, monkeypatch, capsys
+):
+    """A virtual site's epsilon going NaN must not throw away the sigma gradient"""
+    from imolcraft.trainer.base import tree_is_finite
+
+    trainer = sum_trainer_env("skip", opt_fftypes=["NonbondedForce/sigma"])
+    trainer.setup()
+    before = trainer.ffparams["NonbondedForce"]["sigma"]
+    trainer.get_loss_gradients = lambda: _sigma_epsilon_gradients(trainer, 0.1, bad)
+    calls = _count_recovery_calls(monkeypatch)
+    trainer.training_step()
+
+    assert calls == []
+    assert bool(jnp.all(trainer.ffparams["NonbondedForce"]["sigma"] < before))
+    assert tree_is_finite(trainer.ffparams)
+    out = capsys.readouterr().out
+    assert "not optimized (NonbondedForce/epsilon) were set to zero" in out
+    assert "Skipping this step" not in out
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_bad_gradients_of_an_optimized_parameter_still_perturb(
+    bad, sum_trainer_env, monkeypatch, capsys
+):
+    """One bad optimized leaf is enough, even when everything else is finite"""
+    trainer = sum_trainer_env("opt", opt_fftypes=["NonbondedForce/sigma"])
+    trainer.setup()
+    trainer.get_loss_gradients = lambda: _sigma_epsilon_gradients(trainer, bad, 0.1)
+    calls = _count_recovery_calls(monkeypatch)
+    trainer.training_step()
+
+    assert len(calls) == 1
+    assert "Skipping this step" in capsys.readouterr().out
+
+
+def test_a_nan_loss_perturbs_even_with_finite_optimized_gradients(monkeypatch):
+    from imolcraft.trainer.base import _guard_gradients
+
+    calls = _count_recovery_calls(monkeypatch)
+    grads = {"A": {"x": jnp.array([1.0]), "y": jnp.array([jnp.nan])}}
+    _guard_gradients(jnp.float32(jnp.nan), grads, grads, ["A/x"])
+
+    assert len(calls) == 1
+
+
+def test_sumtrainer_keeps_the_real_gradient_past_bad_unoptimized_leaves(
+    sum_trainer_env, monkeypatch, capsys
+):
+    """Both the guard of each half and the joint one let the step through"""
+    from imolcraft.trainer.base import SumTrainer, tree_is_finite
+
+    make = sum_trainer_env
+    trainer = SumTrainer(
+        make("t1", opt_fftypes=["NonbondedForce/sigma"]),
+        make("t2", opt_fftypes=["NonbondedForce/sigma"]),
+        opt_fftypes=["NonbondedForce/sigma"], weight=[1.0, 1.0], lr=0.01, clip=0.1,
+    )
+    trainer.setup()
+    before = trainer.ffparams["NonbondedForce"]["sigma"]
+    for sub in (trainer.trainer1, trainer.trainer2):
+        sub.get_loss_gradients = (
+            lambda sub=sub: _sigma_epsilon_gradients(sub, 0.1, jnp.nan)
+        )
+    calls = _count_recovery_calls(monkeypatch)
+    trainer.training_step()
+
+    assert calls == []
+    assert bool(jnp.all(trainer.ffparams["NonbondedForce"]["sigma"] < before))
+    assert tree_is_finite(trainer.ffparams)
+    out = capsys.readouterr().out
+    assert "NonbondedForce/epsilon" in out
+    assert "Skipping this step" not in out
+
+
+@pytest.mark.parametrize(
+    "sub_fftypes, sigma, epsilon, expected_recoveries",
+    [
+        # epsilon is optimized by the subs only, so its NaN must not perturb
+        (["NonbondedForce/sigma", "NonbondedForce/epsilon"], 0.1, jnp.nan, 0),
+        # sigma is optimized by the parent only, so its NaN must not be zeroed
+        (["NonbondedForce/charge"], jnp.nan, 0.1, 2),
+    ],
+    ids=["optimized-by-subs-only", "optimized-by-parent-only"],
+)
+def test_sumtrainer_guards_the_halves_by_the_parent_opt_fftypes(
+    sub_fftypes, sigma, epsilon, expected_recoveries, sum_trainer_env, monkeypatch,
+    capsys,
+):
+    """The joint optimizer steps the parameters, so its opt_fftypes decide"""
+    from imolcraft.trainer.base import SumTrainer, tree_is_finite
+
+    make = sum_trainer_env
+    trainer = SumTrainer(
+        make("t1", opt_fftypes=sub_fftypes),
+        make("t2", opt_fftypes=sub_fftypes),
+        opt_fftypes=["NonbondedForce/sigma"], weight=[1.0, 1.0], lr=0.01, clip=0.1,
+    )
+    trainer.setup()
+    before = trainer.ffparams["NonbondedForce"]["sigma"]
+    for sub in (trainer.trainer1, trainer.trainer2):
+        sub.get_loss_gradients = (
+            lambda sub=sub: _sigma_epsilon_gradients(sub, sigma, epsilon)
+        )
+    calls = _count_recovery_calls(monkeypatch)
+    trainer.training_step()
+
+    # one guard per half, each deciding the way the parent's list says
+    assert len(calls) == expected_recoveries
+    assert tree_is_finite(trainer.ffparams)
+    out = capsys.readouterr().out
+    assert ("Skipping this step" in out) is (expected_recoveries > 0)
+    if expected_recoveries == 0:
+        assert bool(jnp.all(trainer.ffparams["NonbondedForce"]["sigma"] < before))
+        assert "not optimized (NonbondedForce/epsilon)" in out
+
+
+@pytest.mark.parametrize(
+    "keys, opt_fftypes, expected",
+    [
+        (("NonbondedForce", "sigma"), ["NonbondedForce/sigma"], True),
+        (("NonbondedForce", "epsilon"), ["NonbondedForce/sigma"], False),
+        (("A", "B", "c"), ["A/B/c"], True),
+        (("A", "B", "d"), ["A/B/c"], False),
+        (("A", "B", "c"), ["A/B"], True),
+        (("A", "C", "c"), ["A/B"], False),
+        # whole keys are compared, not a shared string prefix
+        (("NonbondedForce", "sigma"), ["NonbondedForce/sig"], False),
+        # a leaf above the path of an entry is not selected by it
+        (("A", "B"), ["A/B/c"], False),
+        (("A", "B"), [], False),
+    ],
+)
+def test_is_optimized_walks_the_split_keys(keys, opt_fftypes, expected):
+    from imolcraft.trainer.base import _is_optimized
+
+    assert _is_optimized(keys, opt_fftypes) is expected
+
+
+def test_guard_zeroes_only_the_bad_entries_of_unoptimized_leaves(capsys):
+    """Finite entries, optimized leaves and integer leaves are left as they are"""
+    from imolcraft.trainer.base import _guard_gradients
+
+    optimized = jnp.array([1e-30, -0.0, 2.5], dtype=jnp.float32)
+    integers = jnp.array([2, 3], dtype=jnp.int32)
+    grads = {
+        "A": {
+            "B": {
+                "opt": optimized,
+                "skip": jnp.array([[jnp.nan, 1.5], [jnp.inf, -jnp.inf]]),
+            },
+            "n": integers,
+        },
+        "C": {"fine": jnp.array([4.0, 5.0])},
+    }
+    out = _guard_gradients(jnp.float32(1.0), grads, grads, ["A/B/opt"])
+
+    assert out["A"]["B"]["opt"] is optimized
+    assert out["A"]["n"] is integers
+    assert out["C"]["fine"] is grads["C"]["fine"]
+    skip = out["A"]["B"]["skip"]
+    assert skip.dtype == grads["A"]["B"]["skip"].dtype and skip.shape == (2, 2)
+    assert skip.tolist() == [[0.0, 1.5], [0.0, 0.0]]
+    # the input was not written to
+    assert bool(jnp.isnan(grads["A"]["B"]["skip"][0, 0]))
+    assert "(A/B/skip) were set to zero" in capsys.readouterr().out
+
+
+def test_guard_treats_every_leaf_below_a_subtree_entry_as_optimized(monkeypatch):
+    from imolcraft.trainer.base import _guard_gradients
+
+    calls = _count_recovery_calls(monkeypatch)
+    grads = {"A": {"B": {"x": jnp.array([jnp.nan]), "y": jnp.array([1.0])}}}
+    _guard_gradients(jnp.float32(1.0), grads, grads, ["A/B"])
+
+    assert len(calls) == 1
+
+
+def test_guard_hands_finite_gradients_back_untouched(capsys):
+    from imolcraft.trainer.base import _guard_gradients
+
+    grads = {"A": {"x": jnp.array([1.0]), "n": jnp.array([1], dtype=jnp.int32)}}
+    assert _guard_gradients(jnp.float32(1.0), grads, grads, ["A/x"]) is grads
+    assert "Warning" not in capsys.readouterr().out
+
+
 def _fit_stub(losses, tmp_path):
     """Minimal ``self`` for :meth:`BaseTrainer.fit` returning fixed losses"""
     import types
