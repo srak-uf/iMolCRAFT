@@ -1,0 +1,55 @@
+# Global settings of the AMOEBA functional form, for the iMolCRAFT tests.
+#
+# Written for iMolCRAFT, not copied from a Tinker or Poltype2 parameter file.
+# The values are the AMOEBA constants as OpenMM 8.5 uses them: the defaults
+# of openmm.app.TinkerFiles and the attributes of openmm/app/data/
+# amoeba2018.xml (both MIT licensed). torsionunit is 0.5 as in AMOEBA-BIO-2018,
+# the convention the Poltype2 torsion fit of fsa_amoeba.key was made in.
+# It holds no atom parameters; those come from the key file.
+
+forcefield        AMOEBA-BIO-2018
+
+bond-cubic        -2.55
+bond-quartic      3.793125
+angle-cubic       -0.014
+angle-quartic     0.000056
+angle-pentic      -0.0000007
+angle-sextic      0.000000022
+opbendtype        ALLINGER
+opbend-cubic      -0.014
+opbend-quartic    0.000056
+opbend-pentic     -0.0000007
+opbend-sextic     0.000000022
+torsionunit       0.5
+
+vdwtype           BUFFERED-14-7
+radiusrule        CUBIC-MEAN
+radiustype        R-MIN
+radiussize        DIAMETER
+epsilonrule       HHG
+vdw-12-scale      0.0
+vdw-13-scale      0.0
+vdw-14-scale      1.0
+vdw-15-scale      1.0
+
+polarization      MUTUAL
+mpole-12-scale    0.0
+mpole-13-scale    0.0
+mpole-14-scale    0.4
+mpole-15-scale    0.8
+polar-12-scale    0.0
+polar-13-scale    0.0
+polar-14-scale    1.0
+polar-15-scale    1.0
+polar-12-intra    0.0
+polar-13-intra    0.0
+polar-14-intra    0.5
+polar-15-intra    1.0
+direct-11-scale   0.0
+direct-12-scale   1.0
+direct-13-scale   1.0
+direct-14-scale   1.0
+mutual-11-scale   1.0
+mutual-12-scale   1.0
+mutual-13-scale   1.0
+mutual-14-scale   1.0
