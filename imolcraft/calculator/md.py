@@ -34,7 +34,9 @@ __all__ = [
 #: Settings that only make sense for one software and are refused (with a
 #: non-default value) when the other one is selected. GMXCalculator accepts
 #: and ignores them, which is why they cannot be derived from its SETTINGS.
-_OPENMM_ONLY = ("anneal_interval", "rigidWater")
+_OPENMM_ONLY = (
+    "anneal_interval", "rigidWater", "polarization", "mutualInducedTargetEpsilon",
+)
 
 #: Settings each software reads, derived from the SETTINGS of its calculator:
 #: ``{software: {setting: default}}``. A setting appearing under both names

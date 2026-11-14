@@ -37,6 +37,20 @@ def test_exporter_writes_files(fmt, suffixes, tmp_path, monkeypatch):
         assert out.exists() and out.stat().st_size > 0
 
 
+def test_exporter_gmx_refuses_amoeba(tmp_path):
+    """parmed drops the AMOEBA forces, so the topology would be empty"""
+    pdb = app.PDBFile(os.path.join(DATA, "amoeba_electrolyte.pdb"))
+    system = app.ForceField(os.path.join(DATA, "amoeba_electrolyte.xml")).createSystem(
+        pdb.topology, nonbondedMethod=app.PME, nonbondedCutoff=1.2 * unit.nanometer
+    )
+    system_xml = tmp_path / "amoeba_system.xml"
+    system_xml.write_text(XmlSerializer.serialize(system))
+    with pytest.raises(NotImplementedError, match="AMOEBA"):
+        exporter(os.path.join(DATA, "amoeba_electrolyte.pdb"), str(system_xml),
+                 str(tmp_path / "out"), "gmx")
+    assert not (tmp_path / "out.top").exists()
+
+
 def test_exporter_lmp_header(tmp_path, monkeypatch):
     """The LAMMPS data file headers are written in the expected order"""
     monkeypatch.chdir(tmp_path)

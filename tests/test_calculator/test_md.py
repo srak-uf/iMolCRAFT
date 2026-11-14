@@ -67,6 +67,14 @@ def test_a_default_valued_setting_of_the_other_software_is_dropped():
     assert "ntomp" not in calc.to_dict()
 
 
+def test_polarization_is_an_openmm_setting():
+    """GROMACS has no AMOEBA, so a polarization choice under it is refused"""
+    with pytest.raises(ValueError, match="polarization: openmm setting"):
+        MDCalculator("x.pdb", software="gromacs", polarization="direct")
+    calc = MDCalculator("x.pdb", software="gromacs", polarization="mutual")
+    assert "polarization" not in calc.to_dict()
+
+
 def test_an_unknown_setting_is_a_type_error_for_both():
     with pytest.raises(TypeError, match="unknown MD settings: temperature"):
         MDCalculator("x.pdb", temperature=350.0)
@@ -106,7 +114,7 @@ def test_shared_settings_have_the_same_default_under_both_softwares():
 def test_software_settings_are_derived_from_the_calculators():
     assert SOFTWARE_SETTINGS["openmm"] == OpenMMCalculator.SETTINGS
     assert set(SOFTWARE_SETTINGS["gromacs"]) == set(GMXCalculator.SETTINGS) - {
-        "anneal_interval", "rigidWater",
+        "anneal_interval", "rigidWater", "polarization", "mutualInducedTargetEpsilon",
     }
     for name, default in SOFTWARE_SETTINGS["gromacs"].items():
         assert GMXCalculator.SETTINGS[name] == default
@@ -215,7 +223,12 @@ def test_a_record_written_before_the_software_could_be_chosen_is_openmm():
     for name, value in old.items():
         if name != "init_structure":
             assert getattr(calc.backend, name) == value, name
-    assert calc.to_dict() == dict(old, software="openmm", pressure_bar=1.0)
+    # the settings added since come back at their defaults, which are what the
+    # old run used (OpenMM's own polarization defaults included)
+    assert calc.to_dict() == dict(
+        old, software="openmm", pressure_bar=1.0,
+        polarization="mutual", mutualInducedTargetEpsilon=1e-5,
+    )
 
 
 # -- re-exports ---------------------------------------------------------------

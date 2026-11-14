@@ -20,7 +20,8 @@ def exporter_gmx(pdb, system, filename):
     ``[ virtual_sites3 ]`` (``ThreeParticleAverageSite``: funct 1,
     ``OutOfPlaneSite``: funct 4), with the exclusions of the System listed in
     ``[ exclusions ]``, so that GROMACS evaluates the same model as OpenMM.
-    ``LocalCoordinatesSite`` has no GROMACS counterpart here and is refused.
+    ``LocalCoordinatesSite`` has no GROMACS counterpart here and is refused,
+    and so is an AMOEBA System, whose polarizable multipoles GROMACS lacks.
 
     Parameters
     ----------
@@ -36,6 +37,18 @@ def exporter_gmx(pdb, system, filename):
     pdb_omm = PDBFile(pdb)
     with open(system) as f:
         system_omm = XmlSerializer.deserialize(f.read())
+
+    # parmed does not read the AMOEBA forces and would write a topology
+    # without charges, vdW or angles, which GROMACS would happily run
+    amoeba = sorted({
+        force.getName() for force in system_omm.getForces()
+        if force.getName().startswith("Amoeba")
+    })
+    if amoeba:
+        raise NotImplementedError(
+            f"{system} is an AMOEBA (polarizable) system ({', '.join(amoeba)}), "
+            "which GROMACS cannot run. Sample it with OpenMM (software: openmm)."
+        )
 
     vsites = _virtual_sites(system_omm)
     if not vsites:
