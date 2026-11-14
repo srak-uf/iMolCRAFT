@@ -61,9 +61,25 @@ file changes, so it moves the minor number.
   (`outOfPlane`) interleaved in one box.
 - `imolcraft.io.exporter_lmp.write_lammps(topology, system, positions,
   filename)` writes a data file from in-memory OpenMM objects.
+- **AMOEBA force fields in OpenMM MD.** `OpenMMCalculator` (and
+  `MDCalculator` / the sampling blocks with `software: openmm`) takes two
+  settings for polarizable force fields: `polarization` (`mutual`,
+  `extrapolated` or `direct`, default `mutual`) and
+  `mutualInducedTargetEpsilon` (default 1e-5), OpenMM's own defaults. They
+  are passed to `createSystem` only when the force field carries AMOEBA
+  multipoles, and are refused with a `ValueError` for a fixed-charge force
+  field when changed from their defaults. `dispcorr` now also switches the
+  long-range correction of the AMOEBA vdW force, which OpenMM otherwise
+  turns on by itself. Like `rigidWater`, both are OpenMM-only: GROMACS
+  accepts their defaults and refuses other values. Checkpoint records gain
+  the two keys; older records restore with the defaults.
 
 ### Fixed
 
+- The GROMACS exporter (`exporter(..., "gmx")`, and through it
+  `GMXCalculator`) refuses an AMOEBA System with a `NotImplementedError`.
+  parmed does not read the AMOEBA forces, so the topology came out with zero
+  charges and no vdW or angle terms and GROMACS ran it without complaint.
 - Examples that no longer ran or silently optimized nothing:
   `examples/crafter/pf6` (import typo, no density for the default packing
   mode), `examples/trainer/distance` (`NonbondedForce/charges` and a missing

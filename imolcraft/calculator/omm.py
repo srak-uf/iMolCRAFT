@@ -22,6 +22,7 @@ import os
 import openmm
 from openmm import app
 import openmm.unit as unit
+from openmm.app.forcefield import AmoebaMultipoleGenerator
 
 from ._mdcommon import (
     MD_LOG_MODES,
@@ -33,6 +34,22 @@ from ._mdcommon import (
 )
 
 __all__ = ["OpenMMCalculator"]
+
+#: How the induced dipoles of a polarizable (AMOEBA) force field are found:
+#: solved self-consistently, extrapolated from a few iterations, or induced
+#: by the permanent multipoles alone.
+POLARIZATION_METHODS = ("mutual", "extrapolated", "direct")
+
+#: The settings that only mean something to a polarizable force field.
+_POLARIZATION_SETTINGS = ("polarization", "mutualInducedTargetEpsilon")
+
+
+def _is_polarizable(forcefield):
+    """True when the force field carries AMOEBA multipoles."""
+    return any(
+        isinstance(generator, AmoebaMultipoleGenerator)
+        for generator in forcefield.getGenerators()
+    )
 
 
 def _ramp_temperature(simulation, integrator, T_from, T_to, nsteps, interval):
@@ -136,11 +153,22 @@ class OpenMMCalculator:
     nonbondedmethod : str, optional
         ``"PME"`` or ``"LJPME"``. Default ``"PME"``.
     dispcorr : bool, optional
-        Whether the nonbonded force applies a long-range dispersion correction.
+        Whether the nonbonded force applies a long-range dispersion
+        correction; for an AMOEBA force field, the vdW force.
     useHbondConstraint : bool, optional
         Whether bonds to hydrogen are constrained. Default True.
     rigidWater : bool, optional
         Whether water molecules are kept rigid. Default False.
+    polarization : {'mutual', 'extrapolated', 'direct'}, optional
+        How the induced dipoles of an AMOEBA force field are found. Default
+        ``"mutual"``, solved to self-consistency every step.
+    mutualInducedTargetEpsilon : float, optional
+        Convergence target of the mutual induced dipoles. Default 1e-5, the
+        OpenMM default.
+
+        These two apply to AMOEBA force fields only; with a fixed-charge
+        force field they must keep their defaults, so a polarization setting
+        is never silently ignored.
     device : str, optional
         OpenMM platform name. Default ``"CPU"``.
     md_log : {'stdout', 'file', 'none'}, optional
@@ -173,6 +201,8 @@ class OpenMMCalculator:
         "dispcorr": False,
         "useHbondConstraint": True,
         "rigidWater": False,
+        "polarization": "mutual",
+        "mutualInducedTargetEpsilon": 1e-5,
         "device": "CPU",
         "md_log": "stdout",
         "md_logfile": None,
@@ -193,6 +223,11 @@ class OpenMMCalculator:
             raise ValueError(
                 f"Invalid ensemble {self.ensemble}. Must be one of "
                 f"{list(VALID_ENSEMBLES)}."
+            )
+        if self.polarization not in POLARIZATION_METHODS:
+            raise ValueError(
+                f"Invalid polarization {self.polarization}. Must be one of "
+                f"{list(POLARIZATION_METHODS)}."
             )
         # a broken schedule should show up now, not after the minimization
         self.anneal_legs = _anneal_schedule(self.anneal_T, self.anneal_steps)
@@ -230,17 +265,31 @@ class OpenMMCalculator:
         pos = modeller.getPositions()
         topology = modeller.topology
 
-        constraints = {"constraints": app.HBonds} if self.useHbondConstraint else {}
+        extra = {"constraints": app.HBonds} if self.useHbondConstraint else {}
+        # createSystem refuses arguments no force uses, so the polarization
+        # settings go to an AMOEBA force field only
+        if _is_polarizable(forcefield):
+            extra.update({name: getattr(self, name) for name in _POLARIZATION_SETTINGS})
+        else:
+            changed = [
+                name for name in _POLARIZATION_SETTINGS
+                if getattr(self, name) != self.SETTINGS[name]
+            ]
+            if changed:
+                raise ValueError(
+                    f"{', '.join(changed)} only apply to a polarizable (AMOEBA) "
+                    f"force field, and {ffxml} has none."
+                )
         system = forcefield.createSystem(
             topology,
             nonbondedMethod=resolve_nonbondedmethod(self.nonbondedmethod),
             nonbondedCutoff=self.rcut_nm * unit.nanometer,
             rigidWater=self.rigidWater,
-            **constraints,
+            **extra,
         )
 
         for force in system.getForces():
-            if isinstance(force, openmm.NonbondedForce):
+            if isinstance(force, (openmm.NonbondedForce, openmm.AmoebaVdwForce)):
                 force.setUseDispersionCorrection(self.dispcorr)
 
         log(f"Using {self.ensemble} ensemble")

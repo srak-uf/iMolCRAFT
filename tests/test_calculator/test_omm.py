@@ -310,3 +310,86 @@ def test_calculator_settings_are_named_as_the_sampling_section_is():
     assert calc.dispcorr is True
     assert calc.pressure_bar == 2.0
     assert calc.anneal_legs == [(233.15, 400.0, 50)]
+
+
+# -- AMOEBA (polarizable) force fields ----------------------------------------
+
+#: One cation, one FSI- and three ethylene carbonate in a 3 nm box, and their
+#: AMOEBA force field: the Poltype2 results of FSI- and EC converted with
+#: imolcraft.crafter.amoeba.tinker2xml and joined with merge_amoeba_xml. The
+#: cation parameters are made up for the tests.
+AMOEBA_PDB = os.path.join(DATA, "amoeba_electrolyte.pdb")
+AMOEBA_XML = os.path.join(DATA, "amoeba_electrolyte.xml")
+FIXED_CHARGE_PDB = os.path.join(DATA, "supercell_bonds.pdb")
+FIXED_CHARGE_XML = os.path.join(DATA, "supercell_bonds_novsite.xml")
+
+
+def _forces(simulation, kind):
+    return [f for f in simulation.system.getForces() if isinstance(f, kind)]
+
+
+@pytest.mark.parametrize("polarization, kind", [
+    ("mutual", "Mutual"), ("extrapolated", "Extrapolated"), ("direct", "Direct"),
+])
+def test_amoeba_takes_the_polarization_settings(polarization, kind):
+    openmm = pytest.importorskip("openmm")
+    calc = omm.OpenMMCalculator(AMOEBA_PDB, polarization=polarization,
+                                mutualInducedTargetEpsilon=1e-6)
+    simulation, _, _ = calc._build_simulation(AMOEBA_XML, lambda message: None)
+    (multipoles,) = _forces(simulation, openmm.AmoebaMultipoleForce)
+    assert multipoles.getPolarizationType() == getattr(openmm.AmoebaMultipoleForce, kind)
+    assert multipoles.getMutualInducedTargetEpsilon() == 1e-6
+    assert multipoles.getNonbondedMethod() == openmm.AmoebaMultipoleForce.PME
+
+
+def test_amoeba_defaults_to_mutual_polarization():
+    """The defaults are OpenMM's own, so an AMOEBA run is unchanged by them"""
+    openmm = pytest.importorskip("openmm")
+    assert omm.OpenMMCalculator.SETTINGS["polarization"] == "mutual"
+    assert omm.OpenMMCalculator.SETTINGS["mutualInducedTargetEpsilon"] == 1e-5
+    simulation, _, _ = omm.OpenMMCalculator(AMOEBA_PDB)._build_simulation(
+        AMOEBA_XML, lambda message: None
+    )
+    (multipoles,) = _forces(simulation, openmm.AmoebaMultipoleForce)
+    assert multipoles.getPolarizationType() == openmm.AmoebaMultipoleForce.Mutual
+    assert multipoles.getMutualInducedTargetEpsilon() == 1e-5
+
+
+@pytest.mark.parametrize("dispcorr", [False, True])
+def test_dispcorr_reaches_the_amoeba_vdw(dispcorr):
+    """OpenMM switches the AMOEBA vdW correction on by itself; dispcorr decides"""
+    openmm = pytest.importorskip("openmm")
+    calc = omm.OpenMMCalculator(AMOEBA_PDB, dispcorr=dispcorr)
+    simulation, _, _ = calc._build_simulation(AMOEBA_XML, lambda message: None)
+    (vdw,) = _forces(simulation, openmm.AmoebaVdwForce)
+    assert vdw.getUseDispersionCorrection() is dispcorr
+
+
+def test_polarization_settings_are_refused_for_a_fixed_charge_force_field():
+    """With no multipoles to polarize, a changed setting would be silently ignored"""
+    pytest.importorskip("openmm")
+    calc = omm.OpenMMCalculator(FIXED_CHARGE_PDB, polarization="direct")
+    with pytest.raises(ValueError, match="polarization only apply to a polarizable"):
+        calc._build_simulation(FIXED_CHARGE_XML, lambda message: None)
+    # the defaults are fine, and are not passed to createSystem
+    omm.OpenMMCalculator(FIXED_CHARGE_PDB)._build_simulation(
+        FIXED_CHARGE_XML, lambda message: None
+    )
+
+
+def test_calculator_rejects_an_unknown_polarization():
+    with pytest.raises(ValueError, match="Invalid polarization"):
+        omm.OpenMMCalculator("start.pdb", polarization="Mutual")
+
+
+def test_amoeba_md_writes_a_trajectory(tmp_path, monkeypatch):
+    """A short NPT run of the AMOEBA electrolyte, H bonds constrained"""
+    mdtraj = pytest.importorskip("mdtraj")
+    monkeypatch.chdir(tmp_path)
+    calc = omm.OpenMMCalculator(
+        AMOEBA_PDB, ensemble="isonpt", relax_steps=10, prod_steps=20, nstxout=10,
+        md_log="none",
+    )
+    xtc = calc.run(AMOEBA_XML, "amoeba.xtc")
+    traj = mdtraj.load(xtc, top=AMOEBA_PDB)
+    assert traj.n_frames == 2 and traj.n_atoms == 40

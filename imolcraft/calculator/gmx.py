@@ -364,6 +364,10 @@ class GMXCalculator:
         the System is exported with flexible water, and GROMACS keeps water
         rigid only through ``[ settles ]`` in the topology, which the
         exporter does not write.
+    polarization, mutualInducedTargetEpsilon : optional
+        Accepted for compatibility with ``OpenMMCalculator`` and **not used**:
+        they steer AMOEBA force fields, which GROMACS cannot run (the
+        exporter refuses them).
     device : str, optional
         ``"CPU"`` runs the nonbonded kernels on the CPU (``mdrun -nb cpu``);
         any other value (``"CUDA"``, ``"OpenCL"``, ``"HIP"``) asks for the
@@ -454,6 +458,8 @@ class GMXCalculator:
         "dispcorr": False,
         "useHbondConstraint": True,
         "rigidWater": False,
+        "polarization": "mutual",
+        "mutualInducedTargetEpsilon": 1e-5,
         "device": "CPU",
         "md_log": "stdout",
         "md_logfile": None,
