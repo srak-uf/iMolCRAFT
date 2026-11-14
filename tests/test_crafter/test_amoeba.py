@@ -9,6 +9,7 @@ since in OpenMM 8.5 each file it reads resets the global settings the
 previous one made (``torsionunit`` among them).
 """
 import os
+import re
 import shutil
 
 import pytest
@@ -27,18 +28,26 @@ XYZ = os.path.join(DATA, "fsa_amoeba.xyz")
 HEADER = os.path.join(DATA, "amoeba_bio18_settings.prm")
 #: a point of the Poltype2 torsion scan, the geometry of the Tinker energies
 SCAN_XYZ = os.path.join(DATA, "fsa_amoeba_scan034.xyz")
+#: ethylene carbonate, typed 501-505 by Poltype2 (atmidx=501), QM with Psi4
+EC_KEY = os.path.join(DATA, "ec_amoeba.key")
+EC_XYZ = os.path.join(DATA, "ec_amoeba.xyz")
+#: the structure Tinker's minimize ended at, and the energy it printed
+EC_MIN_XYZ = os.path.join(DATA, "ec_amoeba_min.xyz")
+EC_MIN_ENERGY = -0.04242140
 
 pytestmark = pytest.mark.skipif(
     not hasattr(app, "TinkerFiles"), reason="needs openmm.app.TinkerFiles (OpenMM >= 8.2)"
 )
 
 
-def _combined_key(tmp_path):
-    """Header and key in one file, the way TinkerFiles needs them."""
+def _combined_key(tmp_path, keys=(KEY,), extra=""):
+    """Header, keys and ``extra`` in one file, the way TinkerFiles needs them."""
     path = tmp_path / "combined.key"
-    with open(HEADER) as header, open(KEY) as key:
-        body = [line for line in key if not line.startswith("parameters")]
-        path.write_text(header.read() + "".join(body))
+    text = open(HEADER).read()
+    for key in keys:
+        with open(key) as f:
+            text += "".join(line for line in f if not line.startswith("parameters"))
+    path.write_text(text + extra)
     return str(path)
 
 
@@ -247,6 +256,106 @@ def test_mixture_with_monatomic_ion(tmp_path):
     tinker = app.TinkerFiles(str(xyz), str(combined), periodicBoxVectors=box)
     reference = tinker.createSystem(**settings)
     converted = app.ForceField(merged).createSystem(tinker.topology, **settings)
+    for system in (reference, converted):
+        system.setDefaultPeriodicBoxVectors(*box)
+    _compare(_energies(reference, tinker.positions), _energies(converted, tinker.positions))
+
+
+def test_ec_matches_tinker(tmp_path):
+    """
+    Ethylene carbonate brings the terms FSI- lacks: in-plane angles and
+    out-of-plane bends at the carbonyl carbon, a vdW reduction factor on the
+    hydrogens, and several polarization groups, so a lone molecule is
+    polarized (mutual) by itself.
+    """
+    xml = tinker2xml(EC_KEY, EC_XYZ, str(tmp_path / "ec.xml"), resname="EC", header=HEADER)
+    tinker = app.TinkerFiles(EC_MIN_XYZ, _combined_key(tmp_path, keys=(EC_KEY,)))
+    settings = dict(nonbondedMethod=app.NoCutoff, polarization="mutual",
+                    mutualInducedTargetEpsilon=1e-6)
+    reference = _energies(tinker.createSystem(**settings), tinker.positions)
+    converted = _energies(
+        app.ForceField(xml).createSystem(tinker.topology, **settings), tinker.positions
+    )
+    _compare(reference, converted)
+    for name in ("AmoebaInPlaneAngleForce", "AmoebaOutOfPlaneBendForce"):
+        assert reference[name] != 0.0, name
+    # Tinker's own value; the xyz holds 8 decimals and the dipoles converge
+    # to Tinker's polar-eps, hence the looser tolerance
+    assert sum(converted.values()) == pytest.approx(EC_MIN_ENERGY, abs=1e-5)
+
+
+def _stack_xyz(path, placements):
+    """One Tinker xyz holding the molecules of ``placements`` (file, shift in A)."""
+    lines, offset = [], 0
+    for xyzfile, (dx, dy, dz) in placements:
+        with open(xyzfile) as f:
+            natoms = int(f.readline().split()[0])
+            rows = [f.readline().split() for _ in range(natoms)]
+        for row in rows:
+            bonded = " ".join(str(int(b) + offset) for b in row[6:])
+            lines.append(
+                f"{int(row[0]) + offset:6d}  {row[1]:3s} {float(row[2]) + dx:12.6f} "
+                f"{float(row[3]) + dy:12.6f} {float(row[4]) + dz:12.6f} {row[5]:>6s} {bonded}"
+            )
+        offset += natoms
+    path.write_text(f"{offset}  stacked\n" + "\n".join(lines) + "\n")
+    return str(path)
+
+
+@pytest.mark.parametrize("ec_types", ["501", "401"])
+def test_electrolyte_matches_tinkerfiles(tmp_path, ec_types):
+    """
+    A cation, FSI- and three EC converted separately and merged, under PME
+    with mutual polarization, through a PDB topology. With ``"401"`` the EC
+    files are retyped 401-405 first, as Poltype2 types a molecule by default,
+    so they clash with FSI- and the merge has to move them back to 501-505.
+    """
+    ec_key, ec_xyz = EC_KEY, EC_XYZ
+    if ec_types == "401":
+        ec_key, ec_xyz = str(tmp_path / "ec401.key"), str(tmp_path / "ec401.xyz")
+        for source, target in ((EC_KEY, ec_key), (EC_XYZ, ec_xyz)):
+            text = re.sub(r"(?<![\d.\-])(-?)50([1-5])(?![\d.])", r"\g<1>40\2",
+                          open(source).read())
+            open(target, "w").write(text)
+    ion_key = tmp_path / "ion.key"
+    ion_key.write_text(_CATION_KEY)
+    ion_xyz = tmp_path / "ion.xyz"
+    ion_xyz.write_text("     1  ion\n     1  Li+   0.0  0.0  0.0   351\n")
+
+    xmls = [
+        tinker2xml(KEY, XYZ, str(tmp_path / "fsi.xml"), resname="FSI", header=HEADER),
+        tinker2xml(ec_key, ec_xyz, str(tmp_path / "ec.xml"), resname="EC", header=HEADER),
+        tinker2xml(str(ion_key), str(ion_xyz), str(tmp_path / "ion.xml"), resname="LI",
+                   header=HEADER),
+    ]
+    merged = merge_amoeba_xml(xmls, str(tmp_path / "electrolyte.xml"))
+    assert 'name="501" class="501" element="C"' in open(merged).read()
+
+    # the reference always reads EC as 501-505, the numbers merging must restore
+    box_xyz = _stack_xyz(tmp_path / "box.xyz", [
+        (XYZ, (0, 0, 0)), (EC_XYZ, (8, 0, 0)), (EC_XYZ, (0, 8, 1)),
+        (EC_XYZ, (-7, -6, 2)), (str(ion_xyz), (4, 4, -2)),
+    ])
+    box = [Vec3(3, 0, 0), Vec3(0, 3, 0), Vec3(0, 0, 3)] * unit.nanometer
+    settings = dict(nonbondedMethod=app.PME, nonbondedCutoff=1.2 * unit.nanometer,
+                    polarization="mutual", mutualInducedTargetEpsilon=1e-6,
+                    ewaldErrorTolerance=1e-5)
+    tinker = app.TinkerFiles(
+        box_xyz, _combined_key(tmp_path, keys=(KEY, EC_KEY), extra=_CATION_KEY),
+        periodicBoxVectors=box,
+    )
+    reference = tinker.createSystem(**settings)
+
+    counts = {}
+    for atom in tinker.topology.atoms():
+        counts[atom.residue] = counts.get(atom.residue, 0) + 1
+        atom.name = f"{atom.element.symbol}{counts[atom.residue]}"
+    pdbfile = str(tmp_path / "box.pdb")
+    with open(pdbfile, "w") as f:
+        app.PDBFile.writeFile(tinker.topology, tinker.positions, f)
+    pdb = app.PDBFile(pdbfile)
+    pdb.topology.setPeriodicBoxVectors(box)
+    converted = app.ForceField(merged).createSystem(pdb.topology, **settings)
     for system in (reference, converted):
         system.setDefaultPeriodicBoxVectors(*box)
     _compare(_energies(reference, tinker.positions), _energies(converted, tinker.positions))

@@ -78,9 +78,12 @@ file changes, so it moves the minor number.
   scale factors other than the ones OpenMM fixes are refused instead of
   dropped. Tests on the FSI anion check the result term by term against
   `openmm.app.TinkerFiles` (without cutoff and under PME with mutual
-  polarization) and against the energies of Tinker's `analyze`, and a
-  mixture of FSI anions and monatomic cations converted separately and
-  merged against TinkerFiles reading all parameters at once. The element of
+  polarization) and against the energies of Tinker's `analyze`. Ethylene
+  carbonate (in-plane and out-of-plane bends, a vdW reduction factor,
+  intramolecular polarization) is checked against TinkerFiles and Tinker's
+  `minimize`, and a cation / FSI / EC box, converted molecule by molecule
+  and merged (also with EC typed 401 like FSI, so it has to be renumbered),
+  against TinkerFiles reading all parameters at once. The element of
   an atom type comes from its atomic number, since the symbol field of a
   Tinker `atom` line is a label such as `Li+`.
 
